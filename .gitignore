@@ -48,3 +48,24 @@ Thumbs.db
 *.mov
 *.wmv
 
+# Credentials
+
+credentials.json
+
+# Allow the example file
+
+!credentials.json.example
+
+# Data directory
+
+data/
+
+# Common Python files
+
+__pycache__/
+
+*.pyc
+
+*.pyo
+
+*.pyd
