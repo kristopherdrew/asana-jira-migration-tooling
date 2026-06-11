@@ -414,3 +414,6 @@ This keeps any future dependency pins scoped to the project, prevents global pac
 
 ## Rate Limit Awareness
 The shared HTTP client surfaces the most recent Asana rate limit headers via `AsanaHttpClient.last_rate_limit`. Inspect this metadata after requests to monitor remaining capacity and defer heavy jobs when approaching the limit.
+
+## Open Question
+- `tasks.hierarchy_depth` now records nested subtask depth, but we still need to confirm whether downstream exports should flatten deeper chains or preserve the full hierarchy as-is.
