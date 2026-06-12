@@ -56,6 +56,8 @@ Menu highlights:
 - Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, sync attachments.
 - Category 4 (Reports): project details, users, team memberships.
 
+When you run the Initialization flow, the projects step prompts for archived scope so you can choose active, archived, or all projects during the first data pull.
+
 ## Core Sync Commands
 ### Sync Teams
 Fetches all teams in the workspace and writes them into `data/asana.sqlite`.

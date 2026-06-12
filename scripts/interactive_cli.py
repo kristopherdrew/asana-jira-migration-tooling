@@ -254,6 +254,13 @@ def args_initial_metadata(log_level: str) -> List[str]:
     return build_common_args(log_level)
 
 
+def args_initial_projects(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    scope = prompt("Archived scope for projects (active|archived|all)", default="active")
+    args.extend(["--archived-scope", scope])
+    return args
+
+
 def args_initial_teams(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     args.append("--include-members")
@@ -716,7 +723,12 @@ def run_initial_metadata(log_level: str) -> None:
         ("get_users", get_users.main),
     ]
     for label, func in steps:
-        argv = args_initial_teams(log_level) if label == "get_teams" else args_initial_metadata(log_level)
+        if label == "get_teams":
+            argv = args_initial_teams(log_level)
+        elif label == "get_projects":
+            argv = args_initial_projects(log_level)
+        else:
+            argv = args_initial_metadata(log_level)
         try:
             logging.info("Running %s ...", label)
             run_script(func, argv)
