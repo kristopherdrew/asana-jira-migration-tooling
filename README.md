@@ -213,7 +213,7 @@ Optional flags:
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 ### Project Details Report
-Exports one row per project from SQLite with the project metadata, the current snapshot counts stored on `projects` (`num_tasks`, `num_incomplete_tasks`, `num_completed_tasks`, `task_counts_captured_at`), and a separate `actual_task_count` column when task rows already exist for that project. `actual_task_data_present` is set to `true` when that live task data is present.
+Exports one row per project from SQLite with the project metadata, the current snapshot counts stored on `projects` (`num_tasks`, `num_incomplete_tasks`, `num_completed_tasks`, `task_counts_captured_at`), task activity timestamps derived from synced task rows (`last_task_created_at`, `last_task_resolved_at`, `last_task_updated_at`), and a separate `actual_task_count` column when task rows already exist for that project. `actual_task_data_present` is set to `true` when that live task data is present. The task activity columns remain blank until the task sync has populated `tasks`.
 ```bash
 python3 -m scripts.export_project_details_report --database data/asana.sqlite
 ```
@@ -277,7 +277,7 @@ Optional flags:
 - `--log-level <LEVEL>` to adjust verbosity (default `INFO`).
 
 ### Export Project Tasks To Jira CSV
-Transforms normalized SQLite data for a project into a Jira-compatible CSV (one row per task/subtask). Includes parent IDs, assignee name/email, due date, completion status/timestamp, task description, user comments, populated custom fields (multi-select values appear in sequential columns with the same name), and the current project snapshot counts from `projects` on every row (`project_num_tasks`, `project_num_incomplete_tasks`, `project_num_completed_tasks`, and `project_task_counts_captured_at`).
+Transforms normalized SQLite data for a project into a Jira-compatible CSV (one row per task/subtask). Includes parent IDs, assignee name/email, due date, completion status/timestamp, task description, user comments, populated custom fields (multi-select values appear in sequential columns with the same name), and the current project snapshot counts from `projects` on every row (`project_num_tasks`, `project_num_incomplete_tasks`, `project_num_completed_tasks`, and `project_task_counts_captured_at`). It also surfaces task-derived project activity columns (`project_last_task_created_at`, `project_last_task_resolved_at`, `project_last_task_updated_at`), which remain blank until task rows exist in SQLite.
 ```bash
 python3 -m scripts.export_project_to_jira_csv --project-gid <gid>
 # multiple projects

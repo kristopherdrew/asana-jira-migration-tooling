@@ -789,6 +789,21 @@ def build_default_filename(project_name: Optional[str]) -> str:
     return f"{base}-{stamp}_tasks.csv"
 
 
+def fetch_project_task_activity(connection: sqlite3.Connection, project_gid: str):
+    return connection.execute(
+        """
+        SELECT
+            MAX(t.created_at) AS last_task_created_at,
+            MAX(t.completed_at) AS last_task_resolved_at,
+            MAX(t.modified_at) AS last_task_updated_at
+        FROM task_projects tp
+        JOIN tasks t ON t.gid = tp.task_gid
+        WHERE tp.project_gid = ?
+        """,
+        (project_gid,),
+    ).fetchone()
+
+
 def ensure_tasks_suffix(filename: str) -> str:
     if filename.lower().endswith("_tasks.csv"):
         return filename
@@ -1735,6 +1750,7 @@ def export_project(
             """,
             (project_gid,),
         ).fetchone()
+        task_activity_row = fetch_project_task_activity(connection, project_gid)
         project_name = current_project_row["name"] if current_project_row else None
         project_num_tasks = current_project_row["num_tasks"] if current_project_row else None
         project_num_incomplete_tasks = (
@@ -1745,6 +1761,15 @@ def export_project(
         )
         project_task_counts_captured_at = (
             current_project_row["task_counts_captured_at"] if current_project_row else None
+        )
+        project_last_task_created_at = (
+            task_activity_row["last_task_created_at"] if task_activity_row else None
+        )
+        project_last_task_resolved_at = (
+            task_activity_row["last_task_resolved_at"] if task_activity_row else None
+        )
+        project_last_task_updated_at = (
+            task_activity_row["last_task_updated_at"] if task_activity_row else None
         )
         current_project_display = format_project_entry(
             project_name,
@@ -1932,6 +1957,9 @@ def export_project(
                         "project_num_incomplete_tasks": project_num_incomplete_tasks,
                         "project_num_completed_tasks": project_num_completed_tasks,
                         "project_task_counts_captured_at": project_task_counts_captured_at,
+                        "project_last_task_created_at": project_last_task_created_at,
+                        "project_last_task_resolved_at": project_last_task_resolved_at,
+                        "project_last_task_updated_at": project_last_task_updated_at,
                     }
                 )
                 section_map[epic_gid] = [name]
@@ -2185,6 +2213,9 @@ def export_project(
             "project_num_incomplete_tasks",
             "project_num_completed_tasks",
             "project_task_counts_captured_at",
+            "project_last_task_created_at",
+            "project_last_task_resolved_at",
+            "project_last_task_updated_at",
             "jira_project_name",
             "jira_project_key",
             "jira_project_type",
@@ -2371,6 +2402,9 @@ def export_project(
                 "" if project_num_incomplete_tasks is None else str(project_num_incomplete_tasks),
                 "" if project_num_completed_tasks is None else str(project_num_completed_tasks),
                 format_export_datetime(project_task_counts_captured_at),
+                format_export_datetime(project_last_task_created_at),
+                format_export_datetime(project_last_task_resolved_at),
+                format_export_datetime(project_last_task_updated_at),
                 jira_proj.get("jira_project_name", ""),
                 jira_proj.get("jira_project_key", ""),
                 "software",
@@ -2463,6 +2497,9 @@ def export_project(
                 "project_num_incomplete_tasks",
                 "project_num_completed_tasks",
                 "project_task_counts_captured_at",
+                "project_last_task_created_at",
+                "project_last_task_resolved_at",
+                "project_last_task_updated_at",
                 "jira_project_name",
                 "jira_project_key",
                 "jira_project_type",
@@ -2784,6 +2821,7 @@ def print_project_stats(
         """,
         (project_gid,),
     ).fetchone()
+    task_activity_row = fetch_project_task_activity(connection, project_gid)
     if project_row and (
         project_row["num_tasks"] is not None
         or project_row["num_incomplete_tasks"] is not None
@@ -2800,6 +2838,15 @@ def print_project_stats(
         )
         captured_at = project_row["task_counts_captured_at"] or "n/a"
         print(f"  Captured at: {captured_at}")
+    if task_activity_row and (
+        task_activity_row["last_task_created_at"]
+        or task_activity_row["last_task_resolved_at"]
+        or task_activity_row["last_task_updated_at"]
+    ):
+        print("Project task activity:")
+        print(f"  Last created: {task_activity_row['last_task_created_at'] or 'n/a'}")
+        print(f"  Last resolved: {task_activity_row['last_task_resolved_at'] or 'n/a'}")
+        print(f"  Last updated: {task_activity_row['last_task_updated_at'] or 'n/a'}")
 
     total_tasks = len(tasks)
     print(f"Total tasks: {total_tasks}")

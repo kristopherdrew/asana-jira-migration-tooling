@@ -57,6 +57,9 @@ class ExportProjectDetailsReportTest(TestCase):
             {
                 "gid": "task_1",
                 "name": "Task One",
+                "created_at": "2025-01-01T09:00:00Z",
+                "modified_at": "2025-01-01T10:00:00Z",
+                "completed_at": "2025-01-01T11:00:00Z",
                 "memberships": [{"project": {"gid": "proj_1", "name": "Project One"}}],
             },
             sync_time,
@@ -66,6 +69,9 @@ class ExportProjectDetailsReportTest(TestCase):
             {
                 "gid": "task_2",
                 "name": "Task Two",
+                "created_at": "2025-01-02T09:30:00Z",
+                "modified_at": "2025-01-02T10:30:00Z",
+                "completed_at": None,
                 "memberships": [{"project": {"gid": "proj_1", "name": "Project One"}}],
             },
             sync_time,
@@ -85,10 +91,16 @@ class ExportProjectDetailsReportTest(TestCase):
         self.assertEqual(project_one["num_incomplete_tasks"], "5")
         self.assertEqual(project_one["num_completed_tasks"], "7")
         self.assertEqual(project_one["task_counts_captured_at"], "2025-01-01T12:00:00Z")
+        self.assertEqual(project_one["last_task_created_at"], "2025-01-02T09:30:00Z")
+        self.assertEqual(project_one["last_task_resolved_at"], "2025-01-01T11:00:00Z")
+        self.assertEqual(project_one["last_task_updated_at"], "2025-01-02T10:30:00Z")
         self.assertEqual(project_one["actual_task_count"], "2")
         self.assertEqual(project_one["actual_task_data_present"], "true")
 
         project_two = next(row for row in rows if row["gid"] == "proj_2")
+        self.assertEqual(project_two["last_task_created_at"], "")
+        self.assertEqual(project_two["last_task_resolved_at"], "")
+        self.assertEqual(project_two["last_task_updated_at"], "")
         self.assertEqual(project_two["actual_task_count"], "")
         self.assertEqual(project_two["actual_task_data_present"], "false")
 

@@ -113,6 +113,8 @@ class ExportProjectToJiraCsvTest(TestCase):
                 "assignee": {"gid": "user_1", "name": "Alice Reviewer"},
                 "created_by": {"gid": "user_1"},
                 "created_at": "2025-02-25T10:30:00Z",
+                "modified_at": "2025-03-04T09:05:00Z",
+                "completed_at": "2025-03-04T09:05:00Z",
                 "start_on": "2025-03-01",
                 "start_at": "2025-03-01T09:00:00Z",
                 "due_on": "2025-03-10",
@@ -162,6 +164,7 @@ class ExportProjectToJiraCsvTest(TestCase):
                 "assignee": {"gid": "user_2", "name": "Bob Approver"},
                 "created_by": {"gid": "user_2"},
                 "created_at": "2025-02-26T12:45:00Z",
+                "modified_at": "2025-03-05T16:00:00Z",
                 "start_on": "2025-03-02",
                 "start_at": "2025-03-02T13:30:00Z",
                 "due_on": "2025-03-12",
@@ -276,7 +279,6 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(len(comment_columns), 2)
         asana_id_index = header.index("External issue ID")
         self.assertNotIn("completed", header)
-        self.assertNotIn("completed_at", header)
         assignee_atl_index = header.index("assignee_atlassian_id")
         assignee_atl_email_index = header.index("assignee_atlassian_email")
         creator_index = header.index("creator")
@@ -288,11 +290,15 @@ class ExportProjectToJiraCsvTest(TestCase):
         project_num_incomplete_index = header.index("project_num_incomplete_tasks")
         project_num_completed_index = header.index("project_num_completed_tasks")
         project_captured_at_index = header.index("project_task_counts_captured_at")
+        project_created_index = header.index("project_last_task_created_at")
+        project_resolved_index = header.index("project_last_task_resolved_at")
+        project_updated_index = header.index("project_last_task_updated_at")
         projects_index = header.index("projects")
         start_on_index = header.index("start_on")
         start_at_index = header.index("start_at")
         created_at_index = header.index("created_at")
         due_date_index = header.index("due_date")
+        completed_at_index = header.index("completed_at")
         actual_time_index = header.index("actual_time_minutes")
         tags_columns = [index for index, name in enumerate(header) if name.startswith("Tags")]
         self.assertEqual(len(tags_columns), 2)
@@ -323,6 +329,9 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(first_task[project_num_incomplete_index], "4")
         self.assertEqual(first_task[project_num_completed_index], "6")
         self.assertEqual(first_task[project_captured_at_index], "01/Jan/25 12:00 am")
+        self.assertEqual(first_task[project_created_index], "26/Feb/25 12:45 pm")
+        self.assertEqual(first_task[project_resolved_index], "04/Mar/25 9:05 am")
+        self.assertEqual(first_task[project_updated_index], "05/Mar/25 4:00 pm")
         self.assertEqual(
             first_task[projects_index],
             "Example Project (proj_1); Secondary Project (proj_2)",
@@ -331,6 +340,7 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(first_task[start_at_index], "01/Mar/25 9:00 am")
         self.assertEqual(first_task[created_at_index], "25/Feb/25 10:30 am")
         self.assertEqual(first_task[due_date_index], "10/Mar/25 12:00 am")
+        self.assertEqual(first_task[completed_at_index], "04/Mar/25 9:05 am")
         self.assertEqual(first_task[actual_time_index], "480")
         self.assertEqual(first_task[tags_columns[0]], "Customer_Impact")
         self.assertEqual(first_task[tags_columns[1]], "Needs_QA")
@@ -351,11 +361,15 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(second_task[project_num_incomplete_index], "4")
         self.assertEqual(second_task[project_num_completed_index], "6")
         self.assertEqual(second_task[project_captured_at_index], "01/Jan/25 12:00 am")
+        self.assertEqual(second_task[project_created_index], "26/Feb/25 12:45 pm")
+        self.assertEqual(second_task[project_resolved_index], "04/Mar/25 9:05 am")
+        self.assertEqual(second_task[project_updated_index], "05/Mar/25 4:00 pm")
         self.assertEqual(second_task[projects_index], "Example Project (proj_1)")
         self.assertEqual(second_task[start_on_index], "02/Mar/25 12:00 am")
         self.assertEqual(second_task[start_at_index], "02/Mar/25 1:30 pm")
         self.assertEqual(second_task[created_at_index], "26/Feb/25 12:45 pm")
         self.assertEqual(second_task[due_date_index], "12/Mar/25 12:00 am")
+        self.assertEqual(second_task[completed_at_index], "")
         self.assertEqual(second_task[actual_time_index], "120")
         self.assertEqual(second_task[tags_columns[0]], "Customer_Impact")
         self.assertEqual(second_task[tags_columns[1]], "")

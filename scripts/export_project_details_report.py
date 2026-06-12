@@ -87,6 +87,17 @@ def export_project_details(
                 JOIN tasks t
                     ON t.gid = tp.task_gid
                 GROUP BY tp.project_gid
+            ),
+            task_activity AS (
+                SELECT
+                    tp.project_gid,
+                    MAX(t.created_at) AS last_task_created_at,
+                    MAX(t.completed_at) AS last_task_resolved_at,
+                    MAX(t.modified_at) AS last_task_updated_at
+                FROM task_projects tp
+                JOIN tasks t
+                    ON t.gid = tp.task_gid
+                GROUP BY tp.project_gid
             )
             SELECT
                 p.gid,
@@ -109,12 +120,16 @@ def export_project_details(
                 p.num_incomplete_tasks,
                 p.num_completed_tasks,
                 p.task_counts_captured_at,
+                ta.last_task_created_at,
+                ta.last_task_resolved_at,
+                ta.last_task_updated_at,
                 atc.actual_task_count,
                 CASE WHEN atc.actual_task_count IS NULL THEN 'false' ELSE 'true' END AS actual_task_data_present,
                 p.synced_at
             FROM projects p
             LEFT JOIN teams t ON t.gid = p.team_gid
             LEFT JOIN actual_task_counts atc ON atc.project_gid = p.gid
+            LEFT JOIN task_activity ta ON ta.project_gid = p.gid
             {team_filter}
             ORDER BY COALESCE(t.name, p.team_name) COLLATE NOCASE, p.name COLLATE NOCASE, p.gid
         """
@@ -147,6 +162,9 @@ def export_project_details(
         "num_incomplete_tasks",
         "num_completed_tasks",
         "task_counts_captured_at",
+        "last_task_created_at",
+        "last_task_resolved_at",
+        "last_task_updated_at",
         "actual_task_count",
         "actual_task_data_present",
         "synced_at",
@@ -179,6 +197,9 @@ def export_project_details(
                     "num_incomplete_tasks": "" if row["num_incomplete_tasks"] is None else row["num_incomplete_tasks"],
                     "num_completed_tasks": "" if row["num_completed_tasks"] is None else row["num_completed_tasks"],
                     "task_counts_captured_at": row["task_counts_captured_at"],
+                    "last_task_created_at": row["last_task_created_at"],
+                    "last_task_resolved_at": row["last_task_resolved_at"],
+                    "last_task_updated_at": row["last_task_updated_at"],
                     "actual_task_count": "" if actual_task_count is None else actual_task_count,
                     "actual_task_data_present": _bool_to_text(actual_task_count is not None),
                     "synced_at": row["synced_at"],
