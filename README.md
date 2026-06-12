@@ -54,7 +54,7 @@ Menu highlights:
 - Category 1 (Initialization): teams + memberships → projects → custom fields → users.
 - Category 2 (Tasks): tasks, task extras, personal tasks (full), incremental updates.
 - Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, sync attachments.
-- Category 4 (Reports): project details, users, team memberships.
+- Category 4 (Reports): project details, team summary, users, team memberships.
 
 When you run the Initialization flow, the projects step prompts for archived scope so you can choose active, archived, or all projects during the first data pull.
 
@@ -224,6 +224,22 @@ Optional flags:
 - `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
 - `--filename <name>` to override the auto-generated `project_details_<timestamp>.csv` filename.
 - `--team-gid <gid>` to limit the report to one team’s projects.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
+
+### Team Report
+Exports one row per team from SQLite with the team metadata, the total number of projects associated with that team, those projects split into active and archived counts, and a semicolon-separated list of known team admins in `Name <email>` form when the user snapshots are available.
+```bash
+python3 -m scripts.export_team_report --database data/asana.sqlite
+```
+Required flags:
+- (none; uses `data/asana.sqlite` by default).
+
+Optional flags:
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated `team_report_<timestamp>.csv` filename.
+- `--team-gid <gid>` to limit the report to one team.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.

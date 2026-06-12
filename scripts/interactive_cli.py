@@ -31,6 +31,7 @@ from scripts import (  # noqa: E402
     get_incremental_updates,
     merge_project_exports,
     export_users,
+    export_team_report,
 )
 from scripts import export_project_details_report, export_team_memberships  # noqa: E402
 from scripts.atlassian import (  # noqa: E402
@@ -586,6 +587,16 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             args.extend(["--team-gid", team_gid])
         run_script(export_team_memberships.main, args)
 
+    def run_team_report() -> None:
+        args = args_report_defaults(log_level)
+        team_gid = _prompt_team_gid_from_lookup(
+            "team report",
+            "Team GID to filter team report (blank = all teams)",
+        )
+        if team_gid:
+            args.extend(["--team-gid", team_gid])
+        run_script(export_team_report.main, args)
+
     return {
         "1": MenuItem(
             "1",
@@ -601,6 +612,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "3",
             "Export team memberships report",
             run_team_memberships_report,
+        ),
+        "4": MenuItem(
+            "4",
+            "Export team report",
+            run_team_report,
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
@@ -793,7 +809,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         "1": MenuItem("1", "Initialization (metadata only)", lambda: run_group("Initialization", build_init_menu(args.log_level))),
         "2": MenuItem("2", "Tasks (full/extras/incremental)", lambda: run_group("Tasks", build_tasks_menu(args.log_level))),
         "3": MenuItem("3", "Atlassian (exports, mappings, attachments)", lambda: run_group("Atlassian", build_atlassian_menu(args.log_level))),
-        "4": MenuItem("4", "Reports (projects, users, memberships)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
+        "4": MenuItem("4", "Reports (projects, users, memberships, team summary)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
         "q": MenuItem("q", "Quit", lambda: sys.exit(0)),
     }
 
