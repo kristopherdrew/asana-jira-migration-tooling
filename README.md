@@ -227,7 +227,7 @@ Optional flags:
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
 ### Team Memberships Report
-Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, and sync timestamps in one place.
+Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, admin flags, and sync timestamps in one place.
 ```bash
 python3 -m scripts.export_team_memberships --database data/asana.sqlite
 ```

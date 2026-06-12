@@ -241,6 +241,7 @@ class DatabaseViewsTest(TestCase):
                 {
                     "user": {"gid": "user_1", "is_active": True},
                     "role": "member",
+                    "is_admin": True,
                 }
             ],
             sync_time,
@@ -259,6 +260,7 @@ class DatabaseViewsTest(TestCase):
                 resource_type,
                 user_is_active,
                 role,
+                is_admin,
                 membership_is_active,
                 membership_synced_at,
                 user_synced_at,
@@ -277,6 +279,7 @@ class DatabaseViewsTest(TestCase):
         self.assertEqual(row["resource_type"], "user")
         self.assertEqual(row["user_is_active"], 1)
         self.assertEqual(row["role"], "member")
+        self.assertEqual(row["is_admin"], 1)
         self.assertEqual(row["membership_is_active"], 1)
         self.assertEqual(row["membership_synced_at"], sync_time.isoformat())
         self.assertEqual(row["user_synced_at"], sync_time.isoformat())

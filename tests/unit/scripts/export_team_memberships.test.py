@@ -48,6 +48,7 @@ class ExportTeamMembershipsTest(TestCase):
                 {
                     "user": {"gid": "user_1", "is_active": True},
                     "role": "member",
+                    "is_admin": True,
                 }
             ],
             sync_time,
@@ -69,4 +70,5 @@ class ExportTeamMembershipsTest(TestCase):
         self.assertEqual(row["user_email"], "user1@example.com")
         self.assertEqual(row["user_is_active"], "true")
         self.assertEqual(row["role"], "member")
+        self.assertEqual(row["is_admin"], "true")
         self.assertEqual(row["membership_is_active"], "true")

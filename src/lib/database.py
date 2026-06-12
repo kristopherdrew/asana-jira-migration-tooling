@@ -452,6 +452,7 @@ SELECT
     u.resource_type,
     u.is_active AS user_is_active,
     tm.role,
+    tm.is_admin AS is_admin,
     tm.is_active AS membership_is_active,
     tm.synced_at AS membership_synced_at,
     u.synced_at AS user_synced_at,
@@ -468,6 +469,7 @@ CREATE TABLE IF NOT EXISTS team_members (
     team_gid TEXT NOT NULL,
     user_gid TEXT NOT NULL,
     role TEXT,
+    is_admin INTEGER,
     is_active INTEGER,
     synced_at TEXT NOT NULL,
     PRIMARY KEY (team_gid, user_gid),
@@ -565,6 +567,7 @@ class Database:
         self._ensure_column(connection, "task_comments", "is_deleted", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "task_attachments", "is_deleted", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "user_atlassian_accounts", "atlassian_email", "TEXT")
+        self._ensure_column(connection, "team_members", "is_admin", "INTEGER")
         self._ensure_task_jira_mapping_schema(connection)
         self._ensure_indexes(connection)
         self._ensure_views(connection)
@@ -706,6 +709,7 @@ class Database:
                 "team_gid": team_gid,
                 "user_gid": member.get("user", {}).get("gid"),
                 "role": member.get("role"),
+                "is_admin": _bool_to_int(member.get("is_admin")),
                 "is_active": _bool_to_int(member.get("user", {}).get("is_active")),
                 "synced_at": synced_at.isoformat(),
             }
@@ -716,13 +720,14 @@ class Database:
         connection.executemany(
             """
             INSERT INTO team_members (
-                team_gid, user_gid, role, is_active, synced_at
+                team_gid, user_gid, role, is_admin, is_active, synced_at
             )
             VALUES (
-                :team_gid, :user_gid, :role, :is_active, :synced_at
+                :team_gid, :user_gid, :role, :is_admin, :is_active, :synced_at
             )
             ON CONFLICT(team_gid, user_gid) DO UPDATE SET
                 role=excluded.role,
+                is_admin=excluded.is_admin,
                 is_active=excluded.is_active,
                 synced_at=excluded.synced_at
             """,

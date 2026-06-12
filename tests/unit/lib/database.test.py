@@ -50,10 +50,12 @@ class DatabaseTest(TestCase):
             {
                 "user": {"gid": "user_1", "is_active": True},
                 "role": "member",
+                "is_admin": False,
             },
             {
                 "user": {"gid": "user_2", "is_active": False},
                 "role": "admin",
+                "is_admin": True,
             },
         ]
 
@@ -62,10 +64,12 @@ class DatabaseTest(TestCase):
 
         rows = list(
             self.connection.execute(
-                "SELECT team_gid, user_gid, role, is_active FROM team_members ORDER BY user_gid"
+                "SELECT team_gid, user_gid, role, is_admin, is_active FROM team_members ORDER BY user_gid"
             )
         )
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["user_gid"], "user_1")
+        self.assertEqual(rows[0]["is_admin"], 0)
         self.assertEqual(rows[0]["is_active"], 1)
         self.assertEqual(rows[1]["role"], "admin")
+        self.assertEqual(rows[1]["is_admin"], 1)
