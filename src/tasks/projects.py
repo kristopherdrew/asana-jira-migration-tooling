@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Dict, Generator, Iterable, Optional
+from datetime import datetime, timezone
 
 from src.lib.http_client import AsanaHttpClient
 
@@ -42,6 +43,12 @@ PROJECT_FIELDS_DEFAULT = [
     "custom_field_settings.custom_field.is_global_to_workspace",
 ]
 
+PROJECT_TASK_COUNT_FIELDS = [
+    "num_tasks",
+    "num_incomplete_tasks",
+    "num_completed_tasks",
+]
+
 
 def fetch_workspace_projects(
     client: AsanaHttpClient,
@@ -57,3 +64,17 @@ def fetch_workspace_projects(
         params["archived"] = "true" if archived else "false"
     endpoint = f"/workspaces/{workspace_gid}/projects"
     yield from client.get_paginated(endpoint, params=params)
+
+
+def fetch_project_task_counts(client: AsanaHttpClient, project_gid: str) -> Dict[str, Optional[int] | str]:
+    """Fetch the current task-count snapshot for a project."""
+    endpoint = f"/projects/{project_gid}/task_counts"
+    params = {"opt_fields": ",".join(PROJECT_TASK_COUNT_FIELDS)}
+    payload = client.get(endpoint, params=params)
+    data = payload.get("data") or {}
+    return {
+        "num_tasks": data.get("num_tasks"),
+        "num_incomplete_tasks": data.get("num_incomplete_tasks"),
+        "num_completed_tasks": data.get("num_completed_tasks"),
+        "task_counts_captured_at": datetime.now(timezone.utc).isoformat(),
+    }

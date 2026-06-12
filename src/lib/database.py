@@ -284,6 +284,10 @@ CREATE TABLE IF NOT EXISTS projects (
     privacy_setting TEXT,
     notes TEXT,
     html_notes TEXT,
+    num_tasks INTEGER,
+    num_incomplete_tasks INTEGER,
+    num_completed_tasks INTEGER,
+    task_counts_captured_at TEXT,
     is_personal_project INTEGER DEFAULT 0,
     synced_at TEXT NOT NULL
 );
@@ -356,6 +360,10 @@ SELECT
     projects.team_gid AS teamId,
     projects.name AS project_name,
     projects.gid AS project_gid,
+    projects.num_tasks AS project_num_tasks,
+    projects.num_incomplete_tasks AS project_num_incomplete_tasks,
+    projects.num_completed_tasks AS project_num_completed_tasks,
+    projects.task_counts_captured_at AS project_task_counts_captured_at,
     settings.custom_field_gid AS custom_field_gid,
     settings.custom_field_name AS custom_field_name,
     settings.custom_field_type AS custom_field_type,
@@ -377,6 +385,10 @@ WITH task_project_hierarchy AS (
         COALESCE(teams.name, projects.team_name) AS team_name,
         projects.name AS project_name,
         projects.gid AS project_gid,
+        projects.num_tasks AS project_num_tasks,
+        projects.num_incomplete_tasks AS project_num_incomplete_tasks,
+        projects.num_completed_tasks AS project_num_completed_tasks,
+        projects.task_counts_captured_at AS project_task_counts_captured_at,
         tasks.gid AS task_gid,
         COALESCE(tasks.hierarchy_depth, 0) AS hierarchy_depth,
         tasks.created_at AS created_at,
@@ -391,6 +403,10 @@ project_aggregates AS (
         team_name,
         project_name,
         project_gid,
+        MAX(project_num_tasks) AS project_num_tasks,
+        MAX(project_num_incomplete_tasks) AS project_num_incomplete_tasks,
+        MAX(project_num_completed_tasks) AS project_num_completed_tasks,
+        MAX(project_task_counts_captured_at) AS project_task_counts_captured_at,
         COUNT(task_gid) AS total_task_count,
         MIN(created_at) AS oldest_created_issue,
         MAX(modified_at) AS last_updated_issue,
@@ -409,6 +425,10 @@ SELECT
     team_name,
     project_name,
     project_gid,
+    project_num_tasks,
+    project_num_incomplete_tasks,
+    project_num_completed_tasks,
+    project_task_counts_captured_at,
     level_0_tasks,
     level_1_tasks,
     level_2_tasks,
@@ -537,6 +557,10 @@ class Database:
         self._ensure_column(connection, "tasks", "hierarchy_depth", "INTEGER")
         self._ensure_column(connection, "tasks", "is_personal", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "projects", "archived", "INTEGER")
+        self._ensure_column(connection, "projects", "num_tasks", "INTEGER")
+        self._ensure_column(connection, "projects", "num_incomplete_tasks", "INTEGER")
+        self._ensure_column(connection, "projects", "num_completed_tasks", "INTEGER")
+        self._ensure_column(connection, "projects", "task_counts_captured_at", "TEXT")
         self._ensure_column(connection, "projects", "is_personal_project", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "task_comments", "is_deleted", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "task_attachments", "is_deleted", "INTEGER DEFAULT 0")
@@ -603,6 +627,10 @@ class Database:
             "privacy_setting": project.get("privacy_setting"),
             "notes": project.get("notes"),
             "html_notes": project.get("html_notes"),
+            "num_tasks": project.get("num_tasks"),
+            "num_incomplete_tasks": project.get("num_incomplete_tasks"),
+            "num_completed_tasks": project.get("num_completed_tasks"),
+            "task_counts_captured_at": project.get("task_counts_captured_at"),
             "is_personal_project": _bool_to_int(project.get("is_personal_project", False)),
             "synced_at": synced_at.isoformat(),
         }
@@ -612,13 +640,17 @@ class Database:
                 gid, name, resource_subtype, archived, permalink_url,
                 created_at, modified_at, start_on, due_on, completed,
                 completed_at, completed_by_gid, owner_gid, owner_name,
-                team_gid, team_name, privacy_setting, notes, html_notes, is_personal_project, synced_at
+                team_gid, team_name, privacy_setting, notes, html_notes,
+                num_tasks, num_incomplete_tasks, num_completed_tasks, task_counts_captured_at,
+                is_personal_project, synced_at
             )
             VALUES (
                 :gid, :name, :resource_subtype, :archived, :permalink_url,
                 :created_at, :modified_at, :start_on, :due_on, :completed,
                 :completed_at, :completed_by_gid, :owner_gid, :owner_name,
-                :team_gid, :team_name, :privacy_setting, :notes, :html_notes, :is_personal_project, :synced_at
+                :team_gid, :team_name, :privacy_setting, :notes, :html_notes,
+                :num_tasks, :num_incomplete_tasks, :num_completed_tasks, :task_counts_captured_at,
+                :is_personal_project, :synced_at
             )
             ON CONFLICT(gid) DO UPDATE SET
                 name=excluded.name,
@@ -639,6 +671,10 @@ class Database:
                 privacy_setting=excluded.privacy_setting,
                 notes=excluded.notes,
                 html_notes=excluded.html_notes,
+                num_tasks=excluded.num_tasks,
+                num_incomplete_tasks=excluded.num_incomplete_tasks,
+                num_completed_tasks=excluded.num_completed_tasks,
+                task_counts_captured_at=excluded.task_counts_captured_at,
                 is_personal_project=excluded.is_personal_project,
                 synced_at=excluded.synced_at
             """,

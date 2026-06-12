@@ -54,6 +54,7 @@ Menu highlights:
 - Category 1 (Initialization): teams + memberships → projects → custom fields → users.
 - Category 2 (Tasks): tasks, task extras, personal tasks (full), incremental updates.
 - Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, sync attachments.
+- Category 4 (Reports): project details, users, team memberships.
 
 ## Core Sync Commands
 ### Sync Teams
@@ -69,7 +70,7 @@ Optional flags:
 - `--workspace-gid <gid>` to override the workspace ID from the resolved credentials.
 
 ### Sync Projects
-Fetches all projects in the workspace—including lifecycle metadata and custom field definitions/settings—and stores them in `data/asana.sqlite`.
+Fetches all projects in the workspace—including lifecycle metadata and custom field definitions/settings—and stores them in `data/asana.sqlite`. Each project row also captures a point-in-time task count snapshot from Asana's `/projects/{project_gid}/task_counts` endpoint so you can see the current task total before the full task sync runs.
 ```bash
 python3 -m scripts.get_projects
 ```
@@ -165,6 +166,8 @@ Optional flags:
 - `--all-users` to iterate over every user stored in SQLite (requires `get_users` run first).
 - `--log-level <LEVEL>` to adjust logging verbosity.
 
+In the interactive CLI, the personal-task assignee prompt can search users by name or email from the local SQLite snapshot before falling back to a raw GID entry.
+
 ### Sync Personal Tasks (Incremental)
 Runs the same personal-task pipeline but only fetches tasks updated since the last successful run (cursor stored in `personal_task_cursors`). Pass `--since` to override the stored cursor for one-off replays.
 ```bash
@@ -207,6 +210,38 @@ Optional flags:
 - `--filename <name>` to override the auto-generated `users_<timestamp>.csv` filename.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
+### Project Details Report
+Exports one row per project from SQLite with the project metadata, the current snapshot counts stored on `projects` (`num_tasks`, `num_incomplete_tasks`, `num_completed_tasks`, `task_counts_captured_at`), and a separate `actual_task_count` column when task rows already exist for that project. `actual_task_data_present` is set to `true` when that live task data is present.
+```bash
+python3 -m scripts.export_project_details_report --database data/asana.sqlite
+```
+Required flags:
+- (none; uses `data/asana.sqlite` by default).
+
+Optional flags:
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated `project_details_<timestamp>.csv` filename.
+- `--team-gid <gid>` to limit the report to one team’s projects.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
+
+### Team Memberships Report
+Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, and sync timestamps in one place.
+```bash
+python3 -m scripts.export_team_memberships --database data/asana.sqlite
+```
+Required flags:
+- (none; uses `data/asana.sqlite` by default).
+
+Optional flags:
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated `team_memberships_<timestamp>.csv` filename.
+- `--team-gid <gid>` to limit the report to one team.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+In the interactive Reports menu, this export can also search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
+
 ### Update Atlassian User Map
 Maintains the lookup table that translates Asana user GIDs into Atlassian account IDs (and optional Atlassian emails) for Jira exports. Provide a CSV with `gid`, `atlassianAccountId`, and optionally `atlassianEmail`; entries are upserted into SQLite.
 ```bash
@@ -240,7 +275,7 @@ Optional flags:
 - `--log-level <LEVEL>` to adjust verbosity (default `INFO`).
 
 ### Export Project Tasks To Jira CSV
-Transforms normalized SQLite data for a project into a Jira-compatible CSV (one row per task/subtask). Includes parent IDs, assignee name/email, due date, completion status/timestamp, task description, user comments, and populated custom fields (multi-select values appear in sequential columns with the same name).
+Transforms normalized SQLite data for a project into a Jira-compatible CSV (one row per task/subtask). Includes parent IDs, assignee name/email, due date, completion status/timestamp, task description, user comments, populated custom fields (multi-select values appear in sequential columns with the same name), and the current project snapshot counts from `projects` on every row (`project_num_tasks`, `project_num_incomplete_tasks`, `project_num_completed_tasks`, and `project_task_counts_captured_at`).
 ```bash
 python3 -m scripts.export_project_to_jira_csv --project-gid <gid>
 # multiple projects
@@ -336,7 +371,7 @@ The exporter also walks each task’s description and comments to augment embedd
 - Project list URLs are replaced with the project’s friendly name or user mention, depending on the Asana HTML hints.
 - Inline attachment URLs receive the stored filename on the next line, wrapped in `!filename!`.
 
-When `--stats-only` is supplied, the script prints summary information to stdout instead of writing a file: total task count, counts by hierarchy depth, a roster of users referenced by the project (including Atlassian IDs/emails when available), and custom field usage counts.
+When `--stats-only` is supplied, the script prints summary information to stdout instead of writing a file: the project snapshot counts from `projects`, total task count, counts by hierarchy depth, a roster of users referenced by the project (including Atlassian IDs/emails when available), and custom field usage counts.
 
 Task-centric user columns pair the human-readable details with Atlassian IDs and Atlassian emails (e.g., `assignee`, `assignee_email`, `assignee_atlassian_id`, `assignee_atlassian_email`, and the same quartet for `creator`). The export also surfaces scheduling and scope metadata (`current_project`, aggregated `projects`, `start_on`, `start_at`, `created_at`, `due_date`, `actual_time_minutes`) and includes semicolon-separated `Tags` columns. Every export also writes a companion `<filename>_field_counts.csv` listing each detected custom field, how many tasks populated it, and whether it was included in the primary CSV.
 

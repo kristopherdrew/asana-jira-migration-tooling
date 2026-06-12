@@ -11,7 +11,7 @@ from src.lib.config import load_credentials
 from src.lib.database import Database, synced_at_timestamp
 from src.lib.http_client import AsanaHttpClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
-from src.tasks.projects import fetch_workspace_projects
+from src.tasks.projects import fetch_project_task_counts, fetch_workspace_projects
 
 
 DEFAULT_CONFIG_ROOT = "."
@@ -98,6 +98,12 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 page_size=args.page_size,
                 archived=archived_flag,
             ):
+                project_gid = project.get("gid")
+                if project_gid:
+                    try:
+                        project.update(fetch_project_task_counts(client, project_gid))
+                    except Exception as exc:  # pragma: no cover - defensive
+                        logger.warning("Unable to fetch task counts for project %s: %s", project_gid, exc)
                 database.upsert_project(connection, project, sync_time)
                 project_count += 1
                 custom_field_links += len(project.get("custom_fields") or [])

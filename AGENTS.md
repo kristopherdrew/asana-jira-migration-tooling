@@ -38,3 +38,6 @@
 - Rebase onto `master` before opening a PR and link the relevant Asana task.
 - Describe changes plainly, enumerate tests executed (`python -m unittest ...`), and attach logs or exports when relevant.
 - Wait for CI checks to pass and secure at least one reviewer approval before merging.
+- When a prompt-driven change is completed, ask whether the user wants the changes committed.
+- If you ask, include a suggested Conventional Commit message.
+- Do not create a commit unless the user explicitly approves it.

@@ -1685,6 +1685,10 @@ def export_project(
                 "actual_time_minutes": None,
                 "notes": "",
                 "html_notes": "",
+                "project_num_tasks": project_num_tasks,
+                "project_num_incomplete_tasks": project_num_incomplete_tasks,
+                "project_num_completed_tasks": project_num_completed_tasks,
+                "project_task_counts_captured_at": project_task_counts_captured_at,
             }
             # Place the synthetic epic first so Jira imports see the parent before children.
             tasks.insert(0, epic_row)
@@ -1719,10 +1723,29 @@ def export_project(
                 )
 
         current_project_row = connection.execute(
-            "SELECT name FROM projects WHERE gid = ?",
+            """
+            SELECT
+                name,
+                num_tasks,
+                num_incomplete_tasks,
+                num_completed_tasks,
+                task_counts_captured_at
+            FROM projects
+            WHERE gid = ?
+            """,
             (project_gid,),
         ).fetchone()
         project_name = current_project_row["name"] if current_project_row else None
+        project_num_tasks = current_project_row["num_tasks"] if current_project_row else None
+        project_num_incomplete_tasks = (
+            current_project_row["num_incomplete_tasks"] if current_project_row else None
+        )
+        project_num_completed_tasks = (
+            current_project_row["num_completed_tasks"] if current_project_row else None
+        )
+        project_task_counts_captured_at = (
+            current_project_row["task_counts_captured_at"] if current_project_row else None
+        )
         current_project_display = format_project_entry(
             project_name,
             project_gid,
@@ -1905,6 +1928,10 @@ def export_project(
                         "actual_time_minutes": None,
                         "notes": "",
                         "html_notes": "",
+                        "project_num_tasks": project_num_tasks,
+                        "project_num_incomplete_tasks": project_num_incomplete_tasks,
+                        "project_num_completed_tasks": project_num_completed_tasks,
+                        "project_task_counts_captured_at": project_task_counts_captured_at,
                     }
                 )
                 section_map[epic_gid] = [name]
@@ -2154,6 +2181,10 @@ def export_project(
 
         header = [
             "current_project",
+            "project_num_tasks",
+            "project_num_incomplete_tasks",
+            "project_num_completed_tasks",
+            "project_task_counts_captured_at",
             "jira_project_name",
             "jira_project_key",
             "jira_project_type",
@@ -2336,6 +2367,10 @@ def export_project(
             jira_proj = jira_project_map.get(project_gid, {})
             row = [
                 current_project_display,
+                "" if project_num_tasks is None else str(project_num_tasks),
+                "" if project_num_incomplete_tasks is None else str(project_num_incomplete_tasks),
+                "" if project_num_completed_tasks is None else str(project_num_completed_tasks),
+                format_export_datetime(project_task_counts_captured_at),
                 jira_proj.get("jira_project_name", ""),
                 jira_proj.get("jira_project_key", ""),
                 "software",
@@ -2424,6 +2459,10 @@ def export_project(
                 "hierarchy_depth",
                 "jira_parent_gid",
                 "jira_hierarchy_depth",
+                "project_num_tasks",
+                "project_num_incomplete_tasks",
+                "project_num_completed_tasks",
+                "project_task_counts_captured_at",
                 "jira_project_name",
                 "jira_project_key",
                 "jira_project_type",
@@ -2732,6 +2771,36 @@ def print_project_stats(
     print(heading)
     print("-" * len(heading))
 
+    project_row = connection.execute(
+        """
+        SELECT
+            name,
+            num_tasks,
+            num_incomplete_tasks,
+            num_completed_tasks,
+            task_counts_captured_at
+        FROM projects
+        WHERE gid = ?
+        """,
+        (project_gid,),
+    ).fetchone()
+    if project_row and (
+        project_row["num_tasks"] is not None
+        or project_row["num_incomplete_tasks"] is not None
+        or project_row["num_completed_tasks"] is not None
+        or project_row["task_counts_captured_at"]
+    ):
+        print("Project task count snapshot:")
+        print(f"  Total tasks: {project_row['num_tasks'] if project_row['num_tasks'] is not None else 'n/a'}")
+        print(
+            f"  Incomplete tasks: {project_row['num_incomplete_tasks'] if project_row['num_incomplete_tasks'] is not None else 'n/a'}"
+        )
+        print(
+            f"  Completed tasks: {project_row['num_completed_tasks'] if project_row['num_completed_tasks'] is not None else 'n/a'}"
+        )
+        captured_at = project_row["task_counts_captured_at"] or "n/a"
+        print(f"  Captured at: {captured_at}")
+
     total_tasks = len(tasks)
     print(f"Total tasks: {total_tasks}")
 
@@ -2740,8 +2809,11 @@ def print_project_stats(
     flattened_available = False
     for task in tasks:
         depth_counts[task["hierarchy_depth"]] += 1
-        flattened_counts[task["jira_hierarchy_depth"]] += 1
-        if task["jira_hierarchy_depth"] is not None:
+        jira_depth = task.get("jira_hierarchy_depth") if hasattr(task, "get") else None
+        if jira_depth is None and hasattr(task, "keys") and "jira_hierarchy_depth" in task.keys():
+            jira_depth = task["jira_hierarchy_depth"]
+        flattened_counts[jira_depth] += 1
+        if jira_depth is not None:
             flattened_available = True
 
     print("Tasks by hierarchy depth:")

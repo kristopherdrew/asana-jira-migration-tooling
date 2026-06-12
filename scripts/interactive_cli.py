@@ -30,7 +30,9 @@ from scripts import (  # noqa: E402
     get_personal_tasks_delta,
     get_incremental_updates,
     merge_project_exports,
+    export_users,
 )
+from scripts import export_project_details_report, export_team_memberships  # noqa: E402
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
     export_project_to_jira_csv,
@@ -100,6 +102,102 @@ def _fuzzy_teams(term: str, conn: sqlite3.Connection, limit: int = 20, offset: i
     return rows
 
 
+def _fuzzy_users(term: str, conn: sqlite3.Connection, limit: int = 20, offset: int = 0):
+    like = f"%{term.lower()}%"
+    rows = conn.execute(
+        """
+        SELECT gid, name, email
+        FROM users
+        WHERE lower(COALESCE(name, '')) LIKE ?
+           OR lower(COALESCE(email, '')) LIKE ?
+           OR lower(gid) LIKE ?
+        ORDER BY instr(lower(COALESCE(name, email, gid)), ?), length(COALESCE(name, email, gid)), COALESCE(name, email, gid)
+        LIMIT ? OFFSET ?
+        """,
+        (like, like, like, term.lower(), limit, offset),
+    ).fetchall()
+    return rows
+
+
+def _prompt_lookup_gid(
+    context: str,
+    fallback_prompt: str,
+    lookup_label: str,
+    lookup_fn: Callable[[str, sqlite3.Connection, int, int], Sequence[sqlite3.Row]],
+    row_label_fn: Callable[[sqlite3.Row], str],
+) -> str:
+    db_path = PROJECT_ROOT / "data" / "asana.sqlite"
+    conn: Optional[sqlite3.Connection] = None
+    try:
+        conn = _open_sqlite(db_path)
+    except SystemExit:
+        conn = None
+
+    team_gid = ""
+    try:
+        if conn:
+            term = prompt(f"Search {lookup_label} for {context} (blank to type a GID)", default="")
+            offset = 0
+            while term:
+                results = lookup_fn(term, conn, limit=20, offset=offset)
+                if not results:
+                    print("No matches. Try another term.")
+                    term = prompt(f"Search {lookup_label} for {context} (blank to type a GID)", default="")
+                    offset = 0
+                    continue
+                print("\nMatches:")
+                for idx, row in enumerate(results, start=1):
+                    print(f"{idx}. {row_label_fn(row)}")
+                nav = prompt("Pick a number, 'n' for next page, or Enter to type a gid", default="")
+                if nav.isdigit():
+                    pick_idx = int(nav)
+                    if 1 <= pick_idx <= len(results):
+                        team_gid = results[pick_idx - 1]["gid"]
+                        break
+                elif nav.lower() == "n":
+                    offset += 20
+                    continue
+                else:
+                    break
+    finally:
+        if conn:
+            conn.close()
+
+    if not team_gid:
+        team_gid = prompt(fallback_prompt, default="")
+    return team_gid
+
+
+def _prompt_project_gid_from_lookup(context: str, fallback_prompt: str) -> str:
+    return _prompt_lookup_gid(
+        context,
+        fallback_prompt,
+        "project name",
+        _fuzzy_projects,
+        lambda row: f"{row['name']}{(' [' + row['team_name'] + ']') if row['team_name'] else ''} (gid {row['gid']})",
+    )
+
+
+def _prompt_team_gid_from_lookup(context: str, fallback_prompt: str) -> str:
+    return _prompt_lookup_gid(
+        context,
+        fallback_prompt,
+        "team name",
+        _fuzzy_teams,
+        lambda row: f"{row['name']} (gid {row['gid']})",
+    )
+
+
+def _prompt_user_gid_from_lookup(context: str, fallback_prompt: str) -> str:
+    return _prompt_lookup_gid(
+        context,
+        fallback_prompt,
+        "user name",
+        _fuzzy_users,
+        lambda row: f"{row['name'] or row['gid']}{(' <' + row['email'] + '>') if row['email'] else ''} (gid {row['gid']})",
+    )
+
+
 def confirm(text: str, default: bool = True) -> bool:
     default_str = "Y/n" if default else "y/N"
     value = input(f"{text} ({default_str}): ").strip().lower()
@@ -162,6 +260,10 @@ def args_initial_teams(log_level: str) -> List[str]:
     return args
 
 
+def args_report_defaults(log_level: str) -> List[str]:
+    return build_common_args(log_level)
+
+
 def args_get_tasks(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     print("\nSelect task sync scope:")
@@ -176,7 +278,10 @@ def args_get_tasks(log_level: str) -> List[str]:
         # Allow custom state file?
         # Use default path from get_tasks; advanced users can edit CLI args manually if needed.
     elif choice == "2":
-        project_gid = prompt("Project GID to sync", default="")
+        project_gid = _prompt_project_gid_from_lookup(
+            "task sync",
+            "Project GID to sync",
+        )
         if not project_gid:
             raise SystemExit("Project GID is required for single-project sync.")
         args.extend(["--project-gid", project_gid])
@@ -210,7 +315,10 @@ def args_get_task_extras(log_level: str) -> List[str]:
     print("[5] Personal tasks (specific assignees)")
     choice = input("Choice (default 1): ").strip() or "1"
     if choice == "1":
-        project_gid = prompt("Project GID for task extras", default="")
+        project_gid = _prompt_project_gid_from_lookup(
+            "task extras",
+            "Project GID for task extras",
+        )
         if not project_gid:
             raise SystemExit("Project GID is required.")
         args.extend(["--project-gid", project_gid])
@@ -231,7 +339,10 @@ def args_get_task_extras(log_level: str) -> List[str]:
 
 def args_personal_tasks(log_level: str, delta: bool = False) -> List[str]:
     args = build_common_args(log_level)
-    assignee = prompt("Assignee gid ('me' allowed, blank to use me)", default="me")
+    assignee = _prompt_user_gid_from_lookup(
+        "personal tasks",
+        "Assignee gid ('me' allowed, blank to use me)",
+    )
     if assignee:
         args.extend(["--assignee", assignee])
     if confirm("Sync all users instead?", default=False):
@@ -264,7 +375,10 @@ def args_incremental_updates(log_level: str) -> List[str]:
         print("[3] Team GIDs (comma-separated)")
         choice = input("Choice (default 2): ").strip() or "2"
         if choice == "1":
-            project_gid = prompt("Project GID to sync", default="")
+            project_gid = _prompt_project_gid_from_lookup(
+                "incremental sync",
+                "Project GID to sync",
+            )
             if not project_gid:
                 raise SystemExit("Project GID is required for option 1.")
             args.extend(["--project-gid", project_gid])
@@ -444,6 +558,47 @@ def run_sync_attachments(log_level: str) -> None:
     print_rerun_command("scripts.atlassian.sync_jira_attachments", args)
 
 
+def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
+    def run_project_details_report() -> None:
+        args = args_report_defaults(log_level)
+        team_gid = _prompt_team_gid_from_lookup(
+            "project details",
+            "Team GID to filter project details (blank = all teams)",
+        )
+        if team_gid:
+            args.extend(["--team-gid", team_gid])
+        run_script(export_project_details_report.main, args)
+
+    def run_team_memberships_report() -> None:
+        args = args_report_defaults(log_level)
+        team_gid = _prompt_team_gid_from_lookup(
+            "team memberships",
+            "Team GID to filter memberships (blank = all teams)",
+        )
+        if team_gid:
+            args.extend(["--team-gid", team_gid])
+        run_script(export_team_memberships.main, args)
+
+    return {
+        "1": MenuItem(
+            "1",
+            "Export project details report",
+            run_project_details_report,
+        ),
+        "2": MenuItem(
+            "2",
+            "Export users report",
+            lambda: run_script(export_users.main, args_report_defaults(log_level)),
+        ),
+        "3": MenuItem(
+            "3",
+            "Export team memberships report",
+            run_team_memberships_report,
+        ),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
 def args_import_jira_keys(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     csv_path = prompt("Path to Jira export CSV (with Issue key + External issue ID)", default="")
@@ -492,7 +647,10 @@ def args_clear_jira_keys(log_level: str) -> List[str]:
     if gids:
         args.extend(["--task-gids", gids])
     else:
-        project_gid = prompt("Project GID to clear mappings for (blank = all projects)", default="")
+        project_gid = _prompt_project_gid_from_lookup(
+            "clearing Jira mappings",
+            "Project GID to clear mappings for (blank = all projects)",
+        )
         if project_gid:
             args.extend(["--project-gid", project_gid])
     return args
@@ -623,6 +781,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         "1": MenuItem("1", "Initialization (metadata only)", lambda: run_group("Initialization", build_init_menu(args.log_level))),
         "2": MenuItem("2", "Tasks (full/extras/incremental)", lambda: run_group("Tasks", build_tasks_menu(args.log_level))),
         "3": MenuItem("3", "Atlassian (exports, mappings, attachments)", lambda: run_group("Atlassian", build_atlassian_menu(args.log_level))),
+        "4": MenuItem("4", "Reports (projects, users, memberships)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
         "q": MenuItem("q", "Quit", lambda: sys.exit(0)),
     }
 

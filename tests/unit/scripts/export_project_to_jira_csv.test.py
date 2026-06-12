@@ -20,6 +20,7 @@ from scripts.export_project_to_jira_csv import (
     parse_project_list,
     prompt_and_run_incremental_refresh,
     prompt_for_jira_base_url,
+    print_project_stats,
 )
 
 
@@ -39,17 +40,39 @@ class ExportProjectToJiraCsvTest(TestCase):
         # Seed project
         self.connection.execute(
             """
-            INSERT INTO projects (gid, name, synced_at)
-            VALUES (?, ?, ?)
+            INSERT INTO projects (
+                gid, name, num_tasks, num_incomplete_tasks, num_completed_tasks,
+                task_counts_captured_at, synced_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("proj_1", "Example Project", self.sync_time.isoformat()),
+            (
+                "proj_1",
+                "Example Project",
+                10,
+                4,
+                6,
+                "2025-01-01T00:00:00Z",
+                self.sync_time.isoformat(),
+            ),
         )
         self.connection.execute(
             """
-            INSERT INTO projects (gid, name, synced_at)
-            VALUES (?, ?, ?)
+            INSERT INTO projects (
+                gid, name, num_tasks, num_incomplete_tasks, num_completed_tasks,
+                task_counts_captured_at, synced_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            ("proj_2", "Secondary Project", self.sync_time.isoformat()),
+            (
+                "proj_2",
+                "Secondary Project",
+                2,
+                1,
+                1,
+                "2025-01-01T00:00:00Z",
+                self.sync_time.isoformat(),
+            ),
         )
 
         # Seed users
@@ -261,6 +284,10 @@ class ExportProjectToJiraCsvTest(TestCase):
         creator_atl_index = header.index("creator_atlassian_id")
         creator_atl_email_index = header.index("creator_atlassian_email")
         current_project_index = header.index("current_project")
+        project_num_tasks_index = header.index("project_num_tasks")
+        project_num_incomplete_index = header.index("project_num_incomplete_tasks")
+        project_num_completed_index = header.index("project_num_completed_tasks")
+        project_captured_at_index = header.index("project_task_counts_captured_at")
         projects_index = header.index("projects")
         start_on_index = header.index("start_on")
         start_at_index = header.index("start_at")
@@ -292,6 +319,10 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(first_task[creator_atl_index], "atl-account-alice")
         self.assertEqual(first_task[creator_atl_email_index], "alice.atl@example.com")
         self.assertEqual(first_task[current_project_index], "Example Project (proj_1)")
+        self.assertEqual(first_task[project_num_tasks_index], "10")
+        self.assertEqual(first_task[project_num_incomplete_index], "4")
+        self.assertEqual(first_task[project_num_completed_index], "6")
+        self.assertEqual(first_task[project_captured_at_index], "01/Jan/25 12:00 am")
         self.assertEqual(
             first_task[projects_index],
             "Example Project (proj_1); Secondary Project (proj_2)",
@@ -316,6 +347,10 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(second_task[creator_atl_email_index], "bob.atl@example.com")
         self.assertEqual(second_task[asana_id_index], "task_2")
         self.assertEqual(second_task[current_project_index], "Example Project (proj_1)")
+        self.assertEqual(second_task[project_num_tasks_index], "10")
+        self.assertEqual(second_task[project_num_incomplete_index], "4")
+        self.assertEqual(second_task[project_num_completed_index], "6")
+        self.assertEqual(second_task[project_captured_at_index], "01/Jan/25 12:00 am")
         self.assertEqual(second_task[projects_index], "Example Project (proj_1)")
         self.assertEqual(second_task[start_on_index], "02/Mar/25 12:00 am")
         self.assertEqual(second_task[start_at_index], "02/Mar/25 1:30 pm")
@@ -1050,6 +1085,29 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(child_row[current_project_index], "Example Project (proj_1)")
         parent_row = task_rows[parent_gid]
         self.assertEqual(parent_row[current_project_index], "Example Project (proj_1)")
+
+    def test_project_stats_print_snapshot_counts(self) -> None:
+        tasks = list(self.connection.execute("SELECT * FROM tasks WHERE gid IN (?, ?)", ("task_1", "task_2")))
+        comments = list(self.connection.execute("SELECT * FROM task_comments WHERE task_gid IN (?, ?)", ("task_1", "task_2")))
+        buffer = StringIO()
+        with redirect_stdout(buffer):
+            print_project_stats(
+                "proj_1",
+                tasks,
+                comments,
+                {},
+                {},
+                {},
+                0,
+                0,
+                self.connection,
+            )
+        output = buffer.getvalue()
+        self.assertIn("Project task count snapshot:", output)
+        self.assertIn("Total tasks: 2", output)
+        self.assertIn("Incomplete tasks: 4", output)
+        self.assertIn("Completed tasks: 6", output)
+        self.assertIn("Captured at: 2025-01-01T00:00:00Z", output)
 
     @patch("scripts.atlassian.export_project_to_jira_csv.prompt_and_run_incremental_refresh")
     def test_export_always_prompts_for_incremental_refresh(self, mock_refresh) -> None:

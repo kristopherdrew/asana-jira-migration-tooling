@@ -37,6 +37,10 @@ class DatabaseProjectsTest(TestCase):
             "privacy_setting": "favor_members",
             "notes": "Plain description",
             "html_notes": "<body>Plain description</body>",
+            "num_tasks": 12,
+            "num_incomplete_tasks": 3,
+            "num_completed_tasks": 9,
+            "task_counts_captured_at": "2023-02-01T12:34:56Z",
             "custom_fields": [
                 {
                     "gid": "cf_1",
@@ -94,6 +98,10 @@ class DatabaseProjectsTest(TestCase):
         self.assertEqual(row["privacy_setting"], "favor_members")
         self.assertEqual(row["notes"], "Plain description")
         self.assertEqual(row["html_notes"], "<body>Plain description</body>")
+        self.assertEqual(row["num_tasks"], 12)
+        self.assertEqual(row["num_incomplete_tasks"], 3)
+        self.assertEqual(row["num_completed_tasks"], 9)
+        self.assertEqual(row["task_counts_captured_at"], "2023-02-01T12:34:56Z")
 
         custom_fields = list(
             self.connection.execute(
@@ -188,3 +196,24 @@ class DatabaseProjectsTest(TestCase):
         )
         self.assertEqual(settings[0]["custom_field_gid"], "cf_updated")
         self.assertEqual(len(settings), 1)
+
+    def test_upsert_project_retains_null_task_counts_when_missing(self) -> None:
+        project = {
+            "gid": "proj_counts_missing",
+            "name": "Counts Missing",
+        }
+
+        sync_time = synced_at_timestamp()
+        self.database.upsert_project(self.connection, project, sync_time)
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT num_tasks, num_incomplete_tasks, num_completed_tasks, task_counts_captured_at FROM projects WHERE gid = ?",
+            ("proj_counts_missing",),
+        ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertIsNone(row["num_tasks"])
+        self.assertIsNone(row["num_incomplete_tasks"])
+        self.assertIsNone(row["num_completed_tasks"])
+        self.assertIsNone(row["task_counts_captured_at"])

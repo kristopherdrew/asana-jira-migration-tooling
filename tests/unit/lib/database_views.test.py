@@ -26,6 +26,10 @@ class DatabaseViewsTest(TestCase):
             "gid": "project_1",
             "name": "Roadmap",
             "team": {"gid": "team_1", "name": "Analytics Team"},
+            "num_tasks": 10,
+            "num_incomplete_tasks": 4,
+            "num_completed_tasks": 6,
+            "task_counts_captured_at": "2025-01-01T00:00:00Z",
             "custom_field_settings": [
                 {
                     "custom_field": {
@@ -93,6 +97,10 @@ class DatabaseViewsTest(TestCase):
                 teamId,
                 project_name,
                 project_gid,
+                project_num_tasks,
+                project_num_incomplete_tasks,
+                project_num_completed_tasks,
+                project_task_counts_captured_at,
                 custom_field_gid,
                 custom_field_name,
                 custom_field_type,
@@ -108,6 +116,10 @@ class DatabaseViewsTest(TestCase):
         self.assertEqual(row["teamId"], "team_1")
         self.assertEqual(row["project_name"], "Roadmap")
         self.assertEqual(row["project_gid"], "project_1")
+        self.assertEqual(row["project_num_tasks"], 10)
+        self.assertEqual(row["project_num_incomplete_tasks"], 4)
+        self.assertEqual(row["project_num_completed_tasks"], 6)
+        self.assertEqual(row["project_task_counts_captured_at"], "2025-01-01T00:00:00Z")
         self.assertEqual(row["custom_field_gid"], "cf_priority")
         self.assertEqual(row["custom_field_name"], "Priority")
         self.assertEqual(row["custom_field_type"], "enum")
@@ -124,6 +136,10 @@ class DatabaseViewsTest(TestCase):
             "gid": "project_1",
             "name": "Roadmap",
             "team": {"gid": "team_1", "name": "Analytics Team"},
+            "num_tasks": 10,
+            "num_incomplete_tasks": 4,
+            "num_completed_tasks": 6,
+            "task_counts_captured_at": "2025-01-01T00:00:00Z",
         }
         self.database.upsert_project(self.connection, project_payload, sync_time)
 
@@ -163,6 +179,10 @@ class DatabaseViewsTest(TestCase):
                 team_name,
                 project_name,
                 project_gid,
+                project_num_tasks,
+                project_num_incomplete_tasks,
+                project_num_completed_tasks,
+                project_task_counts_captured_at,
                 level_0_tasks,
                 level_1_tasks,
                 level_2_tasks,
@@ -179,6 +199,10 @@ class DatabaseViewsTest(TestCase):
         self.assertEqual(row["team_name"], "Analytics Team")
         self.assertEqual(row["project_name"], "Roadmap")
         self.assertEqual(row["project_gid"], "project_1")
+        self.assertEqual(row["project_num_tasks"], 10)
+        self.assertEqual(row["project_num_incomplete_tasks"], 4)
+        self.assertEqual(row["project_num_completed_tasks"], 6)
+        self.assertEqual(row["project_task_counts_captured_at"], "2025-01-01T00:00:00Z")
         self.assertEqual(row["level_0_tasks"], 1)
         self.assertEqual(row["level_1_tasks"], 2)
         self.assertEqual(row["level_2_tasks"], 0)
