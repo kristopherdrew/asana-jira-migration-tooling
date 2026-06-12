@@ -13,6 +13,9 @@ dist/
 # Compiled Python bytecode
 *.py[cod]
 
+# Local virtual environment
+.venv/
+
 # Log files
 *.log
 
