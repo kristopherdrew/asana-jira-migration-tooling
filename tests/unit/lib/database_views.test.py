@@ -284,3 +284,47 @@ class DatabaseViewsTest(TestCase):
         self.assertEqual(row["membership_synced_at"], sync_time.isoformat())
         self.assertEqual(row["user_synced_at"], sync_time.isoformat())
         self.assertEqual(row["team_synced_at"], sync_time.isoformat())
+
+    def test_team_memberships_view_retains_rows_without_user_snapshot(self) -> None:
+        sync_time = synced_at_timestamp()
+        self.database.upsert_team(
+            self.connection,
+            {
+                "gid": "team_1",
+                "name": "Analytics Team",
+                "is_public": True,
+            },
+            sync_time,
+        )
+        self.database.upsert_team_members(
+            self.connection,
+            "team_1",
+            [
+                {
+                    "user": {"gid": "user_missing", "is_active": True},
+                    "role": "member",
+                    "is_admin": True,
+                }
+            ],
+            sync_time,
+        )
+        self.connection.commit()
+
+        row = self.connection.execute(
+            """
+            SELECT
+                team_gid,
+                user_gid,
+                user_name,
+                user_email,
+                is_admin
+            FROM view_team_memberships
+            """
+        ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["team_gid"], "team_1")
+        self.assertEqual(row["user_gid"], "user_missing")
+        self.assertEqual(row["user_name"], "unknown_user user_missing")
+        self.assertIsNone(row["user_email"])
+        self.assertEqual(row["is_admin"], 1)

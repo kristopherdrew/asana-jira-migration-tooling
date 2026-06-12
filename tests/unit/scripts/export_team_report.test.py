@@ -157,3 +157,30 @@ class ExportTeamReportTest(TestCase):
         self.assertEqual(team_two["project_count_archived"], "0")
         self.assertEqual(team_two["known_team_admins"], "")
 
+    def test_exports_admin_gid_when_user_snapshot_is_missing(self) -> None:
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        self.database.upsert_team(
+            self.connection,
+            {"gid": "team_1", "name": "Team One", "is_public": True},
+            sync_time,
+        )
+        self.database.upsert_team_members(
+            self.connection,
+            "team_1",
+            [
+                {
+                    "user": {"gid": "user_missing", "is_active": True},
+                    "role": "member",
+                    "is_admin": True,
+                }
+            ],
+            sync_time,
+        )
+        self.connection.commit()
+
+        output_path = export_team_report(str(self.db_path), self.workspace / "exports", filename="teams.csv")
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        self.assertEqual(rows[0]["known_team_admins"], "unknown_user user_missing")

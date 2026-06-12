@@ -556,8 +556,19 @@ def format_user_reference(
     account_id, _ = resolve_atlassian_identity(user_map, user_gid, fallback_account_id)
     if account_id:
         return f"[~accountid:{account_id}]"
-    display_name = user_display_names.get(user_gid) or user_gid
-    return f"{display_name} - not migrated"
+    display_name = (user_display_names.get(user_gid) or "").strip()
+    if not display_name:
+        display_name = f"unknown_user {user_gid}"
+    return display_name
+
+
+def format_user_display_name(user_gid: Optional[str], user_name: Optional[str]) -> str:
+    display_name = (user_name or "").strip()
+    if display_name:
+        return display_name
+    if user_gid:
+        return f"unknown_user {user_gid}"
+    return ""
 
 
 def log_custom_field_list(
@@ -746,10 +757,13 @@ def write_user_association_report(
         for gid in sorted(associations.keys()):
             counts = associations.get(gid, Counter())
             account_id, atl_email = resolve_atlassian_identity(user_map, gid, None)
+            display_name = (user_display_names.get(gid) or "").strip()
+            if not display_name:
+                display_name = f"unknown_user {gid}"
             writer.writerow(
                 [
                     gid,
-                    user_display_names.get(gid, ""),
+                    display_name,
                     email_map.get(gid, ""),
                     account_id,
                     atl_email,
@@ -2415,11 +2429,11 @@ def export_project(
                 jira_parent_gid,
                 jira_depth_value,
                 task["name"],
-                task["assignee_name"] or "",
+                format_user_display_name(task["assignee_gid"], task["assignee_name"]),
                 task["assignee_email"] or "",
                 assignee_atl,
                 assignee_atl_email,
-                task["creator_name"] or "",
+                format_user_display_name(task["created_by_gid"], task["creator_name"]),
                 task["creator_email"] or "",
                 creator_atl,
                 creator_atl_email,

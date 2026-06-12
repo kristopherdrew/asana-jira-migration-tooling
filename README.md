@@ -229,7 +229,7 @@ Optional flags:
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
 ### Team Report
-Exports one row per team from SQLite with the team metadata, the total number of projects associated with that team, those projects split into active and archived counts, and a semicolon-separated list of known team admins in `Name <email>` form when the user snapshots are available.
+Exports one row per team from SQLite with the team metadata, the total number of projects associated with that team, those projects split into active and archived counts, and a semicolon-separated list of known team admins in `Name <email>` form when the user snapshots are available. If a user snapshot is missing, the export falls back to `unknown_user <gid>` so the association still appears.
 ```bash
 python3 -m scripts.export_team_report --database data/asana.sqlite
 ```
@@ -245,7 +245,7 @@ Optional flags:
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
 ### Team Memberships Report
-Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, admin flags, and sync timestamps in one place.
+Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, admin flags, and sync timestamps in one place. If the user snapshot is missing, the report still keeps the membership row and falls back to `unknown_user <gid>`.
 ```bash
 python3 -m scripts.export_team_memberships --database data/asana.sqlite
 ```

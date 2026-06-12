@@ -60,7 +60,11 @@ def _bool_to_text(value: Optional[int]) -> str:
 
 
 def _format_admin_label(name: Optional[str], email: Optional[str], user_gid: Optional[str]) -> str:
-    label = (name or user_gid or "").strip()
+    label = (name or "").strip()
+    if not label and user_gid:
+        label = f"unknown_user {user_gid}"
+    elif not label:
+        label = ""
     if email:
         return f"{label} <{email}>"
     return label
@@ -120,11 +124,11 @@ def export_team_report(
                 tm.team_gid,
                 u.name AS user_name,
                 u.email AS user_email,
-                u.gid AS user_gid
+                tm.user_gid AS user_gid
             FROM team_members tm
-            JOIN users u ON u.gid = tm.user_gid
+            LEFT JOIN users u ON u.gid = tm.user_gid
             WHERE COALESCE(tm.is_admin, 0) = 1
-            ORDER BY tm.team_gid, u.name COLLATE NOCASE, u.gid
+            ORDER BY tm.team_gid, u.name COLLATE NOCASE, tm.user_gid
             """
         ).fetchall()
 

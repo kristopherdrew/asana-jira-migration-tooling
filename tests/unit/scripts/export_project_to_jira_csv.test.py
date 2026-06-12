@@ -647,6 +647,49 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(row[assignee_atl_index], fallback_id)
         self.assertEqual(row[comment_index], "08/Mar/25 9:00 AM;atl-fallback; Comment without mapping")
 
+    def test_missing_user_snapshot_uses_unknown_user_label(self) -> None:
+        missing_gid = "user_missing"
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_missing_user",
+                "name": "Needs mapping",
+                "resource_type": "task",
+                "assignee": {"gid": missing_gid},
+                "created_by": {"gid": missing_gid},
+                "created_at": "2025-03-11T12:00:00Z",
+                "memberships": [{"project": {"gid": "proj_1", "name": "Example Project"}}],
+            },
+            self.sync_time,
+        )
+        self.connection.commit()
+
+        output_dir = self.workspace / "exports"
+        csv_path = export_project(
+            str(self.db_path),
+            "proj_1",
+            output_dir,
+            filename="unknown_user.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+        )
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        header = rows[0]
+        task_rows = {row[header.index("External issue ID")]: row for row in rows[1:]}
+        row = task_rows["task_missing_user"]
+
+        assignee_idx = header.index("assignee")
+        creator_idx = header.index("creator")
+        self.assertEqual(row[assignee_idx], "unknown_user user_missing")
+        self.assertEqual(row[creator_idx], "unknown_user user_missing")
+
+        assoc_path = csv_path.with_name(f"{csv_path.stem}_user_associations.csv")
+        with assoc_path.open("r", newline="", encoding="utf-8") as handle:
+            assoc_rows = list(csv.DictReader(handle))
+        assoc_map = {row["user_gid"]: row for row in assoc_rows}
+        self.assertEqual(assoc_map[missing_gid]["display_name"], "unknown_user user_missing")
+
     def test_missing_account_report_created_with_counts(self) -> None:
         missing_gid = "user_missing_report"
         missing_email = "missing.report@example.com"
@@ -987,7 +1030,7 @@ class ExportProjectToJiraCsvTest(TestCase):
             "Migrated user: [Migrated Example|https://app.asana.com/0/profile/1201132360936580]\n"
             "[~accountid:atl-account-zafar]\n"
             "Missing user: [Casey Example|https://app.asana.com/0/profile/1201132360936581]\n"
-            "Casey Example - not migrated\n"
+            "Casey Example\n"
             f"HTML tagged user: [Isley Gao|https://app.asana.com/0/profile/{html_profile_url_gid}]\n"
             "[~accountid:atl-account-isley]\n"
             f"User list link: [Hazel Bachrach|https://app.asana.com/0/{html_list_url_gid}/list]\n"
@@ -1007,7 +1050,7 @@ class ExportProjectToJiraCsvTest(TestCase):
             f" and alt [Alt Task|https://app.asana.com/0/{alt_task_project_gid}/{alt_task_gid}/f]\n"
             f"{jira_base_url}/issues?jql=%22External%20issue%20ID%22%20~%20%221206393554891721%22"
             " with profile [Casey Example|https://app.asana.com/0/profile/1201132360936581]\n"
-            "Casey Example - not migrated and HTML user "
+            "Casey Example and HTML user "
             f"[Isley Gao|https://app.asana.com/0/profile/{html_profile_url_gid}]\n"
             "[~accountid:atl-account-isley]oops plus list "
             f"[Hazel Bachrach|https://app.asana.com/0/{html_list_url_gid}/list]\n"

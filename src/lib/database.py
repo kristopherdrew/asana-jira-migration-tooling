@@ -447,7 +447,11 @@ SELECT
     t.name AS team_name,
     t.is_public AS team_is_public,
     tm.user_gid,
-    u.name AS user_name,
+    CASE
+        WHEN u.name IS NOT NULL AND TRIM(u.name) != ''
+            THEN u.name
+        ELSE 'unknown_user ' || tm.user_gid
+    END AS user_name,
     u.email AS user_email,
     u.resource_type,
     u.is_active AS user_is_active,
@@ -460,7 +464,7 @@ SELECT
 FROM team_members tm
 INNER JOIN teams t
     ON tm.team_gid = t.gid
-INNER JOIN users u
+LEFT JOIN users u
     ON tm.user_gid = u.gid;
 """
 
