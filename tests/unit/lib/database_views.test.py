@@ -187,3 +187,73 @@ class DatabaseViewsTest(TestCase):
         self.assertEqual(row["total_task_count"], 3)
         self.assertEqual(row["oldest_created_issue"], "2024-01-01T09:00:00Z")
         self.assertEqual(row["last_updated_issue"], "2024-01-12T09:30:00Z")
+
+    def test_team_memberships_view_returns_joined_rows(self) -> None:
+        sync_time = synced_at_timestamp()
+        self.database.upsert_team(
+            self.connection,
+            {
+                "gid": "team_1",
+                "name": "Analytics Team",
+                "is_public": True,
+            },
+            sync_time,
+        )
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "user_1",
+                "name": "Ada Lovelace",
+                "resource_type": "user",
+                "email": "ada@example.com",
+                "is_active": True,
+            },
+            sync_time,
+        )
+        self.database.upsert_team_members(
+            self.connection,
+            "team_1",
+            [
+                {
+                    "user": {"gid": "user_1", "is_active": True},
+                    "role": "member",
+                }
+            ],
+            sync_time,
+        )
+        self.connection.commit()
+
+        row = self.connection.execute(
+            """
+            SELECT
+                team_gid,
+                team_name,
+                team_is_public,
+                user_gid,
+                user_name,
+                user_email,
+                resource_type,
+                user_is_active,
+                role,
+                membership_is_active,
+                membership_synced_at,
+                user_synced_at,
+                team_synced_at
+            FROM view_team_memberships
+            """
+        ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["team_gid"], "team_1")
+        self.assertEqual(row["team_name"], "Analytics Team")
+        self.assertEqual(row["team_is_public"], 1)
+        self.assertEqual(row["user_gid"], "user_1")
+        self.assertEqual(row["user_name"], "Ada Lovelace")
+        self.assertEqual(row["user_email"], "ada@example.com")
+        self.assertEqual(row["resource_type"], "user")
+        self.assertEqual(row["user_is_active"], 1)
+        self.assertEqual(row["role"], "member")
+        self.assertEqual(row["membership_is_active"], 1)
+        self.assertEqual(row["membership_synced_at"], sync_time.isoformat())
+        self.assertEqual(row["user_synced_at"], sync_time.isoformat())
+        self.assertEqual(row["team_synced_at"], sync_time.isoformat())

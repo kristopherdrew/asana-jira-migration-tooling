@@ -59,6 +59,7 @@ credentials.json
 # Data directory
 
 data/
+exports/
 
 # Common Python files
 

@@ -156,6 +156,12 @@ def args_initial_metadata(log_level: str) -> List[str]:
     return build_common_args(log_level)
 
 
+def args_initial_teams(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    args.append("--include-members")
+    return args
+
+
 def args_get_tasks(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     print("\nSelect task sync scope:")
@@ -552,7 +558,7 @@ def run_initial_metadata(log_level: str) -> None:
         ("get_users", get_users.main),
     ]
     for label, func in steps:
-        argv = args_initial_metadata(log_level)
+        argv = args_initial_teams(log_level) if label == "get_teams" else args_initial_metadata(log_level)
         try:
             logging.info("Running %s ...", label)
             run_script(func, argv)
@@ -567,7 +573,7 @@ def run_initial_metadata(log_level: str) -> None:
 
 def build_init_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
-        "1": MenuItem("1", "Run initial metadata (teams, projects, custom fields, users)", lambda: run_initial_metadata(log_level)),
+        "1": MenuItem("1", "Run initial metadata (teams + memberships, projects, custom fields, users)", lambda: run_initial_metadata(log_level)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

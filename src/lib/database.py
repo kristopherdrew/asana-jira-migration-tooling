@@ -420,6 +420,29 @@ SELECT
 FROM project_aggregates;
 """
 
+VIEW_TEAM_MEMBERSHIPS = """
+CREATE VIEW view_team_memberships AS
+SELECT
+    tm.team_gid,
+    t.name AS team_name,
+    t.is_public AS team_is_public,
+    tm.user_gid,
+    u.name AS user_name,
+    u.email AS user_email,
+    u.resource_type,
+    u.is_active AS user_is_active,
+    tm.role,
+    tm.is_active AS membership_is_active,
+    tm.synced_at AS membership_synced_at,
+    u.synced_at AS user_synced_at,
+    t.synced_at AS team_synced_at
+FROM team_members tm
+INNER JOIN teams t
+    ON tm.team_gid = t.gid
+INNER JOIN users u
+    ON tm.user_gid = u.gid;
+"""
+
 TEAM_MEMBERS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS team_members (
     team_gid TEXT NOT NULL,
@@ -1725,8 +1748,11 @@ class Database:
         connection.execute("DROP VIEW IF EXISTS view_project_task_hierarchy_counts")
         connection.execute("DROP VIEW IF EXISTS project_custom_field_configurations")
         connection.execute("DROP VIEW IF EXISTS view_project_custom_field_configurations")
+        connection.execute("DROP VIEW IF EXISTS team_memberships")
+        connection.execute("DROP VIEW IF EXISTS view_team_memberships")
         connection.executescript(VIEW_PROJECT_TASK_HIERARCHY_COUNTS)
         connection.executescript(VIEW_PROJECT_CUSTOM_FIELD_CONFIGURATIONS)
+        connection.executescript(VIEW_TEAM_MEMBERSHIPS)
 
     def _ensure_task_jira_mapping_schema(self, connection: sqlite3.Connection) -> None:
         info = connection.execute("PRAGMA table_info(task_jira_mappings)").fetchall()

@@ -51,7 +51,7 @@ Run the menu-driven wrapper to combine the existing entrypoints without losing s
 python3 -m scripts.interactive_cli --log-level INFO
 ```
 Menu highlights:
-- Category 1 (Initialization): teams → projects → custom fields → users.
+- Category 1 (Initialization): teams + memberships → projects → custom fields → users.
 - Category 2 (Tasks): tasks, task extras, personal tasks (full), incremental updates.
 - Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, sync attachments.
 

@@ -7,6 +7,12 @@ from scripts import interactive_cli
 
 
 class IncrementalArgsBuilderTest(TestCase):
+    def test_initial_team_args_include_memberships(self) -> None:
+        self.assertEqual(
+            interactive_cli.args_initial_teams("INFO"),
+            ["--log-level", "INFO", "--include-members"],
+        )
+
     def test_all_teams_with_optional_exclude(self) -> None:
         with patch("builtins.input", side_effect=["n", "5", "y", "team_a,team_b", "n"]):
             args = interactive_cli.args_incremental_updates("DEBUG")
@@ -57,3 +63,16 @@ class IncrementalArgsBuilderTest(TestCase):
                 "no",
             ],
         )
+
+    @patch("scripts.interactive_cli.log_run")
+    @patch("scripts.interactive_cli.run_script")
+    def test_initial_metadata_uses_team_membership_sync(self, mock_run_script, mock_log_run) -> None:
+        interactive_cli.run_initial_metadata("WARNING")
+
+        self.assertEqual(mock_run_script.call_count, 4)
+        first_call = mock_run_script.call_args_list[0]
+        self.assertIs(first_call.args[0], interactive_cli.get_teams.main)
+        self.assertEqual(first_call.args[1], ["--log-level", "WARNING", "--include-members"])
+
+        for call in mock_run_script.call_args_list[1:]:
+            self.assertEqual(call.args[1], ["--log-level", "WARNING"])
