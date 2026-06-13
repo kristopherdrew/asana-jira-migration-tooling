@@ -70,12 +70,15 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--resume-all-teams",
         action="store_true",
-        help="When used with --all-teams, resume from teams already completed in the state file.",
+        help="When used with --all-teams, resume from teams already completed in the JSON state file.",
     )
     parser.add_argument(
         "--all-teams-state-file",
         default=DEFAULT_STATE_PATH,
-        help=f"Path to the all-teams progress file (default: {DEFAULT_STATE_PATH}).",
+        help=(
+            f"Path to the all-teams progress file (default: {DEFAULT_STATE_PATH}). "
+            "The file stores completed_team_gids and an ISO 8601 UTC updated_at timestamp."
+        ),
     )
     parser.add_argument(
         "--page-size",
@@ -346,7 +349,7 @@ def _save_completed_teams(state_path: Path, completed: Set[str]) -> None:
     state_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "completed_team_gids": sorted(completed),
-        "updated_at": synced_at_timestamp(),
+        "updated_at": synced_at_timestamp().isoformat(),
     }
     with state_path.open("w", encoding="utf-8") as fp:
         json.dump(payload, fp, indent=2)
