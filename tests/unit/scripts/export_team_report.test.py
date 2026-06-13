@@ -95,6 +95,7 @@ class ExportTeamReportTest(TestCase):
                 "name": "Project One",
                 "team": {"gid": "team_1", "name": "Team One"},
                 "archived": False,
+                "num_tasks": 10,
             },
             sync_time,
         )
@@ -105,6 +106,7 @@ class ExportTeamReportTest(TestCase):
                 "name": "Project Two",
                 "team": {"gid": "team_1", "name": "Team One"},
                 "archived": True,
+                "num_tasks": 4,
             },
             sync_time,
         )
@@ -115,6 +117,7 @@ class ExportTeamReportTest(TestCase):
                 "name": "Project Three",
                 "team": {"gid": "team_1", "name": "Team One"},
                 "archived": False,
+                "num_tasks": 2,
             },
             sync_time,
         )
@@ -125,6 +128,34 @@ class ExportTeamReportTest(TestCase):
                 "name": "Project Four",
                 "team": {"gid": "team_2", "name": "Team Two"},
                 "archived": False,
+                "num_tasks": 8,
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_1",
+                "name": "Task One",
+                "memberships": [{"project": {"gid": "proj_1", "name": "Project One"}}],
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_2",
+                "name": "Task Two",
+                "memberships": [{"project": {"gid": "proj_2", "name": "Project Two"}}],
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_3",
+                "name": "Task Three",
+                "memberships": [{"project": {"gid": "proj_3", "name": "Project Three"}}],
             },
             sync_time,
         )
@@ -144,6 +175,8 @@ class ExportTeamReportTest(TestCase):
         self.assertEqual(team_one["project_count_total"], "3")
         self.assertEqual(team_one["project_count_active"], "2")
         self.assertEqual(team_one["project_count_archived"], "1")
+        self.assertEqual(team_one["project_task_count_total"], "16")
+        self.assertEqual(team_one["actual_task_count_total"], "3")
         self.assertEqual(
             team_one["known_team_admins"],
             "Alice Admin <alice@example.com>; Bob Boss <bob@example.com>",
@@ -157,6 +190,8 @@ class ExportTeamReportTest(TestCase):
         self.assertEqual(team_two["project_count_total"], "1")
         self.assertEqual(team_two["project_count_active"], "1")
         self.assertEqual(team_two["project_count_archived"], "0")
+        self.assertEqual(team_two["project_task_count_total"], "8")
+        self.assertEqual(team_two["actual_task_count_total"], "")
         self.assertEqual(team_two["known_team_admins"], "")
 
     def test_exports_admin_gid_when_user_snapshot_is_missing(self) -> None:
