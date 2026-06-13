@@ -78,7 +78,12 @@ class ExportProjectDetailsReportTest(TestCase):
         )
         self.connection.commit()
 
-        output_path = export_project_details(str(self.db_path), self.workspace / "exports", filename="projects.csv")
+        output_path = export_project_details(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="projects.csv",
+            workspace_gid="ws_1",
+        )
 
         self.assertTrue(output_path.exists())
         with output_path.open("r", newline="", encoding="utf-8") as handle:
@@ -86,7 +91,9 @@ class ExportProjectDetailsReportTest(TestCase):
 
         self.assertEqual(len(rows), 2)
         project_one = next(row for row in rows if row["gid"] == "proj_1")
+        self.assertEqual(project_one["project_url"], "https://app.asana.com/1/ws_1/project/proj_1")
         self.assertEqual(project_one["team_name"], "Team One")
+        self.assertEqual(project_one["team_url"], "https://app.asana.com/0/team_1/")
         self.assertEqual(project_one["num_tasks"], "12")
         self.assertEqual(project_one["num_incomplete_tasks"], "5")
         self.assertEqual(project_one["num_completed_tasks"], "7")
@@ -137,6 +144,7 @@ class ExportProjectDetailsReportTest(TestCase):
             self.workspace / "exports",
             filename="projects_team_1.csv",
             team_gid="team_1",
+            workspace_gid="ws_1",
         )
 
         with output_path.open("r", newline="", encoding="utf-8") as handle:

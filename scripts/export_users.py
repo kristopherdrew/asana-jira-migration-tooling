@@ -15,12 +15,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.lib.config import load_credentials
 from src.lib.database import Database
+from src.lib.asana_urls import build_user_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
+DEFAULT_CONFIG_ROOT = "."
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +47,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
+    )
+    parser.add_argument(
+        "--workspace-gid",
+        help="Optional Asana workspace GID used to build user URLs.",
     )
     return parser.parse_args(argv)
 
@@ -70,6 +77,7 @@ def export_users(
     database_path: str,
     output_dir: Path,
     filename: Optional[str] = None,
+    workspace_gid: Optional[str] = None,
 ) -> Path:
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
@@ -84,6 +92,7 @@ def export_users(
 
     with database.connect() as connection:
         database.initialize(connection)
+        resolved_workspace_gid = workspace_gid
 
         users = connection.execute(
             """
@@ -104,6 +113,7 @@ def export_users(
         "email",
         "resource_type",
         "is_active",
+        "user_url",
         "synced_at",
         "workspaces",
     ]
@@ -122,6 +132,7 @@ def export_users(
                     "email": row["email"],
                     "resource_type": row["resource_type"],
                     "is_active": _bool_to_text(row["is_active"]),
+                    "user_url": build_user_url(resolved_workspace_gid, row["gid"]),
                     "synced_at": row["synced_at"],
                     "workspaces": "; ".join(distinct_workspaces),
                 }
@@ -149,6 +160,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         database_path=args.database,
         output_dir=Path(args.output_dir),
         filename=args.filename,
+        workspace_gid=args.workspace_gid or load_credentials(DEFAULT_CONFIG_ROOT).workspace_gid,
     )
     logger.info("User export completed: %s", output_path)
 

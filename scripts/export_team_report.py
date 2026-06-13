@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.database import Database
+from src.lib.asana_urls import build_team_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
@@ -144,6 +145,7 @@ def export_team_report(
     fieldnames = [
         "team_gid",
         "team_name",
+        "team_url",
         "team_is_public",
         "project_count_total",
         "project_count_active",
@@ -160,6 +162,7 @@ def export_team_report(
                 {
                     "team_gid": row["gid"],
                     "team_name": row["name"],
+                    "team_url": build_team_url(row["gid"]),
                     "team_is_public": _bool_to_text(row["is_public"]),
                     "project_count_total": row["total_projects"] or 0,
                     "project_count_active": row["active_projects"] or 0,

@@ -55,7 +55,12 @@ class ExportUsersTest(TestCase):
         self.connection.commit()
 
         output_dir = self.workspace / "exports"
-        csv_path = export_users(str(self.database_path), output_dir, filename="users.csv")
+        csv_path = export_users(
+            str(self.database_path),
+            output_dir,
+            filename="users.csv",
+            workspace_gid="wrk_1",
+        )
 
         self.assertTrue(csv_path.exists())
         with csv_path.open("r", newline="", encoding="utf-8") as handle:
@@ -67,6 +72,7 @@ class ExportUsersTest(TestCase):
         self.assertEqual(user_one["name"], "Alice Example")
         self.assertEqual(user_one["email"], "alice@example.com")
         self.assertEqual(user_one["is_active"], "true")
+        self.assertEqual(user_one["user_url"], "https://app.asana.com/1/wrk_1/profile/user_1")
         self.assertEqual(
             user_one["workspaces"],
             "Workspace One; Workspace Two",
@@ -74,4 +80,5 @@ class ExportUsersTest(TestCase):
 
         user_two = next(row for row in reader if row["gid"] == "user_2")
         self.assertEqual(user_two["is_active"], "false")
+        self.assertEqual(user_two["user_url"], "https://app.asana.com/1/wrk_1/profile/user_2")
         self.assertEqual(user_two["workspaces"], "")
