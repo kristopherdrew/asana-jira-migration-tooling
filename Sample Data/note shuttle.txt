@@ -1,0 +1,5 @@
+Team URL - https://app.asana.com/0/$team_gid/
+Project URL - https://app.asana.com/1/$asana_workspace_gid/project/$project_gid
+User URL - https://app.asana.com/1/$asana_workspace_gid/profile/$user_gid
+
+Team Details report should include a sum of all tasks from the project associations, both the value from the project end point, and the true number from the task table if available
