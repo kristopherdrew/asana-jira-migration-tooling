@@ -3,3 +3,12 @@ Project URL - https://app.asana.com/1/$asana_workspace_gid/project/$project_gid
 User URL - https://app.asana.com/1/$asana_workspace_gid/profile/$user_gid
 
 Team Details report should include a sum of all tasks from the project associations, both the value from the project end point, and the true number from the task table if available
+
+Add the following to the SQL configuration so they are defaults
+.headers on
+.mode column
+.nullvalue NULL
+
+
+When running the interactive CLI for the first time, if no credentials are found to be referenced, provide an interactive solution to paste each of the details required.
+Additionally, provide a way to change credentials file from the interactive cli as it's own option
