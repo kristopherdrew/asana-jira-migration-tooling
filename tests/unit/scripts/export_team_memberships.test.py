@@ -55,7 +55,12 @@ class ExportTeamMembershipsTest(TestCase):
         )
         self.connection.commit()
 
-        output_path = export_team_memberships(str(self.db_path), self.workspace / "exports", filename="memberships.csv")
+        output_path = export_team_memberships(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="memberships.csv",
+            workspace_gid="ws_1",
+        )
 
         self.assertTrue(output_path.exists())
         with output_path.open("r", newline="", encoding="utf-8") as handle:
@@ -65,9 +70,11 @@ class ExportTeamMembershipsTest(TestCase):
         row = rows[0]
         self.assertEqual(row["team_gid"], "team_1")
         self.assertEqual(row["team_name"], "Team One")
+        self.assertEqual(row["team_url"], "https://app.asana.com/0/team_1/")
         self.assertEqual(row["team_is_public"], "true")
         self.assertEqual(row["user_gid"], "user_1")
         self.assertEqual(row["user_email"], "user1@example.com")
+        self.assertEqual(row["user_url"], "https://app.asana.com/1/ws_1/profile/user_1")
         self.assertEqual(row["user_is_active"], "true")
         self.assertEqual(row["role"], "member")
         self.assertEqual(row["is_admin"], "true")
@@ -95,7 +102,10 @@ class ExportTeamMembershipsTest(TestCase):
         self.connection.commit()
 
         output_path = export_team_memberships(
-            str(self.db_path), self.workspace / "exports", filename="memberships.csv"
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="memberships.csv",
+            workspace_gid="ws_1",
         )
 
         with output_path.open("r", newline="", encoding="utf-8") as handle:
@@ -105,4 +115,6 @@ class ExportTeamMembershipsTest(TestCase):
         row = rows[0]
         self.assertEqual(row["user_gid"], "user_missing")
         self.assertEqual(row["user_name"], "unknown_user user_missing")
+        self.assertEqual(row["team_url"], "https://app.asana.com/0/team_1/")
+        self.assertEqual(row["user_url"], "https://app.asana.com/1/ws_1/profile/user_missing")
         self.assertEqual(row["is_admin"], "true")

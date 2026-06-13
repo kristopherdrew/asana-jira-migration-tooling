@@ -15,12 +15,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.lib.config import load_credentials
 from src.lib.database import Database
+from src.lib.asana_urls import build_project_url, build_team_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
+DEFAULT_CONFIG_ROOT = "."
 logger = logging.getLogger(__name__)
 
 
@@ -49,6 +52,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         default="INFO",
         help="Logging verbosity (default: INFO).",
     )
+    parser.add_argument(
+        "--workspace-gid",
+        help="Optional Asana workspace GID used to build project URLs.",
+    )
     return parser.parse_args(argv)
 
 
@@ -63,6 +70,7 @@ def export_project_details(
     output_dir: Path,
     filename: Optional[str] = None,
     team_gid: Optional[str] = None,
+    workspace_gid: Optional[str] = None,
 ) -> Path:
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
@@ -77,6 +85,7 @@ def export_project_details(
 
     with database.connect() as connection:
         database.initialize(connection)
+        resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
         team_filter = "WHERE p.team_gid = ?" if team_gid else ""
         query = f"""
             WITH actual_task_counts AS (
@@ -144,8 +153,10 @@ def export_project_details(
     fieldnames = [
         "gid",
         "name",
+        "project_url",
         "team_gid",
         "team_name",
+        "team_url",
         "archived",
         "resource_subtype",
         "owner_gid",
@@ -179,8 +190,10 @@ def export_project_details(
                 {
                     "gid": row["gid"],
                     "name": row["name"],
+                    "project_url": build_project_url(resolved_workspace_gid, row["gid"]),
                     "team_gid": row["team_gid"],
                     "team_name": row["team_name"],
+                    "team_url": build_team_url(row["team_gid"]),
                     "archived": _bool_to_text(row["archived"]),
                     "resource_subtype": row["resource_subtype"],
                     "owner_gid": row["owner_gid"],
@@ -223,6 +236,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         output_dir=Path(args.output_dir),
         filename=args.filename,
         team_gid=args.team_gid,
+        workspace_gid=args.workspace_gid or load_credentials(DEFAULT_CONFIG_ROOT).workspace_gid,
     )
     logger.info("Project details export completed: %s", output_path)
 

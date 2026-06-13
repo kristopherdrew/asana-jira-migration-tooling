@@ -139,6 +139,7 @@ class ExportTeamReportTest(TestCase):
         self.assertEqual([row["team_gid"] for row in rows], ["team_1", "team_2"])
         team_one = rows[0]
         self.assertEqual(team_one["team_name"], "Team One")
+        self.assertEqual(team_one["team_url"], "https://app.asana.com/0/team_1/")
         self.assertEqual(team_one["team_is_public"], "true")
         self.assertEqual(team_one["project_count_total"], "3")
         self.assertEqual(team_one["project_count_active"], "2")
@@ -151,6 +152,7 @@ class ExportTeamReportTest(TestCase):
 
         team_two = rows[1]
         self.assertEqual(team_two["team_name"], "Team Two")
+        self.assertEqual(team_two["team_url"], "https://app.asana.com/0/team_2/")
         self.assertEqual(team_two["team_is_public"], "false")
         self.assertEqual(team_two["project_count_total"], "1")
         self.assertEqual(team_two["project_count_active"], "1")
@@ -184,3 +186,4 @@ class ExportTeamReportTest(TestCase):
             rows = list(csv.DictReader(handle))
 
         self.assertEqual(rows[0]["known_team_admins"], "unknown_user user_missing")
+        self.assertEqual(rows[0]["team_url"], "https://app.asana.com/0/team_1/")
