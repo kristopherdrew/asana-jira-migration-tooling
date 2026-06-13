@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 from scripts import interactive_cli
+from src.lib.config import Credentials
 
 
 class IncrementalArgsBuilderTest(TestCase):
@@ -98,6 +100,77 @@ class IncrementalArgsBuilderTest(TestCase):
             args = interactive_cli.args_personal_tasks("INFO")
 
         self.assertEqual(args, ["--log-level", "INFO", "--assignee", "user_2"])
+
+    @patch("scripts.interactive_cli.bootstrap_credentials", return_value=Path("/tmp/creds.env"))
+    @patch("scripts.interactive_cli.load_credentials", side_effect=FileNotFoundError)
+    def test_ensure_interactive_credentials_bootstraps_missing_reference(
+        self,
+        mock_load_credentials,
+        mock_bootstrap_credentials,
+    ) -> None:
+        interactive_cli.ensure_interactive_credentials(Path("/tmp/project"))
+
+        mock_load_credentials.assert_called_once_with(Path("/tmp/project"))
+        mock_bootstrap_credentials.assert_called_once_with(Path("/tmp/project"))
+
+    @patch("scripts.interactive_cli.write_project_env_pointer")
+    @patch("scripts.interactive_cli.write_credentials_file")
+    @patch(
+        "scripts.interactive_cli.prompt_credentials_values",
+        return_value=Credentials(
+            token="asana-token",
+            workspace_gid="workspace-id",
+            skip_ssl_verification=False,
+            atlassian_username="jira-user@example.com",
+            atlassian_token="jira-token",
+        ),
+    )
+    @patch("scripts.interactive_cli.prompt_credentials_env_path", return_value=Path("/tmp/client.env"))
+    def test_bootstrap_credentials_writes_file_and_pointer(
+        self,
+        mock_prompt_env_path,
+        mock_prompt_values,
+        mock_write_credentials_file,
+        mock_write_project_env_pointer,
+    ) -> None:
+        result = interactive_cli.bootstrap_credentials(Path("/tmp/project"))
+
+        self.assertEqual(result, Path("/tmp/client.env"))
+        mock_prompt_env_path.assert_called_once()
+        mock_prompt_values.assert_called_once()
+        mock_write_credentials_file.assert_called_once()
+        mock_write_project_env_pointer.assert_called_once_with(Path("/tmp/project"), Path("/tmp/client.env"))
+
+    @patch("scripts.interactive_cli.write_project_env_pointer")
+    @patch("scripts.interactive_cli.write_credentials_file")
+    @patch("scripts.interactive_cli.prompt_bool", return_value=True)
+    @patch(
+        "scripts.interactive_cli.prompt_credentials_values",
+        return_value=Credentials(
+            token="asana-token",
+            workspace_gid="workspace-id",
+            skip_ssl_verification=True,
+            atlassian_username=None,
+            atlassian_token=None,
+        ),
+    )
+    @patch("scripts.interactive_cli.prompt_credentials_env_path", return_value=Path("/tmp/new-client.env"))
+    def test_change_credentials_file_reference_creates_missing_file(
+        self,
+        mock_prompt_env_path,
+        mock_prompt_values,
+        mock_prompt_bool,
+        mock_write_credentials_file,
+        mock_write_project_env_pointer,
+    ) -> None:
+        with patch("scripts.interactive_cli.resolve_credentials_path", return_value=Path("/tmp/current.env")):
+            result = interactive_cli.change_credentials_file_reference(Path("/tmp/project"))
+
+        self.assertEqual(result, Path("/tmp/new-client.env"))
+        mock_prompt_bool.assert_called_once()
+        mock_prompt_values.assert_called_once()
+        mock_write_credentials_file.assert_called_once()
+        mock_write_project_env_pointer.assert_called_once_with(Path("/tmp/project"), Path("/tmp/new-client.env"))
 
     @patch("scripts.interactive_cli.log_run")
     @patch("scripts.interactive_cli.run_script")

@@ -55,6 +55,9 @@ Menu highlights:
 - Category 2 (Tasks): tasks, task extras, personal tasks (full), incremental updates.
 - Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, sync attachments.
 - Category 4 (Reports): project details, team summary, users, team memberships.
+- Category 5 (Credentials): create/update the referenced env file or switch the project to a different one.
+
+On first launch, if the interactive CLI cannot resolve a credentials file from the environment or `.asana_jira_env_path`, it starts a setup flow that asks for the Asana token, workspace GID, SSL verification flag, and optional Atlassian credentials, then writes the env file and project pointer for you.
 
 When you run the Initialization flow, the projects step prompts for archived scope so you can choose active, archived, or all projects during the first data pull.
 
