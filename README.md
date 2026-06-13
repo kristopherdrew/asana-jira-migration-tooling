@@ -231,7 +231,7 @@ Optional flags:
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
 ### Team Report
-Exports one row per team from SQLite with the team metadata, a direct Asana team URL, the total number of projects associated with that team, those projects split into active and archived counts, and a semicolon-separated list of known team admins in `Name <email>` form when the user snapshots are available. If a user snapshot is missing, the export falls back to `unknown_user <gid>` so the association still appears.
+Exports one row per team from SQLite with the team metadata, a direct Asana team URL, the total number of projects associated with that team, those projects split into active and archived counts, a sum of the stored project task counts, and a sum of the actual task-table counts when task rows are available. It also includes a semicolon-separated list of known team admins in `Name <email>` form when the user snapshots are available. If a user snapshot is missing, the export falls back to `unknown_user <gid>` so the association still appears.
 ```bash
 python3 -m scripts.export_team_report --database data/asana.sqlite
 ```

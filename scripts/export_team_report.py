@@ -92,15 +92,28 @@ def export_team_report(
         database.initialize(connection)
         params: list[str] = []
         query = """
-            WITH project_counts AS (
+            WITH actual_task_counts AS (
                 SELECT
-                    team_gid,
+                    tp.project_gid,
+                    COUNT(DISTINCT t.gid) AS actual_task_count
+                FROM task_projects tp
+                JOIN tasks t
+                    ON t.gid = tp.task_gid
+                GROUP BY tp.project_gid
+            ),
+            project_counts AS (
+                SELECT
+                    p.team_gid,
                     COUNT(*) AS total_projects,
-                    SUM(CASE WHEN COALESCE(archived, 0) = 0 THEN 1 ELSE 0 END) AS active_projects,
-                    SUM(CASE WHEN COALESCE(archived, 0) = 1 THEN 1 ELSE 0 END) AS archived_projects
-                FROM projects
-                WHERE team_gid IS NOT NULL
-                GROUP BY team_gid
+                    SUM(CASE WHEN COALESCE(p.archived, 0) = 0 THEN 1 ELSE 0 END) AS active_projects,
+                    SUM(CASE WHEN COALESCE(p.archived, 0) = 1 THEN 1 ELSE 0 END) AS archived_projects,
+                    SUM(COALESCE(p.num_tasks, 0)) AS project_task_count_total,
+                    SUM(COALESCE(atc.actual_task_count, 0)) AS actual_task_count_total,
+                    SUM(CASE WHEN atc.actual_task_count IS NULL THEN 0 ELSE 1 END) AS actual_task_count_sources
+                FROM projects p
+                LEFT JOIN actual_task_counts atc ON atc.project_gid = p.gid
+                WHERE p.team_gid IS NOT NULL
+                GROUP BY p.team_gid
             )
             SELECT
                 t.gid,
@@ -109,7 +122,10 @@ def export_team_report(
                 t.synced_at,
                 COALESCE(pc.total_projects, 0) AS total_projects,
                 COALESCE(pc.active_projects, 0) AS active_projects,
-                COALESCE(pc.archived_projects, 0) AS archived_projects
+                COALESCE(pc.archived_projects, 0) AS archived_projects,
+                COALESCE(pc.project_task_count_total, 0) AS project_task_count_total,
+                pc.actual_task_count_total AS actual_task_count_total,
+                COALESCE(pc.actual_task_count_sources, 0) AS actual_task_count_sources
             FROM teams t
             LEFT JOIN project_counts pc ON pc.team_gid = t.gid
         """
@@ -150,6 +166,8 @@ def export_team_report(
         "project_count_total",
         "project_count_active",
         "project_count_archived",
+        "project_task_count_total",
+        "actual_task_count_total",
         "known_team_admins",
         "team_synced_at",
     ]
@@ -167,6 +185,10 @@ def export_team_report(
                     "project_count_total": row["total_projects"] or 0,
                     "project_count_active": row["active_projects"] or 0,
                     "project_count_archived": row["archived_projects"] or 0,
+                    "project_task_count_total": row["project_task_count_total"] or 0,
+                    "actual_task_count_total": (
+                        "" if row["actual_task_count_sources"] == 0 or row["actual_task_count_total"] is None else row["actual_task_count_total"]
+                    ),
                     "known_team_admins": "; ".join(admins_by_team.get(row["gid"], [])),
                     "team_synced_at": row["synced_at"],
                 }

@@ -17,7 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.config import load_credentials
 from src.lib.database import Database
-from src.lib.asana_urls import build_project_url, build_team_url
+from src.lib.asana_urls import build_project_url, build_team_url, infer_workspace_gid
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
