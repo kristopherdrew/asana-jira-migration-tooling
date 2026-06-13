@@ -116,6 +116,11 @@ def _resolve_env_path(reference_path: Path) -> Path:
     return DEFAULT_ENV_PATH
 
 
+def resolve_credentials_path(path: str | Path = ".") -> Path:
+    """Return the env file path that will be used for the given reference path."""
+    return _resolve_env_path(Path(path))
+
+
 def _read_value(field_name: str, env_file_data: Dict[str, str]) -> Any:
     env_name = ENV_VAR_NAMES[field_name]
     if env_name in os.environ and os.environ[env_name] != "":
@@ -169,3 +174,37 @@ def load_credentials(path: str | Path = ".") -> Credentials:
         atlassian_username=atlassian_username,
         atlassian_token=atlassian_token,
     )
+
+
+def _format_env_assignment(key: str, value: str) -> str:
+    return f"export {key}={shlex.quote(value)}"
+
+
+def write_credentials_file(path: str | Path, credentials: Credentials) -> Path:
+    """Write a shell-compatible env file for the provided credentials."""
+    env_path = Path(path).expanduser()
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        _format_env_assignment("ASANA_TOKEN", credentials.token),
+        _format_env_assignment("ASANA_WORKSPACE_GID", credentials.workspace_gid),
+        _format_env_assignment("SKIP_SSL_VERIFICATION", "true" if credentials.skip_ssl_verification else "false"),
+    ]
+    if credentials.atlassian_username:
+        lines.append(_format_env_assignment("ATLASSIAN_USERNAME", credentials.atlassian_username))
+    if credentials.atlassian_token:
+        lines.append(_format_env_assignment("ATLASSIAN_TOKEN", credentials.atlassian_token))
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        env_path.chmod(0o600)
+    except OSError:
+        pass
+    return env_path
+
+
+def write_project_env_pointer(reference_path: str | Path, env_path: str | Path) -> Path:
+    """Point the project-specific env reference file at the provided credentials file."""
+    pointer_path = _resolve_project_root(Path(reference_path)) / PROJECT_ENV_POINTER_FILENAME
+    pointer_path.write_text(f"{Path(env_path).expanduser()}\n", encoding="utf-8")
+    return pointer_path

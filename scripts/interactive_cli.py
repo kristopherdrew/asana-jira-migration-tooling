@@ -42,6 +42,14 @@ from scripts.atlassian import (  # noqa: E402
     update_atlassian_user_map,
     import_jira_project_map,
 )
+from src.lib.config import (  # noqa: E402
+    Credentials,
+    DEFAULT_ENV_PATH,
+    load_credentials,
+    resolve_credentials_path,
+    write_credentials_file,
+    write_project_env_pointer,
+)
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
 
 
@@ -62,6 +70,22 @@ def prompt(text: str, default: Optional[str] = None) -> str:
     if value == "" and default is not None:
         return default
     return value
+
+
+def prompt_required(text: str, default: Optional[str] = None) -> str:
+    while True:
+        value = prompt(text, default=default)
+        if value:
+            return value
+        print("A value is required.")
+
+
+def prompt_bool(text: str, default: bool = False) -> bool:
+    default_str = "Y/n" if default else "y/N"
+    value = input(f"{text} ({default_str}): ").strip().lower()
+    if value == "":
+        return default
+    return value.startswith("y")
 
 
 def _open_sqlite(db_path: Path) -> sqlite3.Connection:
@@ -200,11 +224,72 @@ def _prompt_user_gid_from_lookup(context: str, fallback_prompt: str) -> str:
 
 
 def confirm(text: str, default: bool = True) -> bool:
-    default_str = "Y/n" if default else "y/N"
-    value = input(f"{text} ({default_str}): ").strip().lower()
-    if value == "":
-        return default
-    return value.startswith("y")
+    return prompt_bool(text, default=default)
+
+
+def prompt_credentials_env_path(default: Optional[Path] = None) -> Path:
+    default_path = str(default or DEFAULT_ENV_PATH)
+    raw_path = prompt("Credentials env file path", default=default_path)
+    return Path(raw_path).expanduser()
+
+
+def prompt_credentials_values() -> Credentials:
+    token = prompt_required("ASANA_TOKEN")
+    workspace_gid = prompt_required("ASANA_WORKSPACE_GID")
+    skip_ssl_verification = prompt_bool("Skip SSL verification?", default=False)
+    atlassian_username = prompt("ATLASSIAN_USERNAME (optional)", default="")
+    atlassian_token = prompt("ATLASSIAN_TOKEN (optional)", default="")
+    return Credentials(
+        token=token,
+        workspace_gid=workspace_gid,
+        skip_ssl_verification=skip_ssl_verification,
+        atlassian_username=atlassian_username or None,
+        atlassian_token=atlassian_token or None,
+    )
+
+
+def bootstrap_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
+    env_path = prompt_credentials_env_path(resolve_credentials_path(reference_path))
+    if env_path.exists() and not prompt_bool(f"{env_path} already exists. Overwrite it?", default=False):
+        raise SystemExit("Credentials file was not updated.")
+    credentials = prompt_credentials_values()
+    write_credentials_file(env_path, credentials)
+    write_project_env_pointer(reference_path, env_path)
+    print(f"Credentials saved to {env_path} and referenced from the project pointer.")
+    return env_path
+
+
+def change_credentials_file_reference(reference_path: Path = PROJECT_ROOT) -> Path:
+    current_path = resolve_credentials_path(reference_path)
+    env_path = prompt_credentials_env_path(current_path)
+    if not env_path.exists():
+        print(f"No file exists at {env_path}. You can create it now.")
+        if not prompt_bool("Create this credentials file now?", default=True):
+            raise SystemExit("Credentials file was not changed.")
+        credentials = prompt_credentials_values()
+        write_credentials_file(env_path, credentials)
+    write_project_env_pointer(reference_path, env_path)
+    print(f"Project pointer now references {env_path}.")
+    return env_path
+
+
+def ensure_interactive_credentials(reference_path: Path = PROJECT_ROOT) -> None:
+    try:
+        load_credentials(reference_path)
+    except FileNotFoundError:
+        print(
+            "\nNo referenced credentials file was found for this project. "
+            "Let's create one before continuing."
+        )
+        bootstrap_credentials(reference_path)
+
+
+def build_credentials_menu() -> Dict[str, MenuItem]:
+    return {
+        "1": MenuItem("1", "Create or update credentials file", lambda: bootstrap_credentials(PROJECT_ROOT)),
+        "2": MenuItem("2", "Change referenced credentials file", lambda: change_credentials_file_reference(PROJECT_ROOT)),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
 
 
 def log_run(step: str, argv: Sequence[str], status: str, error: Optional[str] = None) -> None:
@@ -805,11 +890,13 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_cli_args(argv)
     log_level = resolve_log_level(args.log_level)
     configure_logging(log_level)
+    ensure_interactive_credentials(PROJECT_ROOT)
     top_menu = {
         "1": MenuItem("1", "Initialization (metadata only)", lambda: run_group("Initialization", build_init_menu(args.log_level))),
         "2": MenuItem("2", "Tasks (full/extras/incremental)", lambda: run_group("Tasks", build_tasks_menu(args.log_level))),
         "3": MenuItem("3", "Atlassian (exports, mappings, attachments)", lambda: run_group("Atlassian", build_atlassian_menu(args.log_level))),
         "4": MenuItem("4", "Reports (projects, users, memberships, team summary)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
+        "5": MenuItem("5", "Credentials (create or change env file)", lambda: run_group("Credentials", build_credentials_menu())),
         "q": MenuItem("q", "Quit", lambda: sys.exit(0)),
     }
 

@@ -4,7 +4,13 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-from src.lib.config import Credentials, load_credentials
+from src.lib.config import (
+    Credentials,
+    load_credentials,
+    resolve_credentials_path,
+    write_credentials_file,
+    write_project_env_pointer,
+)
 
 
 class LoadCredentialsTest(TestCase):
@@ -127,3 +133,36 @@ class LoadCredentialsTest(TestCase):
             with patch.dict(environ, {}, clear=True):
                 with self.assertRaises(FileNotFoundError):
                     load_credentials(project_root)
+
+    def test_write_credentials_file_and_pointer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            env_path = project_root / "client.env"
+            credentials = Credentials(
+                token="token-123",
+                workspace_gid="workspace-456",
+                skip_ssl_verification=True,
+                atlassian_username="user@example.com",
+                atlassian_token="jira-token",
+            )
+
+            with patch.dict(environ, {}, clear=True):
+                written_env_path = write_credentials_file(env_path, credentials)
+                pointer_path = write_project_env_pointer(project_root, env_path)
+
+                self.assertEqual(written_env_path, env_path)
+                self.assertEqual(resolve_credentials_path(project_root), env_path)
+                self.assertEqual(
+                    env_path.read_text(encoding="utf-8"),
+                    "\n".join(
+                        [
+                            "export ASANA_TOKEN=token-123",
+                            "export ASANA_WORKSPACE_GID=workspace-456",
+                            "export SKIP_SSL_VERIFICATION=true",
+                            "export ATLASSIAN_USERNAME=user@example.com",
+                            "export ATLASSIAN_TOKEN=jira-token",
+                        ]
+                    )
+                    + "\n",
+                )
+                self.assertEqual(pointer_path.read_text(encoding="utf-8"), f"{env_path}\n")
