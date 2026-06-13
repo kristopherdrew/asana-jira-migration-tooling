@@ -1,5 +1,8 @@
 from argparse import Namespace
 from datetime import datetime, timezone
+import json
+import tempfile
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -8,6 +11,7 @@ from src.lib.database import Database
 from src.lib.project_scope import determine_projects
 from src.tasks.task_processing import collect_custom_field_gids, merge_task_payload
 from src.tasks.tasks import collect_user_gids_from_task, fetch_project_tasks
+from scripts.get_tasks import _save_completed_teams
 
 
 def sync_time():
@@ -229,3 +233,15 @@ class GetTasksHelpersTest(TestCase):
             archived_scope="archived",
         )
         self.assertEqual([project["project_gid"] for project in projects], ["proj_archived"])
+
+    def test_save_completed_teams_serializes_timestamp_as_json_string(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "state" / "all_team_sync_state.json"
+            _save_completed_teams(state_path, {"team_b", "team_a"})
+
+            with state_path.open("r", encoding="utf-8") as fp:
+                payload = json.load(fp)
+
+        self.assertEqual(payload["completed_team_gids"], ["team_a", "team_b"])
+        self.assertIsInstance(payload["updated_at"], str)
+        self.assertTrue(payload["updated_at"].endswith("+00:00"))

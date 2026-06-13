@@ -124,6 +124,8 @@ Optional flags:
 - `--team` – launches an interactive selector that lists ten teams at a time, sorted first by “never imported” (no task rows present) and then by descending project count. Use `n`/`p` to page, enter the row number to run that team, or `q` to exit.
 - `--team-gids <gid1,gid2>` – syncs the listed teams sequentially without prompting.
 - `--all-teams` – walks every team found in SQLite, skipping any you omit via `--exclude-team-gids <gid1,gid2>`.
+- `--resume-all-teams` with `--all-teams` – resumes from the JSON progress file at `exports/all_team_sync_state.json` by default. The file records `completed_team_gids` plus an `updated_at` value written as an ISO 8601 UTC timestamp.
+- `--all-teams-state-file <path>` – overrides the progress file location if you want to store the resume state elsewhere.
 - `--page-size <n>` – adjusts the Asana pagination limit for task listings and subtask fetches (default 100).
 - `--workers <n>` – controls the number of concurrent `/tasks/{gid}` detail fetches (default 5).
 - `--project-archived-scope <active|archived|all>` – choose whether to sync only active projects (default), only archived ones, or both.
