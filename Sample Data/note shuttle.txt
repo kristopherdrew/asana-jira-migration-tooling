@@ -1,32 +1,22 @@
-2026-06-12 23:42:24,993 | INFO | scripts.get_tasks | [2025 - RecOps Team] Completed task sync for '[TEMPLATE] [Project Name] | [Qtr-Qtr Yr] | [Program Name]'. Total tasks processed: 48.
-2026-06-12 23:42:24,995 | ERROR | root | Step failed: Object of type datetime is not JSON serializable
-Traceback (most recent call last):
-  File "/Users/kperez/Desktop/Bitbucket/asana_jira_migration/scripts/interactive_cli.py", line 811, in run_group
-    item.handler()
-    ~~~~~~~~~~~~^^
-  File "/Users/kperez/Desktop/Bitbucket/asana_jira_migration/scripts/interactive_cli.py", line 854, in <lambda>
-    "1": MenuItem("1", "Sync tasks", lambda: run_script(get_tasks.main, args_get_tasks(log_level))),
-                                             ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/kperez/Desktop/Bitbucket/asana_jira_migration/scripts/interactive_cli.py", line 310, in run_script
-    main_func(argv)
-    ~~~~~~~~~^^^^^^
-  File "/Users/kperez/Desktop/Bitbucket/asana_jira_migration/scripts/get_tasks.py", line 321, in main
-    _save_completed_teams(state_path, completed_teams)
-    ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/kperez/Desktop/Bitbucket/asana_jira_migration/scripts/get_tasks.py", line 352, in _save_completed_teams
-    json.dump(payload, fp, indent=2)
-    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/__init__.py", line 181, in dump
-    for chunk in iterable:
-                 ^^^^^^^^
-  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 444, in _iterencode
-    yield from _iterencode_dict(o, _current_indent_level)
-  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 413, in _iterencode_dict
-    yield from chunks
-  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 451, in _iterencode
-    newobj = _default(o)
-  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/json/encoder.py", line 182, in default
-    raise TypeError(f'Object of type {o.__class__.__name__} '
-                    f'is not JSON serializable')
-TypeError: Object of type datetime is not JSON serializable
-when serializing dict item 'updated_at'
+Add Service user to all found Teams.
+If fail, leave a list of the team ids that failed to add in the export directory
+
+https://developers.asana.com/reference/adduserforteam
+
+postman request POST 'https://app.asana.com/api/1.0/teams/{{team_gid}}/addUser' \
+  --header 'Content-Type: application/json' \
+  --body '{
+  "data": {
+    "resource_type": "team_membership",
+    "user": {
+      "gid": "{{user_gid}}"
+    },
+    "is_guest": false,
+    "is_limited_access": false,
+    "is_admin": true
+  }
+}'
+
+
+
+Add Service user to projects https://developers.asana.com/reference/addmembersforproject
