@@ -820,10 +820,10 @@ def run_group(title: str, menu: Dict[str, MenuItem]) -> None:
 def run_initial_metadata(log_level: str) -> None:
     steps = [
         ("get_teams", get_teams.main),
-        ("get_projects", get_projects.main),
-        ("get_custom_fields", get_custom_fields.main),
         ("get_users", get_users.main),
         ("add_service_user_to_teams", add_service_user_to_teams.main),
+        ("get_projects", get_projects.main),
+        ("get_custom_fields", get_custom_fields.main),
     ]
     for label, func in steps:
         if label == "get_teams":
@@ -846,7 +846,7 @@ def run_initial_metadata(log_level: str) -> None:
 
 def build_init_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
-        "1": MenuItem("1", "Run initial metadata (teams + memberships, projects, custom fields, users, service user Asana team access)", lambda: run_initial_metadata(log_level)),
+        "1": MenuItem("1", "Run initial metadata (teams + memberships, users, service user Asana team access, projects, custom fields)", lambda: run_initial_metadata(log_level)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

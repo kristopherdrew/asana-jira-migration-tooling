@@ -182,13 +182,14 @@ class IncrementalArgsBuilderTest(TestCase):
         first_call = mock_run_script.call_args_list[0]
         self.assertIs(first_call.args[0], interactive_cli.get_teams.main)
         self.assertEqual(first_call.args[1], ["--log-level", "WARNING", "--include-members"])
-        self.assertEqual(mock_run_script.call_args_list[1].args[1], ["--log-level", "WARNING", "--archived-scope", "active"])
-        self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.add_service_user_to_teams.main)
+        self.assertIs(mock_run_script.call_args_list[1].args[0], interactive_cli.get_users.main)
+        self.assertEqual(mock_run_script.call_args_list[1].args[1], ["--log-level", "WARNING"])
+        self.assertIs(mock_run_script.call_args_list[2].args[0], interactive_cli.add_service_user_to_teams.main)
+        self.assertEqual(mock_run_script.call_args_list[2].args[1], ["--log-level", "WARNING"])
+        self.assertIs(mock_run_script.call_args_list[3].args[0], interactive_cli.get_projects.main)
+        self.assertEqual(mock_run_script.call_args_list[3].args[1], ["--log-level", "WARNING", "--archived-scope", "active"])
+        self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.get_custom_fields.main)
         self.assertEqual(mock_run_script.call_args_list[4].args[1], ["--log-level", "WARNING"])
-
-        for call in mock_run_script.call_args_list[1:]:
-            if call.args[0] is not interactive_cli.get_projects.main:
-                self.assertEqual(call.args[1], ["--log-level", "WARNING"])
 
     @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli._fuzzy_teams", return_value=[{"gid": "team_1", "name": "Team One"}])
