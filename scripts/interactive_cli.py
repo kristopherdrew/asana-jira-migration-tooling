@@ -36,6 +36,7 @@ from scripts import (  # noqa: E402
 from scripts import export_project_details_report, export_team_memberships  # noqa: E402
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
+    add_service_user_to_teams,
     export_project_to_jira_csv,
     import_jira_task_keys,
     sync_jira_attachments,
@@ -822,6 +823,7 @@ def run_initial_metadata(log_level: str) -> None:
         ("get_projects", get_projects.main),
         ("get_custom_fields", get_custom_fields.main),
         ("get_users", get_users.main),
+        ("add_service_user_to_teams", add_service_user_to_teams.main),
     ]
     for label, func in steps:
         if label == "get_teams":
@@ -844,7 +846,7 @@ def run_initial_metadata(log_level: str) -> None:
 
 def build_init_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
-        "1": MenuItem("1", "Run initial metadata (teams + memberships, projects, custom fields, users)", lambda: run_initial_metadata(log_level)),
+        "1": MenuItem("1", "Run initial metadata (teams + memberships, projects, custom fields, users, service user Asana team access)", lambda: run_initial_metadata(log_level)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

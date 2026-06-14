@@ -51,15 +51,16 @@ Run the menu-driven wrapper to combine the existing entrypoints without losing s
 python3 -m scripts.interactive_cli --log-level INFO
 ```
 Menu highlights:
-- Category 1 (Initialization): teams + memberships → projects → custom fields → users.
+- Category 1 (Initialization): teams + memberships → projects → custom fields → users → add the service user to every Asana team.
 - Category 2 (Tasks): tasks, task extras, personal tasks (full), incremental updates.
-- Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, sync attachments.
+- Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, add the service user to Asana teams, sync attachments.
 - Category 4 (Reports): project details, team summary, users, team memberships.
 - Category 5 (Credentials): create/update the referenced env file or switch the project to a different one.
 
 On first launch, if the interactive CLI cannot resolve a credentials file from the environment or `.asana_jira_env_path`, it starts a setup flow that asks for the Asana token, workspace GID, SSL verification flag, and optional Atlassian credentials, then writes the env file and project pointer for you.
 
 When you run the Initialization flow, the projects step prompts for archived scope so you can choose active, archived, or all projects during the first data pull.
+After the user sync completes, the initialization flow can prompt for a service-user GID and add that account to every Asana team currently stored in SQLite. If any team update fails, the script writes `exports/service_user_team_add_failures_<timestamp>.csv` with the team GIDs and error messages.
 
 ## Core Sync Commands
 ### Sync Teams
@@ -110,6 +111,23 @@ Required flags:
 Optional flags:
 - `--workspace-gid <gid>` to override the workspace ID from the resolved credentials.
 - `--page-size <n>` to adjust the Asana pagination size (default 100).
+
+### Add Service User to Teams
+Adds one service user to every Asana team stored in SQLite using Asana's `addUser` endpoint. When launched interactively, the script can search the current `users` table before falling back to a raw GID entry.
+```bash
+python3 -m scripts.add_service_user_to_teams
+```
+Required flags:
+- (none; uses `data/asana.sqlite` and the resolved credentials by default).
+
+Optional flags:
+- `--database <path>` to point at a different SQLite snapshot (default `data/asana.sqlite`).
+- `--output-dir <path>` to choose where failure exports are written (default `exports/`).
+- `--user-gid <gid>` to bypass the prompt and use a specific service user.
+- `--search-users` to force the interactive user search flow instead of prompting for a raw GID first.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+If one or more team updates fail, the script writes `service_user_team_add_failures_<timestamp>.csv` into the output directory with the failed team GIDs and the captured error text.
 
 ### Sync Tasks
 Recursively fetches tasks (and subtasks) for selected projects, backfilling missing user profiles or custom field definitions on the fly. Persists task metadata, memberships, dependencies, followers, and custom field values into `data/asana.sqlite`. Run with either `--project-gid` for a focused pull or `--team` to drive selection interactively.

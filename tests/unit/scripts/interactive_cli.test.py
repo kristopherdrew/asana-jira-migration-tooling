@@ -178,11 +178,13 @@ class IncrementalArgsBuilderTest(TestCase):
         with patch("scripts.interactive_cli.prompt", side_effect=["active"]):
             interactive_cli.run_initial_metadata("WARNING")
 
-        self.assertEqual(mock_run_script.call_count, 4)
+        self.assertEqual(mock_run_script.call_count, 5)
         first_call = mock_run_script.call_args_list[0]
         self.assertIs(first_call.args[0], interactive_cli.get_teams.main)
         self.assertEqual(first_call.args[1], ["--log-level", "WARNING", "--include-members"])
         self.assertEqual(mock_run_script.call_args_list[1].args[1], ["--log-level", "WARNING", "--archived-scope", "active"])
+        self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.add_service_user_to_teams.main)
+        self.assertEqual(mock_run_script.call_args_list[4].args[1], ["--log-level", "WARNING"])
 
         for call in mock_run_script.call_args_list[1:]:
             if call.args[0] is not interactive_cli.get_projects.main:
