@@ -32,23 +32,25 @@ def validate_scope_args(
     team_gids: Optional[str],
     all_teams: bool,
     exclude_team_gids: Optional[str],
+    project_gids: Optional[str] = None,
 ) -> None:
     """Ensure the caller specified exactly one scope source."""
     scope_flags = [
         bool(project_gid),
+        bool(project_gids),
         bool(use_team_picker),
         bool(team_gids),
         bool(all_teams),
     ]
     if sum(scope_flags) == 0:
         raise SystemExit(
-            "No project scope specified. Provide --project-gid, --team, "
+            "No project scope specified. Provide --project-gid, --project-gids, --team, "
             "--team-gids, or --all-teams."
         )
     if sum(scope_flags) > 1:
         raise SystemExit(
             "Multiple project scopes specified. Choose only one of "
-            "--project-gid, --team, --team-gids, or --all-teams."
+            "--project-gid, --project-gids, --team, --team-gids, or --all-teams."
         )
     if exclude_team_gids and not all_teams:
         raise SystemExit("--exclude-team-gids can only be used with --all-teams.")
@@ -87,9 +89,10 @@ def determine_projects(
     exclude_team_gids: Optional[str],
     team_selector: Callable[[object], Optional[tuple]],
     archived_scope: Optional[str] = None,
+    project_gids: Optional[str] = None,
 ) -> List[ScopeProject]:
     """Resolve the set of projects to process based on CLI scope arguments."""
-    validate_scope_args(project_gid, use_team_picker, team_gids, all_teams, exclude_team_gids)
+    validate_scope_args(project_gid, use_team_picker, team_gids, all_teams, exclude_team_gids, project_gids)
 
     if project_gid:
         row = connection.execute(
@@ -110,6 +113,36 @@ def determine_projects(
                 "team_gid": row["team_gid"],
                 "team_name": row["team_name"],
             }
+        ]
+
+    if project_gids:
+        parsed_project_gids = parse_gid_list(project_gids)
+        if not parsed_project_gids:
+            raise SystemExit("No valid GIDs provided in --project-gids.")
+        placeholders = ",".join("?" for _ in parsed_project_gids)
+        rows = list(
+            connection.execute(
+                f"""
+                SELECT p.gid, p.name, p.team_gid, t.name AS team_name
+                FROM projects p
+                LEFT JOIN teams t ON t.gid = p.team_gid
+                WHERE p.gid IN ({placeholders})
+                """,
+                tuple(parsed_project_gids),
+            )
+        )
+        by_gid = {row["gid"]: row for row in rows}
+        missing = [gid for gid in parsed_project_gids if gid not in by_gid]
+        if missing:
+            raise SystemExit(f"Project with gid {missing[0]} not found in database.")
+        return [
+            {
+                "project_gid": by_gid[gid]["gid"],
+                "project_name": by_gid[gid]["name"],
+                "team_gid": by_gid[gid]["team_gid"],
+                "team_name": by_gid[gid]["team_name"],
+            }
+            for gid in parsed_project_gids
         ]
 
     if team_gids:

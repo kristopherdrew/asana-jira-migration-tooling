@@ -153,6 +153,7 @@ Required flags:
 
 Optional flags:
 - `--project-gid <gid>` – bypasses the default project and syncs only the specified project.
+- `--project-gids <gid1,gid2>` – sync a comma-separated list of projects sequentially.
 - `--team` – launches an interactive selector that lists ten teams at a time, sorted first by “never imported” (no task rows present) and then by descending project count. Use `n`/`p` to page, enter the row number to run that team, or `q` to exit.
 - `--team-gids <gid1,gid2>` – syncs the listed teams sequentially without prompting.
 - `--all-teams` – walks every team found in SQLite, skipping any you omit via `--exclude-team-gids <gid1,gid2>`.
@@ -168,6 +169,8 @@ During every run the script:
 - Writes multi-select custom field values into a normalized link table so Jira CSV exports can replicate fields with repeated column names.
 - Surfaces progress every ~25 tasks and records a new `synced_at` timestamp for each row.
 - Processes multi-homed tasks for each project to keep every team’s view complete.
+
+During an interactive task sync, the CLI also records any project that had a positive `num_tasks` count from the project metadata pull but produced zero imported task rows. The candidate list is written to `exports/missing_service_user_projects.json`, then the CLI offers to add a service user to those projects and optionally retry the missed project list immediately.
 
 ### Sync Task Extras
 Pulls task comments and attachment metadata for the selected projects (using the same scope flags as above) and stores them in `task_comments` and `task_attachments` tables. Only human-authored comments (`resource_subtype = comment_added`) are captured; system events are excluded.

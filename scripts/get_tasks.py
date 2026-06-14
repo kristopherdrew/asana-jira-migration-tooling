@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import logging
 import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from typing import Dict, Generator, Iterable, Optional, Set
+from typing import Dict, Generator, Iterable, List, Optional, Set
 
 from src.lib.config import load_credentials
 from src.lib.database import Database, synced_at_timestamp
@@ -34,9 +35,27 @@ DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_PAGE_SIZE = 100
 DEFAULT_WORKERS = 5
 DEFAULT_STATE_PATH = "exports/all_team_sync_state.json"
+DEFAULT_MISSING_PROJECT_STATE_PATH = "exports/missing_service_user_projects.json"
 PROGRESS_INTERVAL = 25
 COMMIT_INTERVAL = 25
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class MissingProjectMembershipCandidate:
+    project_gid: str
+    project_name: str
+    team_gid: Optional[str]
+    team_name: Optional[str]
+    expected_task_count: Optional[int]
+    actual_task_count: int
+
+
+@dataclass(frozen=True)
+class TaskSyncResult:
+    processed_projects: int
+    missing_membership_candidates: List[MissingProjectMembershipCandidate]
+    missing_membership_state_path: Optional[str]
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -48,6 +67,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--project-gid",
         help="Sync a single project by GID instead of using the default.",
+    )
+    parser.add_argument(
+        "--project-gids",
+        help="Comma-separated list of project GIDs to sync sequentially.",
     )
     parser.add_argument(
         "--team",
@@ -120,6 +143,61 @@ def schedule_subtask_listing(
     page_size: int,
 ) -> Generator[Dict, None, None]:
     return fetch_subtasks(client, parent_gid, SUBTASK_FIELDS, page_size=page_size)
+
+
+def count_actual_project_tasks(connection, project_gid: str) -> int:
+    row = connection.execute(
+        """
+        SELECT COUNT(DISTINCT tp.task_gid) AS task_count
+        FROM task_projects tp
+        WHERE tp.project_gid = ?
+        """,
+        (project_gid,),
+    ).fetchone()
+    if not row:
+        return 0
+    return int(row["task_count"] or 0)
+
+
+def build_missing_project_candidate(connection, project_gid: str) -> Optional[MissingProjectMembershipCandidate]:
+    row = connection.execute(
+        """
+        SELECT gid, name, team_gid, team_name, num_tasks
+        FROM projects
+        WHERE gid = ?
+        """,
+        (project_gid,),
+    ).fetchone()
+    if not row:
+        return None
+    expected_task_count = row["num_tasks"]
+    if not expected_task_count or expected_task_count <= 0:
+        return None
+    actual_task_count = count_actual_project_tasks(connection, project_gid)
+    if actual_task_count > 0:
+        return None
+    return MissingProjectMembershipCandidate(
+        project_gid=row["gid"],
+        project_name=row["name"] or row["gid"],
+        team_gid=row["team_gid"],
+        team_name=row["team_name"],
+        expected_task_count=expected_task_count,
+        actual_task_count=actual_task_count,
+    )
+
+
+def write_missing_project_candidates(
+    state_path: Path,
+    candidates: List[MissingProjectMembershipCandidate],
+) -> Path:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "missing_project_gids": [candidate.project_gid for candidate in candidates],
+        "projects": [asdict(candidate) for candidate in candidates],
+        "updated_at": synced_at_timestamp().isoformat(),
+    }
+    state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return state_path
 
 
 def process_tasks_for_project(
@@ -235,6 +313,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         args.team_gids,
         args.all_teams,
         args.exclude_team_gids,
+        args.project_gids,
     )
     try:
         log_level = resolve_log_level(args.log_level)
@@ -263,6 +342,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         projects = determine_projects(
             connection=connection,
             project_gid=args.project_gid,
+            project_gids=args.project_gids,
             use_team_picker=args.team,
             team_gids=args.team_gids,
             all_teams=args.all_teams,
@@ -272,10 +352,12 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         )
         if not projects:
             logger.warning("No projects selected for sync.")
-            return
+            return TaskSyncResult(processed_projects=0, missing_membership_candidates=[], missing_membership_state_path=None)
 
         completed_teams: Set[str] = set()
         state_path = Path(args.all_teams_state_file)
+        missing_project_candidates: List[MissingProjectMembershipCandidate] = []
+        missing_project_state_path = Path(DEFAULT_MISSING_PROJECT_STATE_PATH)
         if args.all_teams and args.resume_all_teams:
             completed_teams = _load_completed_teams(state_path)
             if completed_teams:
@@ -311,6 +393,15 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 sync_time=sync_time,
                 team_name=team_name,
             )
+            candidate = build_missing_project_candidate(connection, project_gid)
+            if candidate:
+                missing_project_candidates.append(candidate)
+                write_missing_project_candidates(missing_project_state_path, missing_project_candidates)
+                logger.info(
+                    "Recorded candidate project %s (%s) for service-user membership follow-up.",
+                    candidate.project_name,
+                    candidate.project_gid,
+                )
 
             # Mark team complete once we've finished the last project for that team.
             if args.all_teams:
@@ -327,6 +418,22 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         connection.commit()
 
     logger.info("Task sync completed.")
+    if missing_project_candidates:
+        logger.info(
+            "Identified %s project(s) with expected tasks but no imported task rows. Candidate list written to %s.",
+            len(missing_project_candidates),
+            missing_project_state_path,
+        )
+    elif missing_project_state_path.exists():
+        try:
+            missing_project_state_path.unlink()
+        except OSError:
+            logger.debug("Unable to remove stale missing-project state file at %s.", missing_project_state_path, exc_info=True)
+    return TaskSyncResult(
+        processed_projects=len(projects),
+        missing_membership_candidates=missing_project_candidates,
+        missing_membership_state_path=str(missing_project_state_path) if missing_project_candidates else None,
+    )
 
 
 # ---------------------- All-team resume helpers ---------------------- #

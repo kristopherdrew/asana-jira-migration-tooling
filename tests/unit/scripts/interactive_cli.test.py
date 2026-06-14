@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
@@ -283,3 +284,83 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertEqual(mock_run_script.call_count, 1)
         self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_team_report.main)
         self.assertEqual(mock_run_script.call_args_list[0].args[1], ["--log-level", "DEBUG"])
+
+    @patch("scripts.interactive_cli.prompt_required", return_value="service_user_1")
+    @patch("scripts.interactive_cli.confirm", side_effect=[True, True])
+    @patch("scripts.interactive_cli.run_script")
+    @patch("scripts.interactive_cli.args_get_tasks", return_value=[
+        "--log-level",
+        "INFO",
+        "--all-teams",
+        "--resume-all-teams",
+        "--team-gids",
+        "team_1,team_2",
+        "--page-size",
+        "200",
+        "--workers",
+        "7",
+    ])
+    def test_task_sync_flow_prompts_for_membership_and_retry(
+        self,
+        mock_args_get_tasks,
+        mock_run_script,
+        mock_confirm,
+        mock_prompt_required,
+    ) -> None:
+        result = SimpleNamespace(
+            missing_membership_candidates=[
+                SimpleNamespace(project_gid="proj_1"),
+                SimpleNamespace(project_gid="proj_2"),
+            ],
+            missing_membership_state_path=None,
+        )
+        mock_run_script.side_effect = [result, None, None]
+
+        interactive_cli.run_task_sync_flow("INFO")
+
+        self.assertEqual(mock_run_script.call_count, 3)
+        self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.get_tasks.main)
+        self.assertEqual(
+            mock_run_script.call_args_list[0].args[1],
+            [
+                "--log-level",
+                "INFO",
+                "--all-teams",
+                "--resume-all-teams",
+                "--team-gids",
+                "team_1,team_2",
+                "--page-size",
+                "200",
+                "--workers",
+                "7",
+            ],
+        )
+        self.assertIs(mock_run_script.call_args_list[1].args[0], interactive_cli.add_service_user_to_projects.main)
+        self.assertEqual(
+            mock_run_script.call_args_list[1].args[1],
+            [
+                "--log-level",
+                "INFO",
+                "--user-gid",
+                "service_user_1",
+                "--project-gids",
+                "proj_1,proj_2",
+            ],
+        )
+        self.assertIs(mock_run_script.call_args_list[2].args[0], interactive_cli.get_tasks.main)
+        self.assertEqual(
+            mock_run_script.call_args_list[2].args[1],
+            [
+                "--log-level",
+                "INFO",
+                "--page-size",
+                "200",
+                "--workers",
+                "7",
+                "--project-gids",
+                "proj_1,proj_2",
+            ],
+        )
+        mock_args_get_tasks.assert_called_once_with("INFO")
+        self.assertEqual(mock_confirm.call_count, 2)
+        mock_prompt_required.assert_called_once_with("Service user GID")
