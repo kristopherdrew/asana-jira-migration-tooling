@@ -25,8 +25,10 @@ class FakeResponse:
 class SuccessOpener:
     def __init__(self, response: FakeResponse):
         self._response = response
+        self.last_request = None
 
     def open(self, request, timeout=None):
+        self.last_request = request
         return self._response
 
 
@@ -88,3 +90,18 @@ class HttpClientRateLimitTest(TestCase):
         self.assertIsNotNone(client.last_rate_limit)
         assert client.last_rate_limit is not None
         self.assertAlmostEqual(client.last_rate_limit.retry_after or 0.0, 0.001, places=3)
+
+    def test_post_json_sends_payload(self) -> None:
+        response = FakeResponse({"data": {"gid": "membership_1"}})
+        opener = SuccessOpener(response)
+        client = AsanaHttpClient(token="token")
+        client._opener = opener  # type: ignore[attr-defined]
+
+        payload = {"data": {"user": {"gid": "user_1"}}}
+        result = client.post_json("/teams/team_1/addUser", payload)
+
+        self.assertEqual(result["data"]["gid"], "membership_1")
+        assert opener.last_request is not None
+        self.assertEqual(opener.last_request.method, "POST")
+        self.assertEqual(opener.last_request.full_url, "https://app.asana.com/api/1.0/teams/team_1/addUser")
+        self.assertEqual(opener.last_request.data, json.dumps(payload).encode("utf-8"))

@@ -57,7 +57,13 @@ class AsanaHttpClient:
         """Return the most recent rate limit metadata from the API."""
         return self._last_rate_limit
 
-    def _build_request(self, method: str, endpoint: str, params: Optional[Dict[str, str]] = None) -> request.Request:
+    def _build_request(
+        self,
+        method: str,
+        endpoint: str,
+        params: Optional[Dict[str, str]] = None,
+        data: Optional[bytes] = None,
+    ) -> request.Request:
         query = f"?{parse.urlencode(params)}" if params else ""
         url = f"{API_BASE_URL}{endpoint}{query}"
         headers = {
@@ -65,19 +71,20 @@ class AsanaHttpClient:
             "Content-Type": "application/json",
             "User-Agent": USER_AGENT,
         }
-        return request.Request(url=url, headers=headers, method=method)
+        return request.Request(url=url, headers=headers, method=method, data=data)
 
     def _request_with_retry(
         self,
         method: str,
         endpoint: str,
         params: Optional[Dict[str, str]] = None,
+        data: Optional[bytes] = None,
         max_retries: int = 5,
         backoff_factor: float = 1.5,
     ) -> dict:
         last_error: Optional[Exception] = None
         for attempt in range(max_retries):
-            req = self._build_request(method, endpoint, params)
+            req = self._build_request(method, endpoint, params, data=data)
             try:
                 with self._opener.open(req, timeout=self._timeout) as response:
                     content = response.read().decode("utf-8")
@@ -158,6 +165,11 @@ class AsanaHttpClient:
     def get(self, endpoint: str, params: Optional[Dict[str, str]] = None) -> dict:
         """Perform a GET request and return the parsed JSON body."""
         return self._request_with_retry("GET", endpoint, params=params)
+
+    def post_json(self, endpoint: str, payload: dict, params: Optional[Dict[str, str]] = None) -> dict:
+        """Perform a POST request with a JSON body and return the parsed JSON response."""
+        body = json.dumps(payload).encode("utf-8")
+        return self._request_with_retry("POST", endpoint, params=params, data=body)
 
     def get_paginated(
         self,
