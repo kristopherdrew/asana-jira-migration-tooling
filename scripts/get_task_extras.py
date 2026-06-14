@@ -188,6 +188,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             args.team_gids,
             args.all_teams,
             args.exclude_team_gids,
+            None,
         )
     try:
         log_level = resolve_log_level(args.log_level)

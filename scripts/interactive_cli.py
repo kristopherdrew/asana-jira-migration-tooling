@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sqlite3
 import sys
@@ -37,6 +38,7 @@ from scripts import export_project_details_report, export_team_memberships  # no
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
     add_service_user_to_teams,
+    add_service_user_to_projects,
     export_project_to_jira_csv,
     import_jira_task_keys,
     sync_jira_attachments,
@@ -307,8 +309,86 @@ def log_run(step: str, argv: Sequence[str], status: str, error: Optional[str] = 
         fp.write(f"{record}\n")
 
 
-def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[str]) -> None:
-    main_func(argv)
+def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[str]):
+    return main_func(argv)
+
+
+def _strip_task_scope_args(argv: Sequence[str]) -> List[str]:
+    scope_flags_with_value = {
+        "--project-gid",
+        "--project-gids",
+        "--team-gids",
+        "--exclude-team-gids",
+        "--all-teams-state-file",
+    }
+    scope_flags_without_value = {
+        "--team",
+        "--all-teams",
+        "--resume-all-teams",
+    }
+    stripped: List[str] = []
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg in scope_flags_with_value:
+            index += 2
+            continue
+        if arg in scope_flags_without_value:
+            index += 1
+            continue
+        stripped.append(arg)
+        index += 1
+    return stripped
+
+
+def _candidate_project_gids(task_sync_result) -> List[str]:
+    if not task_sync_result:
+        return []
+    candidates = getattr(task_sync_result, "missing_membership_candidates", None) or []
+    project_gids = [candidate.project_gid for candidate in candidates if getattr(candidate, "project_gid", None)]
+    if project_gids:
+        return project_gids
+    state_path = getattr(task_sync_result, "missing_membership_state_path", None)
+    if not state_path:
+        return []
+    state_file = Path(state_path)
+    if not state_file.exists():
+        return []
+    try:
+        payload = json.loads(state_file.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+    gids = payload.get("missing_project_gids") or []
+    return [gid for gid in gids if gid]
+
+
+def run_task_sync_flow(log_level: str) -> None:
+    args = args_get_tasks(log_level)
+    result = run_script(get_tasks.main, args)
+    missed_project_gids = _candidate_project_gids(result)
+    if not missed_project_gids:
+        return
+
+    print(
+        "\nThe task sync completed with projects that have expected task counts but no imported task rows:"
+    )
+    for gid in missed_project_gids:
+        print(f"- {gid}")
+
+    if not confirm("Add a Service Account to these projects now?", default=True):
+        return
+
+    service_user_gid = prompt_required("Service user GID")
+    add_args = build_common_args(log_level)
+    add_args.extend(["--user-gid", service_user_gid, "--project-gids", ",".join(missed_project_gids)])
+    run_script(add_service_user_to_projects.main, add_args)
+
+    if not confirm("Try fetching tasks from the missed projects now?", default=True):
+        return
+
+    retry_args = _strip_task_scope_args(args)
+    retry_args.extend(["--project-gids", ",".join(missed_project_gids)])
+    run_script(get_tasks.main, retry_args)
 
 
 def print_rerun_command(module: str, argv: Sequence[str]) -> None:
@@ -853,7 +933,7 @@ def build_init_menu(log_level: str) -> Dict[str, MenuItem]:
 
 def build_tasks_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
-        "1": MenuItem("1", "Sync tasks", lambda: run_script(get_tasks.main, args_get_tasks(log_level))),
+        "1": MenuItem("1", "Sync tasks", lambda: run_task_sync_flow(log_level)),
         "2": MenuItem("2", "Sync task extras (comments/attachments)", lambda: run_script(get_task_extras.main, args_get_task_extras(log_level))),
         "3": MenuItem("3", "Sync personal tasks (full)", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
         "4": MenuItem("4", "Incremental updates (recently modified tasks incl. personal)", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),

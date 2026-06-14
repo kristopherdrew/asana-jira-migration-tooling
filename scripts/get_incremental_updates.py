@@ -898,6 +898,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         args.team_gids,
         args.all_teams,
         args.exclude_team_gids,
+        None,
     )
 
     credentials = load_credentials(DEFAULT_CONFIG_ROOT)

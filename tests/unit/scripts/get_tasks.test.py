@@ -11,7 +11,11 @@ from src.lib.database import Database
 from src.lib.project_scope import determine_projects
 from src.tasks.task_processing import collect_custom_field_gids, merge_task_payload
 from src.tasks.tasks import collect_user_gids_from_task, fetch_project_tasks
-from scripts.get_tasks import _save_completed_teams
+from scripts.get_tasks import (
+    _save_completed_teams,
+    build_missing_project_candidate,
+    write_missing_project_candidates,
+)
 
 
 def sync_time():
@@ -171,6 +175,19 @@ class GetTasksHelpersTest(TestCase):
         self.assertEqual(project["project_name"], "Other Project")
         self.assertEqual(project["team_gid"], "team_1")
 
+    def test_determine_projects_with_project_gids(self) -> None:
+        projects = determine_projects(
+            connection=self.connection,
+            project_gid=None,
+            project_gids="proj_default, proj_other",
+            use_team_picker=False,
+            team_gids=None,
+            all_teams=False,
+            exclude_team_gids=None,
+            team_selector=lambda conn: None,
+        )
+        self.assertEqual([project["project_gid"] for project in projects], ["proj_default", "proj_other"])
+
     @patch("scripts.get_tasks.choose_team")
     def test_determine_projects_with_team_selection(self, mock_choose_team) -> None:
         mock_choose_team.return_value = ("team_1", "Team One")
@@ -245,3 +262,35 @@ class GetTasksHelpersTest(TestCase):
         self.assertEqual(payload["completed_team_gids"], ["team_a", "team_b"])
         self.assertIsInstance(payload["updated_at"], str)
         self.assertTrue(payload["updated_at"].endswith("+00:00"))
+
+    def test_build_missing_project_candidate_detects_project_without_tasks(self) -> None:
+        self.connection.execute(
+            "UPDATE projects SET num_tasks = ? WHERE gid = ?",
+            (4, "proj_other"),
+        )
+        self.connection.commit()
+
+        candidate = build_missing_project_candidate(self.connection, "proj_other")
+
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.project_gid, "proj_other")
+        self.assertEqual(candidate.actual_task_count, 0)
+        self.assertEqual(candidate.expected_task_count, 4)
+
+    def test_write_missing_project_candidates_serializes_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "state" / "missing.json"
+            self.connection.execute(
+                "UPDATE projects SET num_tasks = ? WHERE gid = ?",
+                (4, "proj_other"),
+            )
+            self.connection.commit()
+            candidate = build_missing_project_candidate(self.connection, "proj_other")
+            self.assertIsNotNone(candidate)
+            written = write_missing_project_candidates(state_path, [candidate])
+
+            with written.open("r", encoding="utf-8") as fp:
+                payload = json.load(fp)
+
+        self.assertEqual(payload["missing_project_gids"], ["proj_other"])
+        self.assertEqual(payload["projects"][0]["project_gid"], "proj_other")
