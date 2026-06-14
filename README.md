@@ -128,6 +128,21 @@ Optional flags:
 
 If one or more team updates fail, the script writes `service_user_team_add_failures_<timestamp>.csv` into the output directory with the failed team GIDs and the captured error text.
 
+### Add Service User to Projects
+Adds one service user to a selected list of Asana project GIDs using Asana's `addMembers` endpoint.
+```bash
+python3 -m scripts.add_service_user_to_projects --user-gid <service_user_gid> --project-gids <gid1,gid2>
+```
+Required flags:
+- `--user-gid <gid>` to identify the service user to add, or omit it to be prompted interactively.
+- One scope selector: `--project-gid <gid>` repeated as needed, or `--project-gids <gid1,gid2>`.
+
+Optional flags:
+- `--output-dir <path>` to choose where failure exports are written (default `exports/`).
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+If one or more project updates fail, the script writes `service_user_project_add_failures_<timestamp>.csv` into the output directory with the failed project GIDs and the captured error text.
+
 ### Sync Tasks
 Recursively fetches tasks (and subtasks) for selected projects, backfilling missing user profiles or custom field definitions on the fly. Persists task metadata, memberships, dependencies, followers, and custom field values into `data/asana.sqlite`. Run with either `--project-gid` for a focused pull or `--team` to drive selection interactively.
 ```bash
