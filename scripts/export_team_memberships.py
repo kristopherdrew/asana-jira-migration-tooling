@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.config import load_credentials
 from src.lib.database import Database
+from src.lib.date_formatting import format_report_date
 from src.lib.asana_urls import build_team_url, build_user_url, infer_workspace_gid
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
@@ -152,9 +153,9 @@ def export_team_memberships(
                     "role": row["role"],
                     "is_admin": _bool_to_text(row["is_admin"]),
                     "membership_is_active": _bool_to_text(row["membership_is_active"]),
-                    "membership_synced_at": row["membership_synced_at"],
-                    "user_synced_at": row["user_synced_at"],
-                    "team_synced_at": row["team_synced_at"],
+                    "membership_synced_at": format_report_date(row["membership_synced_at"]),
+                    "user_synced_at": format_report_date(row["user_synced_at"]),
+                    "team_synced_at": format_report_date(row["team_synced_at"]),
                 }
             )
 

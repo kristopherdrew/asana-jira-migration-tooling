@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.config import load_credentials
 from src.lib.database import Database
+from src.lib.date_formatting import format_report_date
 from src.lib.asana_urls import build_project_url, build_team_url, infer_workspace_gid
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
@@ -199,23 +200,23 @@ def export_project_details(
                     "owner_gid": row["owner_gid"],
                     "owner_name": row["owner_name"],
                     "privacy_setting": row["privacy_setting"],
-                    "created_at": row["created_at"],
-                    "modified_at": row["modified_at"],
-                    "start_on": row["start_on"],
-                    "due_on": row["due_on"],
+                    "created_at": format_report_date(row["created_at"]),
+                    "modified_at": format_report_date(row["modified_at"]),
+                    "start_on": format_report_date(row["start_on"]),
+                    "due_on": format_report_date(row["due_on"]),
                     "completed": _bool_to_text(row["completed"]),
-                    "completed_at": row["completed_at"],
+                    "completed_at": format_report_date(row["completed_at"]),
                     "is_personal_project": _bool_to_text(row["is_personal_project"]),
                     "num_tasks": "" if row["num_tasks"] is None else row["num_tasks"],
                     "num_incomplete_tasks": "" if row["num_incomplete_tasks"] is None else row["num_incomplete_tasks"],
                     "num_completed_tasks": "" if row["num_completed_tasks"] is None else row["num_completed_tasks"],
-                    "task_counts_captured_at": row["task_counts_captured_at"],
-                    "last_task_created_at": row["last_task_created_at"],
-                    "last_task_resolved_at": row["last_task_resolved_at"],
-                    "last_task_updated_at": row["last_task_updated_at"],
+                    "task_counts_captured_at": format_report_date(row["task_counts_captured_at"]),
+                    "last_task_created_at": format_report_date(row["last_task_created_at"]),
+                    "last_task_resolved_at": format_report_date(row["last_task_resolved_at"]),
+                    "last_task_updated_at": format_report_date(row["last_task_updated_at"]),
                     "actual_task_count": "" if actual_task_count is None else actual_task_count,
                     "actual_task_data_present": _bool_to_text(actual_task_count is not None),
-                    "synced_at": row["synced_at"],
+                    "synced_at": format_report_date(row["synced_at"]),
                 }
             )
 

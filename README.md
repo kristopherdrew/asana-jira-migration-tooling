@@ -239,8 +239,9 @@ Required flags:
 Optional flags mirror the other scripts (`--project-gid`, `--team`, `--team-gids`, `--all-teams`, `--exclude-team-gids`, `--workers`, `--page-size`). The summary reports how many tasks, comments, and attachments were analyzed, created/updated, or marked as deleted (with per-team totals and optional per-project detail).
 
 ## Exports & Atlassian Integrations
+All report date columns now export as `YYYY-MM-DD` with zero-padded month and day values. Jira comment timestamps in the Jira CSV export remain in Jira's required comment format.
 ### Export Users
-Writes the `users` table (plus workspace memberships) to a CSV for quick auditing or downstream reporting. Includes GID, name, email, resource type, active flag, a direct Asana user URL, last sync timestamp, and a semicolon-separated list of workspaces.
+Writes the `users` table (plus workspace memberships) to a CSV for quick auditing or downstream reporting. Includes GID, name, email, resource type, active flag, a direct Asana user URL, last sync date, and a semicolon-separated list of workspaces.
 ```bash
 python3 -m scripts.export_users --database data/asana.sqlite
 ```
@@ -254,7 +255,7 @@ Optional flags:
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 ### Project Details Report
-Exports one row per project from SQLite with the project metadata, a direct Asana project URL, the team URL, the current snapshot counts stored on `projects` (`num_tasks`, `num_incomplete_tasks`, `num_completed_tasks`, `task_counts_captured_at`), task activity timestamps derived from synced task rows (`last_task_created_at`, `last_task_resolved_at`, `last_task_updated_at`), and a separate `actual_task_count` column when task rows already exist for that project. `actual_task_data_present` is set to `true` when that live task data is present. The task activity columns remain blank until the task sync has populated `tasks`.
+Exports one row per project from SQLite with the project metadata, a direct Asana project URL, the team URL, the current snapshot counts stored on `projects` (`num_tasks`, `num_incomplete_tasks`, `num_completed_tasks`, `task_counts_captured_at`), task activity dates derived from synced task rows (`last_task_created_at`, `last_task_resolved_at`, `last_task_updated_at`), and a separate `actual_task_count` column when task rows already exist for that project. `actual_task_data_present` is set to `true` when that live task data is present. The task activity columns remain blank until the task sync has populated `tasks`.
 ```bash
 python3 -m scripts.export_project_details_report --database data/asana.sqlite
 ```
@@ -271,7 +272,7 @@ Optional flags:
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
 ### Team Report
-Exports one row per team from SQLite with the team metadata, a direct Asana team URL, the total number of projects associated with that team, those projects split into active and archived counts, a sum of the stored project task counts, and a sum of the actual task-table counts when task rows are available. It also includes a semicolon-separated list of known team admins in `Name <email>` form when the user snapshots are available. If a user snapshot is missing, the export falls back to `unknown_user <gid>` so the association still appears.
+Exports one row per team from SQLite with the team metadata, a direct Asana team URL, the total number of projects associated with that team, those projects split into active and archived counts, a sum of the stored project task counts, and a sum of the actual task-table counts when task rows are available. It also includes a semicolon-separated list of known team admins in `Name <email>` form when the user snapshots are available. If a user snapshot is missing, the export falls back to `unknown_user <gid>` so the association still appears. The team sync column is emitted as a date only.
 ```bash
 python3 -m scripts.export_team_report --database data/asana.sqlite
 ```
@@ -287,7 +288,7 @@ Optional flags:
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
 ### Team Memberships Report
-Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, admin flags, direct Asana team/user URLs, and sync timestamps in one place. If the user snapshot is missing, the report still keeps the membership row and falls back to `unknown_user <gid>`.
+Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, admin flags, direct Asana team/user URLs, and sync dates in one place. If the user snapshot is missing, the report still keeps the membership row and falls back to `unknown_user <gid>`.
 ```bash
 python3 -m scripts.export_team_memberships --database data/asana.sqlite
 ```

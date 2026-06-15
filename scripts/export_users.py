@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.config import load_credentials
 from src.lib.database import Database
+from src.lib.date_formatting import format_report_date
 from src.lib.asana_urls import build_user_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
@@ -133,7 +134,7 @@ def export_users(
                     "resource_type": row["resource_type"],
                     "is_active": _bool_to_text(row["is_active"]),
                     "user_url": build_user_url(resolved_workspace_gid, row["gid"]),
-                    "synced_at": row["synced_at"],
+                    "synced_at": format_report_date(row["synced_at"]),
                     "workspaces": "; ".join(distinct_workspaces),
                 }
             )

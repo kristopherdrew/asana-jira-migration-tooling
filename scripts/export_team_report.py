@@ -17,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.database import Database
+from src.lib.date_formatting import format_report_date
 from src.lib.asana_urls import build_team_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
@@ -190,7 +191,7 @@ def export_team_report(
                         "" if row["actual_task_count_sources"] == 0 or row["actual_task_count_total"] is None else row["actual_task_count_total"]
                     ),
                     "known_team_admins": "; ".join(admins_by_team.get(row["gid"], [])),
-                    "team_synced_at": row["synced_at"],
+                    "team_synced_at": format_report_date(row["synced_at"]),
                 }
             )
 

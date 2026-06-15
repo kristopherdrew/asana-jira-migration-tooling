@@ -73,6 +73,7 @@ class ExportUsersTest(TestCase):
         self.assertEqual(user_one["email"], "alice@example.com")
         self.assertEqual(user_one["is_active"], "true")
         self.assertEqual(user_one["user_url"], "https://app.asana.com/1/wrk_1/profile/user_1")
+        self.assertEqual(user_one["synced_at"], "2025-01-01")
         self.assertEqual(
             user_one["workspaces"],
             "Workspace One; Workspace Two",
