@@ -23,7 +23,7 @@ class ExportTeamReportTest(TestCase):
     def tearDown(self) -> None:
         self.connection.close()
 
-    def test_exports_team_counts_and_admins(self) -> None:
+    def test_exports_team_counts_and_admin_emails(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
         self.database.upsert_team(
             self.connection,
@@ -177,10 +177,9 @@ class ExportTeamReportTest(TestCase):
         self.assertEqual(team_one["project_count_archived"], "1")
         self.assertEqual(team_one["project_task_count_total"], "16")
         self.assertEqual(team_one["actual_task_count_total"], "3")
-        self.assertEqual(
-            team_one["known_team_admins"],
-            "Alice Admin <alice@example.com>; Bob Boss <bob@example.com>",
-        )
+        self.assertEqual(team_one["first_admin_gid"], "user_1")
+        self.assertEqual(team_one["first_admin_email"], "alice@example.com")
+        self.assertEqual(team_one["additional_admin_emails"], "bob@example.com")
         self.assertEqual(team_one["team_synced_at"], "2025-01-01")
 
         team_two = rows[1]
@@ -192,9 +191,11 @@ class ExportTeamReportTest(TestCase):
         self.assertEqual(team_two["project_count_archived"], "0")
         self.assertEqual(team_two["project_task_count_total"], "8")
         self.assertEqual(team_two["actual_task_count_total"], "")
-        self.assertEqual(team_two["known_team_admins"], "")
+        self.assertEqual(team_two["first_admin_gid"], "")
+        self.assertEqual(team_two["first_admin_email"], "")
+        self.assertEqual(team_two["additional_admin_emails"], "")
 
-    def test_exports_admin_gid_when_user_snapshot_is_missing(self) -> None:
+    def test_exports_blank_admin_email_when_user_snapshot_is_missing(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
         self.database.upsert_team(
             self.connection,
@@ -220,5 +221,7 @@ class ExportTeamReportTest(TestCase):
         with output_path.open("r", newline="", encoding="utf-8") as handle:
             rows = list(csv.DictReader(handle))
 
-        self.assertEqual(rows[0]["known_team_admins"], "unknown_user user_missing")
+        self.assertEqual(rows[0]["first_admin_gid"], "user_missing")
+        self.assertEqual(rows[0]["first_admin_email"], "")
+        self.assertEqual(rows[0]["additional_admin_emails"], "")
         self.assertEqual(rows[0]["team_url"], "https://app.asana.com/0/team_1/")
