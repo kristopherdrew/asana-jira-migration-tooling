@@ -61,15 +61,8 @@ def _bool_to_text(value: Optional[int]) -> str:
     return "true" if bool(value) else "false"
 
 
-def _format_admin_label(name: Optional[str], email: Optional[str], user_gid: Optional[str]) -> str:
-    label = (name or "").strip()
-    if not label and user_gid:
-        label = f"unknown_user {user_gid}"
-    elif not label:
-        label = ""
-    if email:
-        return f"{label} <{email}>"
-    return label
+def _clean_email(email: Optional[str]) -> str:
+    return (email or "").strip()
 
 
 def export_team_report(
@@ -140,13 +133,12 @@ def export_team_report(
             """
             SELECT
                 tm.team_gid,
-                u.name AS user_name,
                 u.email AS user_email,
                 tm.user_gid AS user_gid
             FROM team_members tm
             LEFT JOIN users u ON u.gid = tm.user_gid
             WHERE COALESCE(tm.is_admin, 0) = 1
-            ORDER BY tm.team_gid, u.name COLLATE NOCASE, tm.user_gid
+            ORDER BY tm.team_gid, COALESCE(u.email, tm.user_gid) COLLATE NOCASE, tm.user_gid
             """
         ).fetchall()
 
@@ -155,8 +147,12 @@ def export_team_report(
 
     admins_by_team = defaultdict(list)
     for row in admin_rows:
+        email = _clean_email(row["user_email"])
         admins_by_team[row["team_gid"]].append(
-            _format_admin_label(row["user_name"], row["user_email"], row["user_gid"])
+            {
+                "user_gid": row["user_gid"],
+                "email": email,
+            }
         )
 
     fieldnames = [
@@ -169,7 +165,9 @@ def export_team_report(
         "project_count_archived",
         "project_task_count_total",
         "actual_task_count_total",
-        "known_team_admins",
+        "first_admin_gid",
+        "first_admin_email",
+        "additional_admin_emails",
         "team_synced_at",
     ]
 
@@ -177,6 +175,12 @@ def export_team_report(
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in team_rows:
+            admins = admins_by_team.get(row["gid"], [])
+            first_admin_gid = admins[0]["user_gid"] if admins else ""
+            first_admin_email = admins[0]["email"] if admins else ""
+            additional_admin_emails = ", ".join(
+                admin["email"] for admin in admins[1:] if admin["email"]
+            )
             writer.writerow(
                 {
                     "team_gid": row["gid"],
@@ -190,7 +194,9 @@ def export_team_report(
                     "actual_task_count_total": (
                         "" if row["actual_task_count_sources"] == 0 or row["actual_task_count_total"] is None else row["actual_task_count_total"]
                     ),
-                    "known_team_admins": "; ".join(admins_by_team.get(row["gid"], [])),
+                    "first_admin_gid": first_admin_gid,
+                    "first_admin_email": first_admin_email,
+                    "additional_admin_emails": additional_admin_emails,
                     "team_synced_at": format_report_date(row["synced_at"]),
                 }
             )
