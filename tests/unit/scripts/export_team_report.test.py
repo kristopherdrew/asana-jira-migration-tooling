@@ -181,7 +181,7 @@ class ExportTeamReportTest(TestCase):
             team_one["known_team_admins"],
             "Alice Admin <alice@example.com>; Bob Boss <bob@example.com>",
         )
-        self.assertEqual(team_one["team_synced_at"], sync_time.isoformat())
+        self.assertEqual(team_one["team_synced_at"], "2025-01-01")
 
         team_two = rows[1]
         self.assertEqual(team_two["team_name"], "Team Two")

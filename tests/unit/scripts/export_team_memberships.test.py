@@ -79,6 +79,9 @@ class ExportTeamMembershipsTest(TestCase):
         self.assertEqual(row["role"], "member")
         self.assertEqual(row["is_admin"], "true")
         self.assertEqual(row["membership_is_active"], "true")
+        self.assertEqual(row["membership_synced_at"], "2025-01-01")
+        self.assertEqual(row["user_synced_at"], "2025-01-01")
+        self.assertEqual(row["team_synced_at"], "2025-01-01")
 
     def test_exports_admin_gid_when_user_snapshot_is_missing(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
