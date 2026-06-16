@@ -8,9 +8,9 @@
 - Ignore build artifacts (`__pycache__/`, `*.pyc`, local SQLite files) and local environment files via `.gitignore`.
 
 ## Build, Test, and Development Commands
-- Standardize on CPython 3.11+ using a project-local virtual environment (`python -m venv .venv`).
+- Standardize on CPython 3.11+ using a project-local virtual environment (`python3 -m venv .venv`).
 - Only the Python standard library is allowed; document any exception in advance.
-- Run `python -m unittest discover tests` for the full test suite; use `python -m trace --count --file trace.out -m unittest discover tests` to check coverage when needed.
+- Run `python3 -m unittest discover tests` for the full test suite; use `python3 -m trace --count --file trace.out -m unittest discover tests` to check coverage when needed.
 - Each script should expose a `--workers` override and respect the resolved `skip_ssl_verification` setting from the shared credential loader.
 - Document every new CLI script (purpose, inputs, outputs) in the README and below.
 - Rebuild `tasks.hierarchy_depth` with `python3 -m scripts.backfill_task_hierarchy_depth` after schema changes; top-level tasks sit at depth 0 and each subtask increments by 1.
@@ -31,12 +31,12 @@
 - Write unit tests under `tests/unit` and integration specs under `tests/integration`, naming files `<subject>.test.py`.
 - Keep custom fixtures and mocks alongside tests (e.g., `tests/unit/__mocks__/`).
 - Target ≥90% statement coverage; include asynchronous and pagination edge cases in every suite.
-- Use `python -m unittest --failfast` during development for faster feedback and add regression tests for every bug fix.
+- Use `python3 -m unittest --failfast` during development for faster feedback and add regression tests for every bug fix.
 
 ## Commit & Pull Request Guidelines
 - Follow Conventional Commits (e.g., `feat(tasks): add recurring scheduling`). Scope names should align with the `src/` folder touched.
 - Rebase onto `master` before opening a PR and link the relevant Asana task.
-- Describe changes plainly, enumerate tests executed (`python -m unittest ...`), and attach logs or exports when relevant.
+- Describe changes plainly, enumerate tests executed (`python3 -m unittest ...`), and attach logs or exports when relevant.
 - Wait for CI checks to pass and secure at least one reviewer approval before merging.
 - When a prompt-driven change is completed, ask whether the user wants the changes committed.
 - If you ask, include a suggested Conventional Commit message.
