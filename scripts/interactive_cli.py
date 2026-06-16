@@ -40,6 +40,7 @@ from scripts.atlassian import (  # noqa: E402
     add_service_user_to_teams,
     add_service_user_to_projects,
     export_project_to_jira_csv,
+    export_team_project_jira_csv,
     import_jira_task_keys,
     sync_jira_attachments,
     update_atlassian_user_map,
@@ -763,6 +764,9 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             args.extend(["--team-gid", team_gid])
         run_script(export_team_report.main, args)
 
+    def run_team_project_jira_export() -> None:
+        run_script(export_team_project_jira_csv.main, args_report_defaults(log_level))
+
     return {
         "1": MenuItem(
             "1",
@@ -783,6 +787,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "4",
             "Export team report",
             run_team_report,
+        ),
+        "5": MenuItem(
+            "5",
+            "Export team/project Jira CSV",
+            run_team_project_jira_export,
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
@@ -977,7 +986,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         "1": MenuItem("1", "Initialization (metadata only)", lambda: run_group("Initialization", build_init_menu(args.log_level))),
         "2": MenuItem("2", "Tasks (full/extras/incremental)", lambda: run_group("Tasks", build_tasks_menu(args.log_level))),
         "3": MenuItem("3", "Atlassian (exports, mappings, attachments)", lambda: run_group("Atlassian", build_atlassian_menu(args.log_level))),
-        "4": MenuItem("4", "Reports (projects, users, memberships, team summary)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
+        "4": MenuItem("4", "Reports (projects, users, memberships, team summary, Jira CSV)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
         "5": MenuItem("5", "Credentials (create or change env file)", lambda: run_group("Credentials", build_credentials_menu())),
         "q": MenuItem("q", "Quit", lambda: sys.exit(0)),
     }
