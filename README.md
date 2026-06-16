@@ -380,6 +380,18 @@ Jira project metadata columns (`jira_project_name`, `jira_project_key`) come fro
 
 Every export also writes a `<filename>_link_modifications.csv` companion that lists every Asana URL the script augmented (plus full field contents when relevant). Each entry includes `task_gid`, field, original, modified, and optional full content.
 
+### Export Team Project Jira CSV
+Builds a single Jira import CSV for the team-to-project hierarchy. The file is ordered with all Epic rows first, then all Project rows. Epic rows represent Asana Teams with at least one associated Project and include `Issue Type`, `Task ID`, `Summary`, `Owner`, `Parent Id` (blank), `Project Status` (blank), `Labels` (blank), and a multiline `Description`. Project rows use `Issue Type = Task`, point `Parent Id` at the owning Epic’s `Task ID`, set `Project Status` from the project archive flag, and add one `last_active_$yyyy` label from `last_task_updated_at`. Projects without a team association are attached to a synthetic `No Team` Epic that has no owner or description.
+```bash
+python3 -m scripts.export_team_project_jira_csv
+```
+Optional flags:
+- `--database <path>` to point at a different SQLite file (default `data/asana.sqlite`).
+- `--output-dir <path>` to change where the CSV is written (default `exports/`).
+- `--filename <name>` to override the auto-generated `team_project_jira_import_<timestamp>.csv` filename.
+- `--workspace-gid <gid>` to force the workspace used when building project URLs.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
 ### Import Jira Task Keys
 Persists Jira issue keys (after a Jira import) back to SQLite so future exports know which tasks already exist in Jira. Expects Jira export headers `Issue key` and `External issue ID` by default; override column names with `--jira-column` and/or `--task-column` if your export labels them differently (e.g., `Issue Key`, `Custom field (Asana Task ID)`). BOMs and surrounding whitespace in headers are ignored.
 ```bash
