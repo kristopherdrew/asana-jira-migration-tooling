@@ -207,12 +207,13 @@ class IncrementalArgsBuilderTest(TestCase):
         menu = interactive_cli.build_reports_menu("DEBUG")
 
         self.assertEqual(
-            [menu["1"].label, menu["2"].label, menu["3"].label, menu["4"].label],
+            [menu["1"].label, menu["2"].label, menu["3"].label, menu["4"].label, menu["5"].label],
             [
                 "Export project details report",
                 "Export users report",
                 "Export team memberships report",
                 "Export team report",
+                "Export team/project Jira CSV",
             ],
         )
 
@@ -220,16 +221,19 @@ class IncrementalArgsBuilderTest(TestCase):
         menu["2"].handler()
         menu["3"].handler()
         menu["4"].handler()
+        menu["5"].handler()
 
-        self.assertEqual(mock_run_script.call_count, 4)
+        self.assertEqual(mock_run_script.call_count, 5)
         self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_project_details_report.main)
         self.assertIs(mock_run_script.call_args_list[1].args[0], interactive_cli.export_users.main)
         self.assertIs(mock_run_script.call_args_list[2].args[0], interactive_cli.export_team_memberships.main)
         self.assertIs(mock_run_script.call_args_list[3].args[0], interactive_cli.export_team_report.main)
+        self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.export_team_project_jira_csv.main)
         self.assertEqual(mock_run_script.call_args_list[0].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
         self.assertEqual(mock_run_script.call_args_list[1].args[1], ["--log-level", "DEBUG"])
         self.assertEqual(mock_run_script.call_args_list[2].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
         self.assertEqual(mock_run_script.call_args_list[3].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
+        self.assertEqual(mock_run_script.call_args_list[4].args[1], ["--log-level", "DEBUG"])
 
     @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli._open_sqlite")
