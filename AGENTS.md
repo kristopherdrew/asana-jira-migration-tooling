@@ -9,8 +9,12 @@
 
 ## Build, Test, and Development Commands
 - Standardize on CPython 3.11+ using a project-local virtual environment (`python3 -m venv .venv`).
+- Use `python3` consistently in commands, scripts, and README examples unless you are referring to a language name or a literal code snippet.
+- On macOS, activate the virtual environment with `source .venv/bin/activate`.
+- Do not assume `python` exists or maps to the intended interpreter.
 - Only the Python standard library is allowed; document any exception in advance.
 - Run `python3 -m unittest discover tests` for the full test suite; use `python3 -m trace --count --file trace.out -m unittest discover tests` to check coverage when needed.
+- Run the full test suite before committing non-trivial changes.
 - Each script should expose a `--workers` override and respect the resolved `skip_ssl_verification` setting from the shared credential loader.
 - Document every new CLI script (purpose, inputs, outputs) in the README and below.
 - Rebuild `tasks.hierarchy_depth` with `python3 -m scripts.backfill_task_hierarchy_depth` after schema changes; top-level tasks sit at depth 0 and each subtask increments by 1.
@@ -41,3 +45,4 @@
 - When a prompt-driven change is completed, ask whether the user wants the changes committed.
 - If you ask, include a suggested Conventional Commit message.
 - Do not create a commit unless the user explicitly approves it.
+- Keep new script shebangs aligned with the interpreter standard (`#!/usr/bin/env python3`).
