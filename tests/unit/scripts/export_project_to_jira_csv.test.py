@@ -100,6 +100,18 @@ class ExportProjectToJiraCsvTest(TestCase):
             },
             self.sync_time,
         )
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "user_inactive",
+                "name": "Inactive Assignee",
+                "resource_type": "user",
+                "email": "inactive@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            self.sync_time,
+        )
 
         # Seed tasks
         self.database.upsert_task(
@@ -242,11 +254,19 @@ class ExportProjectToJiraCsvTest(TestCase):
                     "gid": "user_1",
                     "atlassianAccountId": "atl-account-alice",
                     "atlassianEmail": "alice.atl@example.com",
+                    "atlassianStatus": "active",
                 },
                 {
                     "gid": "user_2",
                     "atlassianAccountId": "atl-account-bob",
                     "atlassianEmail": "bob.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+                {
+                    "gid": "user_inactive",
+                    "atlassianAccountId": "atl-account-inactive",
+                    "atlassianEmail": "inactive.atl@example.com",
+                    "atlassianStatus": "deactivated",
                 },
             ],
             self.sync_time,
@@ -646,6 +666,58 @@ class ExportProjectToJiraCsvTest(TestCase):
 
         self.assertEqual(row[assignee_atl_index], fallback_id)
         self.assertEqual(row[comment_index], "08/Mar/25 9:00 AM;atl-fallback; Comment without mapping")
+
+    def test_inactive_assignee_uses_top_active_creator_for_owner_columns(self) -> None:
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_inactive_assignee",
+                "name": "Inactive Assignee Task",
+                "resource_type": "task",
+                "resource_subtype": "default_task",
+                "assignee": {"gid": "user_inactive", "name": "Inactive Assignee"},
+                "created_by": {"gid": "user_1"},
+                "created_at": "2025-03-09T12:00:00Z",
+                "modified_at": "2025-03-10T12:00:00Z",
+                "memberships": [{"project": {"gid": "proj_1", "name": "Example Project"}}],
+            },
+            self.sync_time,
+        )
+        self.connection.commit()
+
+        output_dir = self.workspace / "exports"
+        csv_path = export_project(
+            str(self.db_path),
+            "proj_1",
+            output_dir,
+            filename="inactive_assignee.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+        )
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+
+        header = rows[0]
+        task_rows = {row[header.index("External issue ID")]: row for row in rows[1:]}
+        row = task_rows["task_inactive_assignee"]
+
+        assignee_idx = header.index("assignee")
+        assignee_email_idx = header.index("assignee_email")
+        assignee_atl_idx = header.index("assignee_atlassian_id")
+        assignee_atl_email_idx = header.index("assignee_atlassian_email")
+        creator_idx = header.index("creator")
+        creator_email_idx = header.index("creator_email")
+        creator_atl_idx = header.index("creator_atlassian_id")
+        creator_atl_email_idx = header.index("creator_atlassian_email")
+
+        self.assertEqual(row[assignee_idx], "Alice Reviewer")
+        self.assertEqual(row[assignee_email_idx], "alice@example.com")
+        self.assertEqual(row[assignee_atl_idx], "atl-account-alice")
+        self.assertEqual(row[assignee_atl_email_idx], "alice.atl@example.com")
+        self.assertEqual(row[creator_idx], "Alice Reviewer")
+        self.assertEqual(row[creator_email_idx], "alice@example.com")
+        self.assertEqual(row[creator_atl_idx], "atl-account-alice")
+        self.assertEqual(row[creator_atl_email_idx], "alice.atl@example.com")
 
     def test_missing_user_snapshot_uses_unknown_user_label(self) -> None:
         missing_gid = "user_missing"

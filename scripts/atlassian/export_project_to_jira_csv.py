@@ -571,6 +571,62 @@ def format_user_display_name(user_gid: Optional[str], user_name: Optional[str]) 
     return ""
 
 
+def _is_active_atlassian_user(user_map: Dict[str, Dict[str, Optional[str]]], user_gid: Optional[str]) -> bool:
+    if not user_gid:
+        return False
+    entry = user_map.get(user_gid) or {}
+    return (entry.get("status") or "").strip().casefold() == "active"
+
+
+def _is_explicitly_inactive_atlassian_user(
+    user_map: Dict[str, Dict[str, Optional[str]]],
+    user_gid: Optional[str],
+) -> bool:
+    if not user_gid or user_gid not in user_map:
+        return False
+    entry = user_map.get(user_gid) or {}
+    status = (entry.get("status") or "").strip().casefold()
+    return bool(status) and status != "active"
+
+
+def _build_active_creator_fallback(
+    tasks: List[dict],
+    user_map: Dict[str, Dict[str, Optional[str]]],
+    user_display_names: Dict[str, str],
+    user_emails: Dict[str, str],
+    fallback_atlassian_id: Optional[str],
+) -> Optional[Dict[str, str]]:
+    creator_counts: Dict[str, int] = defaultdict(int)
+    creator_details: Dict[str, Dict[str, str]] = {}
+    for task in tasks:
+        creator_gid = task.get("created_by_gid")
+        if not _is_active_atlassian_user(user_map, creator_gid):
+            continue
+        creator_counts[creator_gid] += 1
+        if creator_gid not in creator_details:
+            account_id, account_email = resolve_atlassian_identity(user_map, creator_gid, fallback_atlassian_id)
+            creator_details[creator_gid] = {
+                "user_gid": creator_gid or "",
+                "display_name": format_user_display_name(creator_gid, user_display_names.get(creator_gid) or task.get("creator_name")),
+                "email": (user_emails.get(creator_gid) or task.get("creator_email") or "").strip(),
+                "atlassian_id": account_id,
+                "atlassian_email": account_email,
+            }
+
+    if not creator_counts:
+        return None
+
+    winner_gid = sorted(
+        creator_counts.keys(),
+        key=lambda gid: (
+            -creator_counts[gid],
+            creator_details[gid]["display_name"].casefold(),
+            gid,
+        ),
+    )[0]
+    return creator_details[winner_gid]
+
+
 def log_custom_field_list(
     project_gid: str,
     fields: List[Dict[str, str]],
@@ -1751,6 +1807,14 @@ def export_project(
                     ", ".join(missing_gids[:5]),
                 )
 
+        active_creator_fallback = _build_active_creator_fallback(
+            tasks,
+            user_map,
+            user_display_names,
+            user_emails,
+            fallback_atlassian_id,
+        )
+
         current_project_row = connection.execute(
             """
             SELECT
@@ -2302,13 +2366,23 @@ def export_project(
             jira_depth_raw = task["jira_hierarchy_depth"]
             jira_depth_value = "" if jira_depth_raw is None else str(jira_depth_raw)
             assignee_gid = task["assignee_gid"]
-            assignee_atl, assignee_atl_email = resolve_atlassian_identity(
-                user_map, assignee_gid, fallback_atlassian_id
-            )
+            if not _is_explicitly_inactive_atlassian_user(user_map, assignee_gid) or not active_creator_fallback:
+                assignee_display_name = format_user_display_name(task["assignee_gid"], task["assignee_name"])
+                assignee_email = task["assignee_email"] or ""
+                assignee_atl, assignee_atl_email = resolve_atlassian_identity(
+                    user_map, assignee_gid, fallback_atlassian_id
+                )
+                assignee_gid_effective = assignee_gid
+            else:
+                assignee_display_name = active_creator_fallback["display_name"]
+                assignee_email = active_creator_fallback["email"]
+                assignee_atl = active_creator_fallback["atlassian_id"]
+                assignee_atl_email = active_creator_fallback["atlassian_email"]
+                assignee_gid_effective = active_creator_fallback["user_gid"]
             record_user_association(
-                assignee_gid,
+                assignee_gid_effective,
                 "assignee",
-                task["assignee_email"],
+                assignee_email,
                 associations,
                 user_emails,
             )
@@ -2316,8 +2390,8 @@ def export_project(
                 try:
                     dt_created = parse_iso_datetime(task["created_at"])
                     if dt_created:
-                        last_active[assignee_gid] = max(
-                            last_active.get(assignee_gid, ""), dt_created.date().isoformat()
+                        last_active[assignee_gid_effective] = max(
+                            last_active.get(assignee_gid_effective, ""), dt_created.date().isoformat()
                         )
                 except Exception:
                     pass
@@ -2429,8 +2503,8 @@ def export_project(
                 jira_parent_gid,
                 jira_depth_value,
                 task["name"],
-                format_user_display_name(task["assignee_gid"], task["assignee_name"]),
-                task["assignee_email"] or "",
+                assignee_display_name,
+                assignee_email,
                 assignee_atl,
                 assignee_atl_email,
                 format_user_display_name(task["created_by_gid"], task["creator_name"]),
