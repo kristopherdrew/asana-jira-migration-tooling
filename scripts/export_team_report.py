@@ -20,6 +20,7 @@ from src.lib.database import Database
 from src.lib.date_formatting import format_report_date
 from src.lib.asana_urls import build_team_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.team_analysis import build_team_analysis
 
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
@@ -155,6 +156,10 @@ def export_team_report(
             }
         )
 
+    with database.connect() as analysis_connection:
+        database.initialize(analysis_connection)
+        team_analysis = build_team_analysis(analysis_connection)
+
     fieldnames = [
         "team_gid",
         "team_name",
@@ -168,6 +173,24 @@ def export_team_report(
         "first_admin_gid",
         "first_admin_email",
         "additional_admin_emails",
+        "effective_admin",
+        "effective_admin_email",
+        "effective_admin_atlassian_id",
+        "effective_admin_atlassian_email",
+        "effective_admin_atlassian_status",
+        "effective_admin_source",
+        "project_owner",
+        "project_owner_email",
+        "project_owner_atlassian_id",
+        "project_owner_atlassian_email",
+        "project_owner_atlassian_status",
+        "project_owner_project_count",
+        "task_creator",
+        "task_creator_email",
+        "task_creator_atlassian_id",
+        "task_creator_atlassian_email",
+        "task_creator_atlassian_status",
+        "task_creator_task_count",
         "team_synced_at",
     ]
 
@@ -176,9 +199,10 @@ def export_team_report(
         writer.writeheader()
         for row in team_rows:
             admins = admins_by_team.get(row["gid"], [])
-            first_admin_gid = admins[0]["user_gid"] if admins else ""
-            first_admin_email = admins[0]["email"] if admins else ""
-            additional_admin_emails = ", ".join(
+            analysis = team_analysis.get(row["gid"])
+            first_admin_gid = analysis.first_admin_gid if analysis else (admins[0]["user_gid"] if admins else "")
+            first_admin_email = analysis.first_admin_email if analysis else (admins[0]["email"] if admins else "")
+            additional_admin_emails = analysis.additional_admin_emails if analysis else ", ".join(
                 admin["email"] for admin in admins[1:] if admin["email"]
             )
             writer.writerow(
@@ -197,6 +221,24 @@ def export_team_report(
                     "first_admin_gid": first_admin_gid,
                     "first_admin_email": first_admin_email,
                     "additional_admin_emails": additional_admin_emails,
+                    "effective_admin": analysis.effective_admin if analysis else "",
+                    "effective_admin_email": analysis.effective_admin_email if analysis else "",
+                    "effective_admin_atlassian_id": analysis.effective_admin_atlassian_id if analysis else "",
+                    "effective_admin_atlassian_email": analysis.effective_admin_atlassian_email if analysis else "",
+                    "effective_admin_atlassian_status": analysis.effective_admin_atlassian_status if analysis else "",
+                    "effective_admin_source": analysis.effective_admin_source if analysis else "",
+                    "project_owner": analysis.project_owner if analysis else "",
+                    "project_owner_email": analysis.project_owner_email if analysis else "",
+                    "project_owner_atlassian_id": analysis.project_owner_atlassian_id if analysis else "",
+                    "project_owner_atlassian_email": analysis.project_owner_atlassian_email if analysis else "",
+                    "project_owner_atlassian_status": analysis.project_owner_atlassian_status if analysis else "",
+                    "project_owner_project_count": analysis.project_owner_project_count if analysis else 0,
+                    "task_creator": analysis.task_creator if analysis else "",
+                    "task_creator_email": analysis.task_creator_email if analysis else "",
+                    "task_creator_atlassian_id": analysis.task_creator_atlassian_id if analysis else "",
+                    "task_creator_atlassian_email": analysis.task_creator_atlassian_email if analysis else "",
+                    "task_creator_atlassian_status": analysis.task_creator_atlassian_status if analysis else "",
+                    "task_creator_task_count": analysis.task_creator_task_count if analysis else 0,
                     "team_synced_at": format_report_date(row["synced_at"]),
                 }
             )

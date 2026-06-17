@@ -105,6 +105,36 @@ class ExportTeamProjectJiraCsvTest(TestCase):
             },
             sync_time,
         )
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [
+                {
+                    "gid": "admin_a",
+                    "atlassianAccountId": "atl-admin-a",
+                    "atlassianEmail": "alice.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+                {
+                    "gid": "admin_b",
+                    "atlassianAccountId": "atl-admin-b",
+                    "atlassianEmail": "bob.atl@example.com",
+                    "atlassianStatus": "deactivated",
+                },
+                {
+                    "gid": "owner_alpha",
+                    "atlassianAccountId": "atl-owner-alpha",
+                    "atlassianEmail": "alpha.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+                {
+                    "gid": "owner_zeta",
+                    "atlassianAccountId": "atl-owner-zeta",
+                    "atlassianEmail": "zeta.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+            ],
+            sync_time,
+        )
 
         self.database.upsert_team_members(
             self.connection,
@@ -333,7 +363,10 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         ])
 
         alpha_epic = rows[0]
-        self.assertEqual(alpha_epic["Owner"], "alice@example.com")
+        self.assertEqual(alpha_epic["Owner"], "alice.atl@example.com")
+        self.assertEqual(alpha_epic["Owner Email"], "alice@example.com")
+        self.assertEqual(alpha_epic["Owner Atlassian ID"], "atl-admin-a")
+        self.assertEqual(alpha_epic["Owner Source"], "team_admin")
         self.assertEqual(alpha_epic["Parent Id"], "")
         self.assertEqual(alpha_epic["Project Status"], "")
         self.assertEqual(alpha_epic["Labels"], "")
@@ -344,14 +377,25 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_description["project_count_archived"], "1")
         self.assertEqual(alpha_description["project_task_count_total"], "15")
         self.assertEqual(alpha_description["actual_task_count_total"], "3")
-        self.assertEqual(alpha_description["first_admin_email"], "alice@example.com")
-        self.assertEqual(alpha_description["additional_admin_emails"], "bob@example.com")
+        self.assertEqual(alpha_description["first_admin_gid"], "admin_a")
+        self.assertEqual(alpha_description["first_admin_email"], "alice.atl@example.com")
+        self.assertEqual(alpha_description["additional_admin_emails"], "bob.atl@example.com")
+        self.assertEqual(alpha_description["effective_admin"], "alice.atl@example.com")
+        self.assertEqual(alpha_description["effective_admin_source"], "team_admin")
+        self.assertEqual(alpha_description["project_owner"], "alpha.atl@example.com")
+        self.assertEqual(alpha_description["project_owner_project_count"], "2")
 
         beta_epic = rows[1]
-        self.assertEqual(beta_epic["Owner"], "alpha@example.com")
+        self.assertEqual(beta_epic["Owner"], "alpha.atl@example.com")
+        self.assertEqual(beta_epic["Owner Email"], "alpha@example.com")
+        self.assertEqual(beta_epic["Owner Atlassian ID"], "atl-owner-alpha")
+        self.assertEqual(beta_epic["Owner Source"], "project_owner")
         beta_description = _description_to_map(beta_epic["Description"])
-        self.assertEqual(beta_description["first_admin_email"], "alpha@example.com")
-        self.assertEqual(beta_description["additional_admin_emails"], "zeta@example.com")
+        self.assertEqual(beta_description["effective_admin"], "alpha.atl@example.com")
+        self.assertEqual(beta_description["effective_admin_source"], "project_owner")
+        self.assertEqual(beta_description["project_owner"], "alpha.atl@example.com")
+        self.assertEqual(beta_description["project_owner_project_count"], "1")
+        self.assertEqual(beta_description["task_creator"], "")
 
         no_team_epic = rows[2]
         self.assertEqual(no_team_epic["Summary"], "No Team")
@@ -360,6 +404,10 @@ class ExportTeamProjectJiraCsvTest(TestCase):
 
         alpha_task = rows[3]
         self.assertEqual(alpha_task["Parent Id"], "1")
+        self.assertEqual(alpha_task["Owner"], "alpha@example.com")
+        self.assertEqual(alpha_task["Owner Email"], "alpha.atl@example.com")
+        self.assertEqual(alpha_task["Owner Atlassian ID"], "atl-owner-alpha")
+        self.assertEqual(alpha_task["Owner Source"], "project_owner")
         self.assertEqual(alpha_task["Project Status"], "Active")
         self.assertEqual(alpha_task["Labels"], "last_active_2025")
         alpha_task_description = _description_to_map(alpha_task["Description"])
@@ -374,6 +422,9 @@ class ExportTeamProjectJiraCsvTest(TestCase):
 
         beta_task = rows[4]
         self.assertEqual(beta_task["Parent Id"], "1")
+        self.assertEqual(beta_task["Owner"], "zeta@example.com")
+        self.assertEqual(beta_task["Owner Email"], "zeta.atl@example.com")
+        self.assertEqual(beta_task["Owner Atlassian ID"], "atl-owner-zeta")
         self.assertEqual(beta_task["Project Status"], "Archived")
         self.assertEqual(beta_task["Labels"], "last_active_2024")
 
@@ -386,6 +437,9 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         loose_task = rows[7]
         self.assertEqual(loose_task["Parent Id"], "3")
         self.assertEqual(loose_task["Owner"], "Display Owner")
+        self.assertEqual(loose_task["Owner Email"], "")
+        self.assertEqual(loose_task["Owner Atlassian ID"], "")
+        self.assertEqual(loose_task["Owner Source"], "project_owner")
         self.assertEqual(loose_task["Labels"], "last_active_2022")
         loose_description = _description_to_map(loose_task["Description"])
         self.assertEqual(loose_description["team_gid"], "")
@@ -394,3 +448,219 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(loose_description["project_url"], "https://app.asana.com/1/ws_1/project/proj_nt")
 
         self.assertNotIn("Unexported Project", [row["Summary"] for row in rows])
+
+    def test_prefers_active_admin_then_task_creator_when_top_owner_is_inactive(self) -> None:
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        self.database.upsert_team(self.connection, {"gid": "team_c", "name": "Gamma Team"}, sync_time)
+        self.database.upsert_team(self.connection, {"gid": "team_d", "name": "Delta Team"}, sync_time)
+
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "admin_inactive",
+                "name": "Inactive Admin",
+                "resource_type": "user",
+                "email": "inactive.admin@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "admin_active",
+                "name": "Active Admin",
+                "resource_type": "user",
+                "email": "active.admin@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "owner_inactive",
+                "name": "Inactive Owner",
+                "resource_type": "user",
+                "email": "inactive.owner@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "owner_active",
+                "name": "Active Owner",
+                "resource_type": "user",
+                "email": "active.owner@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "creator_active",
+                "name": "Active Creator",
+                "resource_type": "user",
+                "email": "creator@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [
+                {
+                    "gid": "admin_inactive",
+                    "atlassianAccountId": "atl-admin-inactive",
+                    "atlassianEmail": "inactive.admin.atl@example.com",
+                    "atlassianStatus": "deactivated",
+                },
+                {
+                    "gid": "admin_active",
+                    "atlassianAccountId": "atl-admin-active",
+                    "atlassianEmail": "active.admin.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+                {
+                    "gid": "owner_inactive",
+                    "atlassianAccountId": "atl-owner-inactive",
+                    "atlassianEmail": "inactive.owner.atl@example.com",
+                    "atlassianStatus": "deactivated",
+                },
+                {
+                    "gid": "owner_active",
+                    "atlassianAccountId": "atl-owner-active",
+                    "atlassianEmail": "active.owner.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+                {
+                    "gid": "creator_active",
+                    "atlassianAccountId": "atl-creator-active",
+                    "atlassianEmail": "creator.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+            ],
+            sync_time,
+        )
+
+        self.database.upsert_team_members(
+            self.connection,
+            "team_c",
+            [
+                {
+                    "user": {"gid": "admin_inactive", "name": "Inactive Admin", "email": "inactive.admin@example.com", "is_active": True},
+                    "role": "member",
+                    "is_admin": True,
+                },
+                {
+                    "user": {"gid": "admin_active", "name": "Active Admin", "email": "active.admin@example.com", "is_active": True},
+                    "role": "member",
+                    "is_admin": True,
+                },
+            ],
+            sync_time,
+        )
+
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_c1",
+                "name": "Gamma Project",
+                "team": {"gid": "team_c", "name": "Gamma Team"},
+                "owner": {"gid": "owner_inactive", "name": "Inactive Owner"},
+                "archived": False,
+                "num_tasks": 1,
+            },
+            sync_time,
+        )
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_d1",
+                "name": "Delta One",
+                "team": {"gid": "team_d", "name": "Delta Team"},
+                "owner": {"gid": "owner_inactive", "name": "Inactive Owner"},
+                "archived": False,
+                "num_tasks": 1,
+            },
+            sync_time,
+        )
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_d2",
+                "name": "Delta Two",
+                "team": {"gid": "team_d", "name": "Delta Team"},
+                "owner": {"gid": "owner_inactive", "name": "Inactive Owner"},
+                "archived": False,
+                "num_tasks": 1,
+            },
+            sync_time,
+        )
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_d3",
+                "name": "Delta Three",
+                "team": {"gid": "team_d", "name": "Delta Team"},
+                "owner": {"gid": "owner_active", "name": "Active Owner"},
+                "archived": False,
+                "num_tasks": 1,
+            },
+            sync_time,
+        )
+
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_c1",
+                "name": "Task C1",
+                "created_by": {"gid": "creator_active", "name": "Active Creator"},
+                "memberships": [{"project": {"gid": "proj_c1", "name": "Gamma Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_d1",
+                "name": "Task D1",
+                "created_by": {"gid": "creator_active", "name": "Active Creator"},
+                "memberships": [{"project": {"gid": "proj_d1", "name": "Delta One"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.connection.commit()
+
+        output_path = export_team_project_jira_csv(str(self.db_path), self.workspace / "exports", filename="fallback.csv")
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        gamma_epic = next(row for row in rows if row["Summary"] == "Gamma Team")
+        self.assertEqual(gamma_epic["Owner"], "active.admin.atl@example.com")
+        self.assertEqual(gamma_epic["Owner Email"], "active.admin@example.com")
+        self.assertEqual(gamma_epic["Owner Source"], "team_admin")
+        gamma_description = _description_to_map(gamma_epic["Description"])
+        self.assertEqual(gamma_description["effective_admin_source"], "team_admin")
+
+        delta_epic = next(row for row in rows if row["Summary"] == "Delta Team")
+        self.assertEqual(delta_epic["Owner"], "creator.atl@example.com")
+        self.assertEqual(delta_epic["Owner Email"], "creator@example.com")
+        self.assertEqual(delta_epic["Owner Source"], "task_creator")
+        delta_description = _description_to_map(delta_epic["Description"])
+        self.assertEqual(delta_description["project_owner"], "inactive.owner.atl@example.com")
+        self.assertEqual(delta_description["project_owner_atlassian_status"], "deactivated")
+        self.assertEqual(delta_description["task_creator"], "creator.atl@example.com")
+        self.assertEqual(delta_description["effective_admin_source"], "task_creator")
