@@ -241,7 +241,7 @@ Optional flags mirror the other scripts (`--project-gid`, `--team`, `--team-gids
 ## Exports & Atlassian Integrations
 All report date columns now export as `YYYY-MM-DD` with zero-padded month and day values. Jira comment timestamps in the Jira CSV export remain in Jira's required comment format.
 ### Export Users
-Writes the `users` table (plus workspace memberships) to a CSV for quick auditing or downstream reporting. Includes GID, name, email, resource type, active flag, a direct Asana user URL, last sync date, and a semicolon-separated list of workspaces.
+Writes the `users` table (plus workspace memberships) to a CSV for quick auditing or downstream reporting. Includes GID, name, email, resource type, active flag, Atlassian account id, Atlassian status, a direct Asana user URL, last sync date, and a semicolon-separated list of workspaces. Atlassian id/status come from the `user_atlassian_accounts` table (keyed by Asana user GID) and are left blank for users without a mapping.
 ```bash
 python3 -m scripts.export_users --database data/asana.sqlite
 ```

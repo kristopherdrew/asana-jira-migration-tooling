@@ -52,6 +52,11 @@ class ExportUsersTest(TestCase):
             },
             sync_time,
         )
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [("user_1", "atl_acct_1", "alice@atlassian.com", "active")],
+            sync_time,
+        )
         self.connection.commit()
 
         output_dir = self.workspace / "exports"
@@ -72,6 +77,8 @@ class ExportUsersTest(TestCase):
         self.assertEqual(user_one["name"], "Alice Example")
         self.assertEqual(user_one["email"], "alice@example.com")
         self.assertEqual(user_one["is_active"], "true")
+        self.assertEqual(user_one["atlassian_id"], "atl_acct_1")
+        self.assertEqual(user_one["atlassian_status"], "active")
         self.assertEqual(user_one["user_url"], "https://app.asana.com/1/wrk_1/profile/user_1")
         self.assertEqual(user_one["synced_at"], "2025-01-01")
         self.assertEqual(
@@ -81,5 +88,7 @@ class ExportUsersTest(TestCase):
 
         user_two = next(row for row in reader if row["gid"] == "user_2")
         self.assertEqual(user_two["is_active"], "false")
+        self.assertEqual(user_two["atlassian_id"], "")
+        self.assertEqual(user_two["atlassian_status"], "")
         self.assertEqual(user_two["user_url"], "https://app.asana.com/1/wrk_1/profile/user_2")
         self.assertEqual(user_two["workspaces"], "")

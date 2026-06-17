@@ -104,6 +104,7 @@ def export_users(
         ).fetchall()
 
         workspace_map = _workspace_labels(connection)
+        atlassian_map = database.load_atlassian_account_map(connection)
 
     if not users:
         logger.info("No users found in %s; generated an empty export.", database_path)
@@ -114,6 +115,8 @@ def export_users(
         "email",
         "resource_type",
         "is_active",
+        "atlassian_id",
+        "atlassian_status",
         "user_url",
         "synced_at",
         "workspaces",
@@ -126,6 +129,7 @@ def export_users(
         for row in users:
             workspaces = workspace_map.get(row["gid"], [])
             distinct_workspaces = sorted(dict.fromkeys(workspaces))
+            atlassian_account = atlassian_map.get(row["gid"], {})
             writer.writerow(
                 {
                     "gid": row["gid"],
@@ -133,6 +137,8 @@ def export_users(
                     "email": row["email"],
                     "resource_type": row["resource_type"],
                     "is_active": _bool_to_text(row["is_active"]),
+                    "atlassian_id": atlassian_account.get("account_id", ""),
+                    "atlassian_status": atlassian_account.get("status", ""),
                     "user_url": build_user_url(resolved_workspace_gid, row["gid"]),
                     "synced_at": format_report_date(row["synced_at"]),
                     "workspaces": "; ".join(distinct_workspaces),
