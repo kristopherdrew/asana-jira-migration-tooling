@@ -59,6 +59,24 @@ class ExportTeamReportTest(TestCase):
             },
             sync_time,
         )
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [
+                {
+                    "gid": "user_1",
+                    "atlassianAccountId": "atl-user-1",
+                    "atlassianEmail": "alice.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+                {
+                    "gid": "user_2",
+                    "atlassianAccountId": "atl-user-2",
+                    "atlassianEmail": "bob.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+            ],
+            sync_time,
+        )
         self.database.upsert_team_members(
             self.connection,
             "team_1",
@@ -178,8 +196,16 @@ class ExportTeamReportTest(TestCase):
         self.assertEqual(team_one["project_task_count_total"], "16")
         self.assertEqual(team_one["actual_task_count_total"], "3")
         self.assertEqual(team_one["first_admin_gid"], "user_1")
-        self.assertEqual(team_one["first_admin_email"], "alice@example.com")
-        self.assertEqual(team_one["additional_admin_emails"], "bob@example.com")
+        self.assertEqual(team_one["first_admin_email"], "alice.atl@example.com")
+        self.assertEqual(team_one["additional_admin_emails"], "bob.atl@example.com")
+        self.assertEqual(team_one["effective_admin"], "alice.atl@example.com")
+        self.assertEqual(team_one["effective_admin_email"], "alice@example.com")
+        self.assertEqual(team_one["effective_admin_atlassian_id"], "atl-user-1")
+        self.assertEqual(team_one["effective_admin_atlassian_email"], "alice.atl@example.com")
+        self.assertEqual(team_one["effective_admin_atlassian_status"], "active")
+        self.assertEqual(team_one["effective_admin_source"], "team_admin")
+        self.assertEqual(team_one["project_owner"], "")
+        self.assertEqual(team_one["task_creator"], "")
         self.assertEqual(team_one["team_synced_at"], "2025-01-01")
 
         team_two = rows[1]
@@ -194,6 +220,10 @@ class ExportTeamReportTest(TestCase):
         self.assertEqual(team_two["first_admin_gid"], "")
         self.assertEqual(team_two["first_admin_email"], "")
         self.assertEqual(team_two["additional_admin_emails"], "")
+        self.assertEqual(team_two["effective_admin"], "")
+        self.assertEqual(team_two["effective_admin_email"], "")
+        self.assertEqual(team_two["effective_admin_atlassian_id"], "")
+        self.assertEqual(team_two["effective_admin_source"], "")
 
     def test_exports_blank_admin_email_when_user_snapshot_is_missing(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -222,6 +252,6 @@ class ExportTeamReportTest(TestCase):
             rows = list(csv.DictReader(handle))
 
         self.assertEqual(rows[0]["first_admin_gid"], "user_missing")
-        self.assertEqual(rows[0]["first_admin_email"], "")
+        self.assertEqual(rows[0]["first_admin_email"], "user_missing")
         self.assertEqual(rows[0]["additional_admin_emails"], "")
         self.assertEqual(rows[0]["team_url"], "https://app.asana.com/0/team_1/")
