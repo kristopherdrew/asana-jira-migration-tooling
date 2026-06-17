@@ -305,10 +305,14 @@ Optional flags:
 In the interactive Reports menu, this export can also search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
 ### Update Atlassian User Map
-Maintains the lookup table that translates Asana user GIDs into Atlassian account IDs (and optional Atlassian emails) for Jira exports. Provide a CSV with `gid`, `atlassianAccountId`, and optionally `atlassianEmail`; entries are upserted into SQLite.
+Maintains the lookup table that translates Asana user GIDs into Atlassian account IDs, emails, and user status for Jira exports. Provide a CSV with `gid`, `atlassianAccountId`, and optionally `atlassianEmail` and `atlassianStatus` (or `status`); entries are upserted into SQLite.
 ```bash
 python3 -m scripts.update_atlassian_user_map --csv path/to/mapping.csv
 ```
+Template:
+- [`Sample Data/atlassian_user_map_template.csv`](/Users/kristopherperez/Desktop/Bitbucket/asana_jira_migration/Sample%20Data/atlassian_user_map_template.csv)
+Use that template as the starting point for the mapping CSV if you are creating one from scratch.
+
 Required flags:
 - `--csv <path>` pointing to the user mapping file.
 

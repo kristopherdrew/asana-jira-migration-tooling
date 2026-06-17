@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Load Atlassian account IDs from a CSV into the SQLite user mapping table."""
+"""Load Atlassian account IDs, emails, and status from a CSV into SQLite."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         required=True,
         help=(
             "Path to the CSV containing mappings (columns: gid, atlassianAccountId, "
-            "and optional atlassianEmail)."
+            "and optional atlassianEmail / atlassianStatus)."
         ),
     )
     parser.add_argument(
@@ -41,7 +41,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def load_csv_rows(csv_path: Path) -> Iterable[Tuple[str, str, str]]:
+def load_csv_rows(csv_path: Path) -> Iterable[Tuple[str, str, str, str]]:
     if not csv_path.exists():
         raise SystemExit(f"Mapping CSV not found: {csv_path}")
     with csv_path.open("r", newline="", encoding="utf-8") as handle:
@@ -50,17 +50,19 @@ def load_csv_rows(csv_path: Path) -> Iterable[Tuple[str, str, str]]:
         gid_key = normalized.get("gid")
         account_key = normalized.get("atlassianaccountid")
         email_key = normalized.get("atlassianemail")
+        status_key = normalized.get("atlassianstatus") or normalized.get("status")
         if not gid_key or not account_key:
             raise SystemExit("Mapping CSV must include 'gid' and 'atlassianAccountId' columns.")
-        fieldnames = reader.fieldnames or []
         for row in reader:
             gid = (row.get(gid_key) or "").strip()
             account_id = (row.get(account_key) or "").strip()
             account_email = (row.get(email_key) or "").strip() if email_key else ""
+            account_status = (row.get(status_key) or "").strip() if status_key else ""
             yield (
                 gid,
                 account_id,
                 account_email,
+                account_status,
             )
 
 

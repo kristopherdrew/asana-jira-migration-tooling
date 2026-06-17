@@ -24,9 +24,9 @@ class UpdateAtlassianUserMapTest(TestCase):
         csv_path = self.workspace / "mapping.csv"
         with csv_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(["gid", "atlassianAccountId", "atlassianEmail"])
-            writer.writerow(["user_1", "atl-alice", "alice.atl@example.com"])
-            writer.writerow(["user_2", "atl-bob", ""])
+            writer.writerow(["gid", "atlassianAccountId", "atlassianEmail", "atlassianStatus"])
+            writer.writerow(["user_1", "atl-alice", "alice.atl@example.com", "active"])
+            writer.writerow(["user_2", "atl-bob", "", "deactivated"])
 
         updated = update_mapping(str(self.db_path), csv_path)
         self.assertEqual(updated, 2)
@@ -35,7 +35,7 @@ class UpdateAtlassianUserMapTest(TestCase):
         try:
             rows = connection.execute(
                 """
-                SELECT user_gid, atlassian_account_id, atlassian_email
+                SELECT user_gid, atlassian_account_id, atlassian_email, atlassian_status
                 FROM user_atlassian_accounts
                 ORDER BY user_gid
                 """
@@ -44,8 +44,10 @@ class UpdateAtlassianUserMapTest(TestCase):
             self.assertEqual(rows[0]["user_gid"], "user_1")
             self.assertEqual(rows[0]["atlassian_account_id"], "atl-alice")
             self.assertEqual(rows[0]["atlassian_email"], "alice.atl@example.com")
+            self.assertEqual(rows[0]["atlassian_status"], "active")
             self.assertEqual(rows[1]["user_gid"], "user_2")
             self.assertEqual(rows[1]["atlassian_account_id"], "atl-bob")
             self.assertIsNone(rows[1]["atlassian_email"])
+            self.assertEqual(rows[1]["atlassian_status"], "deactivated")
         finally:
             connection.close()
