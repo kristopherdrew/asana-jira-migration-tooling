@@ -862,7 +862,11 @@ def args_clear_export_ids(log_level: str) -> List[str]:
 
 def args_update_user_map(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    csv_path = prompt("CSV with gid,atlassianAccountId[,atlassianEmail]", default="")
+    csv_path = prompt(
+        "CSV with gid,atlassianAccountId[,atlassianEmail,atlassianStatus] "
+        "(template: Sample Data/atlassian_user_map_template.csv)",
+        default="",
+    )
     if not csv_path:
         raise SystemExit("CSV path is required.")
     args.extend(["--csv", csv_path])
@@ -955,7 +959,11 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
         "1": MenuItem("1", "Export project to Jira CSV", lambda: run_export_project_to_jira(log_level)),
         "2": MenuItem("2", "Import Jira task keys", lambda: run_script(import_jira_task_keys.main, args_import_jira_keys(log_level))),
         "3": MenuItem("3", "Clear Jira task keys", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level))),
-        "4": MenuItem("4", "Update Atlassian user map", lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level))),
+        "4": MenuItem(
+            "4",
+            "Update Atlassian user map (template: Sample Data/atlassian_user_map_template.csv)",
+            lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level)),
+        ),
         "5": MenuItem("5", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
         "6": MenuItem("6", "Clear export IDs", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level))),
         "7": MenuItem("7", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, ["--clear-jira-project-map"])),

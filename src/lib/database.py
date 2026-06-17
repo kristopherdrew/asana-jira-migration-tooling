@@ -497,6 +497,7 @@ CREATE TABLE IF NOT EXISTS user_atlassian_accounts (
     user_gid TEXT PRIMARY KEY,
     atlassian_account_id TEXT NOT NULL,
     atlassian_email TEXT,
+    atlassian_status TEXT,
     synced_at TEXT NOT NULL
 );
 """
@@ -571,6 +572,7 @@ class Database:
         self._ensure_column(connection, "task_comments", "is_deleted", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "task_attachments", "is_deleted", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "user_atlassian_accounts", "atlassian_email", "TEXT")
+        self._ensure_column(connection, "user_atlassian_accounts", "atlassian_status", "TEXT")
         self._ensure_column(connection, "team_members", "is_admin", "INTEGER")
         self._ensure_task_jira_mapping_schema(connection)
         self._ensure_indexes(connection)
@@ -861,7 +863,7 @@ class Database:
     def replace_user_atlassian_accounts(
         self,
         connection: sqlite3.Connection,
-        mappings: Iterable[Tuple[str, str] | Dict[str, str]],
+        mappings: Iterable[Tuple[str, str] | Tuple[str, str, str] | Tuple[str, str, str, str] | Dict[str, str]],
         synced_at: datetime,
     ) -> int:
         rows = []
@@ -878,10 +880,17 @@ class Database:
                     or item.get("atlassian_email")
                     or ""
                 ).strip()
+                account_status = (
+                    item.get("atlassianStatus")
+                    or item.get("atlassian_status")
+                    or item.get("status")
+                    or ""
+                ).strip()
             else:
                 user_gid = (item[0] or "").strip()
                 account_id = (item[1] or "").strip()
                 account_email = item[2].strip() if len(item) > 2 and item[2] else ""
+                account_status = item[3].strip() if len(item) > 3 and item[3] else ""
             if not user_gid or not account_id:
                 continue
             rows.append(
@@ -889,6 +898,7 @@ class Database:
                     "user_gid": user_gid,
                     "atlassian_account_id": account_id,
                     "atlassian_email": account_email or None,
+                    "atlassian_status": account_status or None,
                     "synced_at": synced_at.isoformat(),
                 }
             )
@@ -896,12 +906,16 @@ class Database:
             connection.executemany(
                 """
                 INSERT INTO user_atlassian_accounts (
-                    user_gid, atlassian_account_id, atlassian_email, synced_at
+                    user_gid, atlassian_account_id, atlassian_email, atlassian_status, synced_at
                 )
-                VALUES (:user_gid, :atlassian_account_id, :atlassian_email, :synced_at)
+                VALUES (
+                    :user_gid, :atlassian_account_id, :atlassian_email,
+                    :atlassian_status, :synced_at
+                )
                 ON CONFLICT(user_gid) DO UPDATE SET
                     atlassian_account_id=excluded.atlassian_account_id,
                     atlassian_email=excluded.atlassian_email,
+                    atlassian_status=excluded.atlassian_status,
                     synced_at=excluded.synced_at
                 """,
                 rows,
@@ -909,9 +923,14 @@ class Database:
             connection.commit()
         return len(rows)
 
-    def load_atlassian_account_map(self, connection: sqlite3.Connection) -> Dict[str, Dict[str, Optional[str]]]:
+    def load_atlassian_account_map(
+        self, connection: sqlite3.Connection
+    ) -> Dict[str, Dict[str, Optional[str]]]:
         rows = connection.execute(
-            "SELECT user_gid, atlassian_account_id, atlassian_email FROM user_atlassian_accounts"
+            """
+            SELECT user_gid, atlassian_account_id, atlassian_email, atlassian_status
+            FROM user_atlassian_accounts
+            """
         ).fetchall()
         mapping = {}
         for row in rows:
@@ -921,6 +940,7 @@ class Database:
             mapping[user_gid] = {
                 "account_id": row["atlassian_account_id"] or "",
                 "email": row["atlassian_email"] or "",
+                "status": row["atlassian_status"] or "",
             }
         return mapping
 

@@ -80,3 +80,28 @@ class DatabaseUsersTest(TestCase):
         )
         self.assertEqual(len(workspace_rows), 1)
         self.assertEqual(workspace_rows[0]["workspace_gid"], "ws_b")
+
+    def test_initialize_adds_atlassian_status_column(self) -> None:
+        columns = [
+            row["name"]
+            for row in self.connection.execute("PRAGMA table_info(user_atlassian_accounts)")
+        ]
+        self.assertIn("atlassian_status", columns)
+
+    def test_load_atlassian_account_map_includes_status(self) -> None:
+        sync_time = synced_at_timestamp()
+        self.connection.execute(
+            """
+            INSERT INTO user_atlassian_accounts (
+                user_gid, atlassian_account_id, atlassian_email, atlassian_status, synced_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            ("user_status", "atl-status", "status@example.com", "active", sync_time.isoformat()),
+        )
+        self.connection.commit()
+
+        mapping = self.database.load_atlassian_account_map(self.connection)
+        self.assertEqual(mapping["user_status"]["account_id"], "atl-status")
+        self.assertEqual(mapping["user_status"]["email"], "status@example.com")
+        self.assertEqual(mapping["user_status"]["status"], "active")
