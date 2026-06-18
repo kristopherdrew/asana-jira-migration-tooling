@@ -305,33 +305,27 @@ Optional flags:
 In the interactive Reports menu, this export can also search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
 ### Update Atlassian User Map
-Maintains the lookup table that translates Asana user GIDs into Atlassian account IDs, emails, and user status for Jira exports. Provide a CSV with `gid`, `atlassianAccountId`, and optionally `atlassianEmail` and `atlassianStatus` (or `status`); entries are upserted into SQLite.
-```bash
-python3 -m scripts.update_atlassian_user_map --csv path/to/mapping.csv
-```
-To wipe every existing mapping and start from scratch, run with `--clear` and no CSV:
-```bash
-python3 -m scripts.update_atlassian_user_map --clear
-```
-Combine `--clear` with `--csv` to fully replace the table (delete all rows, then load the CSV).
-Template:
-- [`Sample Data/atlassian_user_map_template.csv`](/Users/kristopherperez/Desktop/Bitbucket/asana_jira_migration/Sample%20Data/atlassian_user_map_template.csv)
-Use that template as the starting point for the mapping CSV if you are creating one from scratch.
+Maintains the `user_atlassian_accounts` lookup table that translates Asana user GIDs into Atlassian account IDs, emails, and user status so Jira exports can resolve comment authors. There are two ways to populate it.
 
-To skip the manual mapping step entirely, feed a raw Atlassian user export (columns `User id`, `email`, `User status`; all other columns are ignored) and let the script match rows to Asana users by email:
+**Option A — raw Atlassian user export (recommended).** Feed an Atlassian export directly and let the script match rows to Asana users by email, with no manual mapping step. Only the `User id`, `email`, and `User status` columns are read; everything else is ignored.
 ```bash
 python3 -m scripts.update_atlassian_user_map --clear --atlassian-export path/to/export-users.csv
 ```
-Email matching is case-insensitive; only Asana users whose email appears in the export are mapped. The run logs how many rows were scanned, how many Asana users matched, and how many Asana users with an email had no match.
+Email matching is case-insensitive, and only Asana users whose email appears in the export are mapped. Each run logs how many rows were scanned, how many Asana users matched, and how many Asana users with an email had no match.
 
-Required flags:
-- `--csv <path>` pointing to the pre-mapped user file (required unless `--atlassian-export` or `--clear` is supplied).
+**Option B — pre-mapped CSV.** Provide a CSV with `gid`, `atlassianAccountId`, and optionally `atlassianEmail` and `atlassianStatus` (or `status`). Start from the [template](Sample%20Data/atlassian_user_map_template.csv) if you are building one from scratch.
+```bash
+python3 -m scripts.update_atlassian_user_map --csv path/to/mapping.csv
+```
 
-Optional flags:
-- `--atlassian-export <path>` to load a raw Atlassian user export and match Asana users by email; can be combined with `--clear` to fully replace the table.
-- `--clear` to delete all rows from `user_atlassian_accounts` before loading; use alone to wipe the table or with an input file to fully replace the mappings.
-- `--database <path>` to point at a different SQLite file (default `data/asana.sqlite`).
-- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+Both options upsert by Asana GID. Add `--clear` to delete every existing mapping first — use it alone to wipe the table, or alongside an input file to fully replace the contents.
+
+Flags (supply at least one of `--csv`, `--atlassian-export`, or `--clear`):
+- `--atlassian-export <path>` — load a raw Atlassian user export and match Asana users by email.
+- `--csv <path>` — load a pre-mapped user file.
+- `--clear` — delete all rows from `user_atlassian_accounts` before loading.
+- `--database <path>` — point at a different SQLite file (default `data/asana.sqlite`).
+- `--log-level <LEVEL>` — adjust logging verbosity (default `INFO`).
 
 ### Search Jira For External IDs
 Fetch Jira issues using the v3 `POST /rest/api/3/search/jql` endpoint (nextPageToken pagination), pull the external ID field (e.g., an Asana task GID stored in `customfield_<id>`), and upsert the Jira→Asana mapping into SQLite. The query is always forced to `ORDER BY created ASC, issuekey ASC` to keep pagination deterministic. Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials.
