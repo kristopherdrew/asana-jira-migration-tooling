@@ -72,16 +72,6 @@ def _clean_text(value: Optional[str]) -> str:
     return (value or "").strip()
 
 
-def _identity_value(email: Optional[str], display_name: Optional[str], fallback_gid: Optional[str] = None) -> str:
-    cleaned_email = _clean_text(email)
-    if cleaned_email:
-        return cleaned_email
-    cleaned_name = _clean_text(display_name)
-    if cleaned_name:
-        return cleaned_name
-    return fallback_gid or ""
-
-
 def _description_text(lines: list[tuple[str, str]]) -> str:
     return "\n".join(f"{field}: {value}" for field, value in lines)
 
@@ -102,25 +92,18 @@ def _format_team_description(row: dict, analysis) -> str:
             ("project_count_archived", _count_to_text(row["project_count_archived"])),
             ("project_task_count_total", _count_to_text(row["project_task_count_total"])),
             ("actual_task_count_total", _count_to_text(row["actual_task_count_total"])),
-            ("first_admin_gid", analysis.first_admin_gid if analysis else ""),
             ("first_admin_email", analysis.first_admin_email if analysis else ""),
             ("additional_admin_emails", analysis.additional_admin_emails if analysis else ""),
-            ("effective_admin", analysis.effective_admin if analysis else ""),
+            ("effective_admin", analysis.effective_admin_name if analysis else ""),
             ("effective_admin_email", analysis.effective_admin_email if analysis else ""),
-            ("effective_admin_atlassian_id", analysis.effective_admin_atlassian_id if analysis else ""),
-            ("effective_admin_atlassian_email", analysis.effective_admin_atlassian_email if analysis else ""),
             ("effective_admin_atlassian_status", analysis.effective_admin_atlassian_status if analysis else ""),
             ("effective_admin_source", analysis.effective_admin_source if analysis else ""),
-            ("project_owner", analysis.project_owner if analysis else ""),
+            ("project_owner", analysis.project_owner_name if analysis else ""),
             ("project_owner_email", analysis.project_owner_email if analysis else ""),
-            ("project_owner_atlassian_id", analysis.project_owner_atlassian_id if analysis else ""),
-            ("project_owner_atlassian_email", analysis.project_owner_atlassian_email if analysis else ""),
             ("project_owner_atlassian_status", analysis.project_owner_atlassian_status if analysis else ""),
             ("project_owner_project_count", _count_to_text(analysis.project_owner_project_count if analysis else 0)),
-            ("task_creator", analysis.task_creator if analysis else ""),
+            ("task_creator", analysis.task_creator_name if analysis else ""),
             ("task_creator_email", analysis.task_creator_email if analysis else ""),
-            ("task_creator_atlassian_id", analysis.task_creator_atlassian_id if analysis else ""),
-            ("task_creator_atlassian_email", analysis.task_creator_atlassian_email if analysis else ""),
             ("task_creator_atlassian_status", analysis.task_creator_atlassian_status if analysis else ""),
             ("task_creator_task_count", _count_to_text(analysis.task_creator_task_count if analysis else 0)),
         ]
@@ -150,7 +133,7 @@ def _format_project_description(row: dict, project_url: str) -> str:
 
 
 def _row_owner_from_project(row: dict) -> str:
-    return _identity_value(row["owner_email"], row["owner_name"], row["owner_gid"])
+    return _clean_text(row["owner_display_name"]) or _clean_text(row["owner_name"]) or _clean_text(row["owner_gid"])
 
 
 def _row_owner_email_from_project(row: dict) -> str:
@@ -282,7 +265,7 @@ def export_team_project_jira_csv(
         for team_gid in sorted_team_ids:
             aggregate = team_aggregates[team_gid]
             analysis = team_analysis.get(team_gid)
-            owner = analysis.effective_admin if analysis else ""
+            owner = analysis.effective_admin_name if analysis else ""
 
             epic_task_id = str(task_id_counter)
             task_id_counter += 1
@@ -380,26 +363,29 @@ def export_team_project_jira_csv(
                 }
             )
 
-        fieldnames = [
-            "Issue Type",
-            "Task ID",
-            "Parent Id",
-            "Summary",
-            "Owner",
-            "Owner Email",
-            "Owner Atlassian ID",
-            "Owner Source",
-            "is_personal_project",
-            "Project Status",
-            "Labels",
-            "Description",
+        # Each entry pairs the CSV header with the internal row key. The owner
+        # source is emitted as a second "Labels" column because Atlassian merges
+        # repeated columns of the same name into multiple label values.
+        columns = [
+            ("Issue Type", "Issue Type"),
+            ("Task ID", "Task ID"),
+            ("Parent Id", "Parent Id"),
+            ("Summary", "Summary"),
+            ("Owner", "Owner"),
+            ("Owner Email", "Owner Email"),
+            ("Owner Atlassian ID", "Owner Atlassian ID"),
+            ("Labels", "Owner Source"),
+            ("is_personal_project", "is_personal_project"),
+            ("Project Status", "Project Status"),
+            ("Labels", "Labels"),
+            ("Description", "Description"),
         ]
 
         with output_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=fieldnames)
-            writer.writeheader()
+            writer = csv.writer(handle)
+            writer.writerow([header for header, _ in columns])
             for row in epic_rows + task_rows:
-                writer.writerow(row)
+                writer.writerow([row.get(key, "") for _, key in columns])
 
         logger.info("Exported %s epic row(s) and %s task row(s) to %s.", len(epic_rows), len(task_rows), output_path)
         return output_path
