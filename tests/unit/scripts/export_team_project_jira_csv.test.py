@@ -347,7 +347,17 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         output_path = export_team_project_jira_csv(str(self.db_path), self.workspace / "exports", filename="report.csv")
 
         with output_path.open("r", newline="", encoding="utf-8") as handle:
-            rows = list(csv.DictReader(handle))
+            raw_rows = list(csv.reader(handle))
+
+        header = raw_rows[0]
+        # Atlassian receives the owner source and the last-active label as two
+        # separate columns that both share the "Labels" header.
+        self.assertEqual(header.count("Labels"), 2)
+        owner_source_idx, last_active_idx = [i for i, name in enumerate(header) if name == "Labels"]
+        # dict(zip(...)) collapses the duplicate "Labels" header to the last
+        # (last-active) column, matching the dedicated index lookups below.
+        rows = [dict(zip(header, values)) for values in raw_rows[1:]]
+        owner_source_labels = [values[owner_source_idx] for values in raw_rows[1:]]
 
         self.assertEqual([row["Issue Type"] for row in rows], ["Epic", "Epic", "Epic", "Task", "Task", "Task", "Task", "Task"])
         self.assertEqual([row["Task ID"] for row in rows], ["1", "2", "3", "4", "5", "6", "7", "8"])
@@ -363,10 +373,10 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         ])
 
         alpha_epic = rows[0]
-        self.assertEqual(alpha_epic["Owner"], "alice.atl@example.com")
+        self.assertEqual(alpha_epic["Owner"], "Alice Admin")
         self.assertEqual(alpha_epic["Owner Email"], "alice@example.com")
         self.assertEqual(alpha_epic["Owner Atlassian ID"], "atl-admin-a")
-        self.assertEqual(alpha_epic["Owner Source"], "team_admin")
+        self.assertEqual(owner_source_labels[0], "team_admin")
         self.assertEqual(alpha_epic["is_personal_project"], "")
         self.assertEqual(alpha_epic["Parent Id"], "")
         self.assertEqual(alpha_epic["Project Status"], "")
@@ -378,25 +388,29 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_description["project_count_archived"], "1")
         self.assertEqual(alpha_description["project_task_count_total"], "15")
         self.assertEqual(alpha_description["actual_task_count_total"], "3")
-        self.assertEqual(alpha_description["first_admin_gid"], "admin_a")
-        self.assertEqual(alpha_description["first_admin_email"], "alice.atl@example.com")
+        self.assertNotIn("first_admin_gid", alpha_description)
+        self.assertEqual(alpha_description["first_admin_email"], "alice@example.com")
         self.assertEqual(alpha_description["additional_admin_emails"], "bob.atl@example.com")
-        self.assertEqual(alpha_description["effective_admin"], "alice.atl@example.com")
+        self.assertEqual(alpha_description["effective_admin"], "Alice Admin")
+        self.assertNotIn("effective_admin_atlassian_id", alpha_description)
+        self.assertNotIn("effective_admin_atlassian_email", alpha_description)
         self.assertEqual(alpha_description["effective_admin_source"], "team_admin")
-        self.assertEqual(alpha_description["project_owner"], "alpha.atl@example.com")
+        self.assertEqual(alpha_description["project_owner"], "Alpha Owner")
+        self.assertNotIn("project_owner_atlassian_id", alpha_description)
+        self.assertNotIn("project_owner_atlassian_email", alpha_description)
         self.assertEqual(alpha_description["project_owner_project_count"], "2")
         self.assertNotIn("is_personal_project", alpha_description)
 
         beta_epic = rows[1]
-        self.assertEqual(beta_epic["Owner"], "alpha.atl@example.com")
+        self.assertEqual(beta_epic["Owner"], "Alpha Owner")
         self.assertEqual(beta_epic["Owner Email"], "alpha@example.com")
         self.assertEqual(beta_epic["Owner Atlassian ID"], "atl-owner-alpha")
-        self.assertEqual(beta_epic["Owner Source"], "project_owner")
+        self.assertEqual(owner_source_labels[1], "project_owner")
         self.assertEqual(beta_epic["is_personal_project"], "")
         beta_description = _description_to_map(beta_epic["Description"])
-        self.assertEqual(beta_description["effective_admin"], "alpha.atl@example.com")
+        self.assertEqual(beta_description["effective_admin"], "Alpha Owner")
         self.assertEqual(beta_description["effective_admin_source"], "project_owner")
-        self.assertEqual(beta_description["project_owner"], "alpha.atl@example.com")
+        self.assertEqual(beta_description["project_owner"], "Alpha Owner")
         self.assertEqual(beta_description["project_owner_project_count"], "1")
         self.assertEqual(beta_description["task_creator"], "")
 
@@ -407,10 +421,10 @@ class ExportTeamProjectJiraCsvTest(TestCase):
 
         alpha_task = rows[3]
         self.assertEqual(alpha_task["Parent Id"], "1")
-        self.assertEqual(alpha_task["Owner"], "alpha@example.com")
+        self.assertEqual(alpha_task["Owner"], "Alpha Owner")
         self.assertEqual(alpha_task["Owner Email"], "alpha.atl@example.com")
         self.assertEqual(alpha_task["Owner Atlassian ID"], "atl-owner-alpha")
-        self.assertEqual(alpha_task["Owner Source"], "project_owner")
+        self.assertEqual(owner_source_labels[3], "project_owner")
         self.assertEqual(alpha_task["is_personal_project"], "false")
         self.assertEqual(alpha_task["Project Status"], "Active")
         self.assertEqual(alpha_task["Labels"], "last_active_2025")
@@ -427,7 +441,7 @@ class ExportTeamProjectJiraCsvTest(TestCase):
 
         beta_task = rows[4]
         self.assertEqual(beta_task["Parent Id"], "1")
-        self.assertEqual(beta_task["Owner"], "zeta@example.com")
+        self.assertEqual(beta_task["Owner"], "Zeta Owner")
         self.assertEqual(beta_task["Owner Email"], "zeta.atl@example.com")
         self.assertEqual(beta_task["Owner Atlassian ID"], "atl-owner-zeta")
         self.assertEqual(beta_task["is_personal_project"], "false")
@@ -445,7 +459,7 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(loose_task["Owner"], "Display Owner")
         self.assertEqual(loose_task["Owner Email"], "")
         self.assertEqual(loose_task["Owner Atlassian ID"], "")
-        self.assertEqual(loose_task["Owner Source"], "project_owner")
+        self.assertEqual(owner_source_labels[7], "project_owner")
         self.assertEqual(loose_task["is_personal_project"], "false")
         self.assertEqual(loose_task["Labels"], "last_active_2022")
         loose_description = _description_to_map(loose_task["Description"])
@@ -653,21 +667,29 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         output_path = export_team_project_jira_csv(str(self.db_path), self.workspace / "exports", filename="fallback.csv")
 
         with output_path.open("r", newline="", encoding="utf-8") as handle:
-            rows = list(csv.DictReader(handle))
+            raw_rows = list(csv.reader(handle))
+
+        header = raw_rows[0]
+        self.assertEqual(header.count("Labels"), 2)
+        owner_source_idx = [i for i, name in enumerate(header) if name == "Labels"][0]
+        rows = [dict(zip(header, values)) for values in raw_rows[1:]]
+        owner_source_by_summary = {
+            values[header.index("Summary")]: values[owner_source_idx] for values in raw_rows[1:]
+        }
 
         gamma_epic = next(row for row in rows if row["Summary"] == "Gamma Team")
-        self.assertEqual(gamma_epic["Owner"], "active.admin.atl@example.com")
+        self.assertEqual(gamma_epic["Owner"], "Active Admin")
         self.assertEqual(gamma_epic["Owner Email"], "active.admin@example.com")
-        self.assertEqual(gamma_epic["Owner Source"], "team_admin")
+        self.assertEqual(owner_source_by_summary["Gamma Team"], "team_admin")
         gamma_description = _description_to_map(gamma_epic["Description"])
         self.assertEqual(gamma_description["effective_admin_source"], "team_admin")
 
         delta_epic = next(row for row in rows if row["Summary"] == "Delta Team")
-        self.assertEqual(delta_epic["Owner"], "creator.atl@example.com")
+        self.assertEqual(delta_epic["Owner"], "Active Creator")
         self.assertEqual(delta_epic["Owner Email"], "creator@example.com")
-        self.assertEqual(delta_epic["Owner Source"], "task_creator")
+        self.assertEqual(owner_source_by_summary["Delta Team"], "task_creator")
         delta_description = _description_to_map(delta_epic["Description"])
-        self.assertEqual(delta_description["project_owner"], "inactive.owner.atl@example.com")
+        self.assertEqual(delta_description["project_owner"], "Inactive Owner")
         self.assertEqual(delta_description["project_owner_atlassian_status"], "deactivated")
-        self.assertEqual(delta_description["task_creator"], "creator.atl@example.com")
+        self.assertEqual(delta_description["task_creator"], "Active Creator")
         self.assertEqual(delta_description["effective_admin_source"], "task_creator")
