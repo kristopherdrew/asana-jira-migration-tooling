@@ -923,6 +923,11 @@ class Database:
             connection.commit()
         return len(rows)
 
+    def clear_user_atlassian_accounts(self, connection: sqlite3.Connection) -> int:
+        deleted = connection.execute("DELETE FROM user_atlassian_accounts").rowcount
+        connection.commit()
+        return deleted
+
     def load_atlassian_account_map(
         self, connection: sqlite3.Connection
     ) -> Dict[str, Dict[str, Optional[str]]]:
