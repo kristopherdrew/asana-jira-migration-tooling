@@ -144,6 +144,10 @@ def _row_owner_atlassian_id_from_project(row: dict) -> str:
     return _clean_text(row["owner_atlassian_id"])
 
 
+def _row_owner_atlassian_status_from_project(row: dict) -> str:
+    return _clean_text(row["owner_atlassian_status"])
+
+
 def export_team_project_jira_csv(
     database_path: str,
     output_dir: Path,
@@ -279,6 +283,7 @@ def export_team_project_jira_csv(
                     "Owner": owner,
                     "Owner Email": analysis.effective_admin_email if analysis else "",
                     "Owner Atlassian ID": analysis.effective_admin_atlassian_id if analysis else "",
+                    "Owner Atlassian Status": analysis.effective_admin_atlassian_status if analysis else "",
                     "Owner Source": analysis.effective_admin_source if analysis else "",
                     "is_personal_project": "",
                     "Project Status": "",
@@ -310,6 +315,7 @@ def export_team_project_jira_csv(
                     "Owner": "",
                     "Owner Email": "",
                     "Owner Atlassian ID": "",
+                    "Owner Atlassian Status": "",
                     "Owner Source": "",
                     "is_personal_project": "",
                     "Project Status": "",
@@ -352,6 +358,7 @@ def export_team_project_jira_csv(
                     "Owner": _row_owner_from_project(row),
                     "Owner Email": _row_owner_email_from_project(row),
                     "Owner Atlassian ID": _row_owner_atlassian_id_from_project(row),
+                    "Owner Atlassian Status": _row_owner_atlassian_status_from_project(row),
                     "Owner Source": "project_owner",
                     "is_personal_project": _bool_to_text(row["is_personal_project"]),
                     "Project Status": "Archived" if bool(row["archived"]) else "Active",
@@ -374,6 +381,7 @@ def export_team_project_jira_csv(
             ("Owner", "Owner"),
             ("Owner Email", "Owner Email"),
             ("Owner Atlassian ID", "Owner Atlassian ID"),
+            ("Owner Atlassian Status", "Owner Atlassian Status"),
             ("Labels", "Owner Source"),
             ("is_personal_project", "is_personal_project"),
             ("Project Status", "Project Status"),
