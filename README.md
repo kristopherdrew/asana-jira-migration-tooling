@@ -71,8 +71,10 @@ Required flags:
 - (none; uses `ASANA_WORKSPACE_GID` from the resolved credentials).
 
 Optional flags:
-- `--include-members` to fetch team memberships.
+- `--include-members` to fetch team memberships (fetched concurrently across teams).
+- `--update-team-members` to skip the full sync and instead search for a single team already in the database (case-insensitive name search with a paginated picker) and refresh only its membership association.
 - `--workspace-gid <gid>` to override the workspace ID from the resolved credentials.
+- `--workers <n>` to set the number of concurrent membership fetch workers (default 5).
 
 ### Sync Projects
 Fetches all projects in the workspace—including lifecycle metadata and custom field definitions/settings—and stores them in `data/asana.sqlite`. Each project row also captures a point-in-time task count snapshot from Asana's `/projects/{project_gid}/task_counts` endpoint so you can see the current task total before the full task sync runs.
