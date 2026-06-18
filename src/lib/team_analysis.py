@@ -42,6 +42,7 @@ class TeamAnalysis:
     first_admin_email: str
     additional_admin_emails: str
     effective_admin: str
+    effective_admin_name: str
     effective_admin_gid: str
     effective_admin_email: str
     effective_admin_atlassian_id: str
@@ -49,6 +50,7 @@ class TeamAnalysis:
     effective_admin_atlassian_status: str
     effective_admin_source: str
     project_owner: str
+    project_owner_name: str
     project_owner_gid: str
     project_owner_email: str
     project_owner_atlassian_id: str
@@ -56,6 +58,7 @@ class TeamAnalysis:
     project_owner_atlassian_status: str
     project_owner_project_count: int
     task_creator: str
+    task_creator_name: str
     task_creator_gid: str
     task_creator_email: str
     task_creator_atlassian_id: str
@@ -268,6 +271,7 @@ def build_team_analysis(connection) -> Dict[str, TeamAnalysis]:
                 admin.display_value for admin in admins[1:] if admin.display_value
             ),
             effective_admin=effective_candidate.display_value if effective_candidate else "",
+            effective_admin_name=effective_candidate.display_name if effective_candidate else "",
             effective_admin_gid=effective_candidate.user_gid if effective_candidate else "",
             effective_admin_email=effective_candidate.email if effective_candidate else "",
             effective_admin_atlassian_id=effective_candidate.atlassian_id if effective_candidate else "",
@@ -275,6 +279,7 @@ def build_team_analysis(connection) -> Dict[str, TeamAnalysis]:
             effective_admin_atlassian_status=effective_candidate.atlassian_status if effective_candidate else "",
             effective_admin_source=effective_source,
             project_owner=top_project_owner.display_value if top_project_owner else "",
+            project_owner_name=top_project_owner.display_name if top_project_owner else "",
             project_owner_gid=top_project_owner.user_gid if top_project_owner else "",
             project_owner_email=top_project_owner.email if top_project_owner else "",
             project_owner_atlassian_id=top_project_owner.atlassian_id if top_project_owner else "",
@@ -282,6 +287,7 @@ def build_team_analysis(connection) -> Dict[str, TeamAnalysis]:
             project_owner_atlassian_status=top_project_owner.atlassian_status if top_project_owner else "",
             project_owner_project_count=top_project_owner.count if top_project_owner else 0,
             task_creator=top_active_task_creator.display_value if top_active_task_creator else "",
+            task_creator_name=top_active_task_creator.display_name if top_active_task_creator else "",
             task_creator_gid=top_active_task_creator.user_gid if top_active_task_creator else "",
             task_creator_email=top_active_task_creator.email if top_active_task_creator else "",
             task_creator_atlassian_id=top_active_task_creator.atlassian_id if top_active_task_creator else "",
