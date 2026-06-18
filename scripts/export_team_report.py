@@ -7,7 +7,6 @@ import argparse
 import csv
 import logging
 import sys
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Optional
@@ -60,10 +59,6 @@ def _bool_to_text(value: Optional[int]) -> str:
     if value is None:
         return ""
     return "true" if bool(value) else "false"
-
-
-def _clean_email(email: Optional[str]) -> str:
-    return (email or "").strip()
 
 
 def export_team_report(
@@ -128,31 +123,8 @@ def export_team_report(
         query += " ORDER BY t.name COLLATE NOCASE, t.gid"
         team_rows = connection.execute(query, params).fetchall()
 
-        admin_rows = connection.execute(
-            """
-            SELECT
-                tm.team_gid,
-                u.email AS user_email,
-                tm.user_gid AS user_gid
-            FROM team_members tm
-            LEFT JOIN users u ON u.gid = tm.user_gid
-            WHERE COALESCE(tm.is_admin, 0) = 1
-            ORDER BY tm.team_gid, COALESCE(u.email, tm.user_gid) COLLATE NOCASE, tm.user_gid
-            """
-        ).fetchall()
-
     if not team_rows:
         logger.info("No teams found in %s; generated an empty export.", database_path)
-
-    admins_by_team = defaultdict(list)
-    for row in admin_rows:
-        email = _clean_email(row["user_email"])
-        admins_by_team[row["team_gid"]].append(
-            {
-                "user_gid": row["user_gid"],
-                "email": email,
-            }
-        )
 
     with database.connect() as analysis_connection:
         database.initialize(analysis_connection)
@@ -170,14 +142,18 @@ def export_team_report(
         "effective_admin_source",
         "effective_admin_name",
         "effective_admin_email",
-        "first_admin_gid",
+        "effective_admin_atlassian_status",
+        "first_admin_name",
         "first_admin_email",
+        "first_admin_atlassian_status",
         "additional_admin_emails",
         "most_projects_owner_name",
         "most_projects_owner_email",
+        "most_projects_owner_atlassian_status",
         "most_projects_owner_project_count",
         "task_creator_name",
         "task_creator_email",
+        "task_creator_atlassian_status",
         "task_creator_task_count",
         "team_synced_at",
     ]
@@ -186,13 +162,7 @@ def export_team_report(
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for row in team_rows:
-            admins = admins_by_team.get(row["gid"], [])
             analysis = team_analysis.get(row["gid"])
-            first_admin_gid = analysis.first_admin_gid if analysis else (admins[0]["user_gid"] if admins else "")
-            first_admin_email = analysis.first_admin_email if analysis else (admins[0]["email"] if admins else "")
-            additional_admin_emails = analysis.additional_admin_emails if analysis else ", ".join(
-                admin["email"] for admin in admins[1:] if admin["email"]
-            )
             writer.writerow(
                 {
                     "team_gid": row["gid"],
@@ -208,14 +178,18 @@ def export_team_report(
                     "effective_admin_source": analysis.effective_admin_source if analysis else "",
                     "effective_admin_name": analysis.effective_admin_name if analysis else "",
                     "effective_admin_email": analysis.effective_admin_email if analysis else "",
-                    "first_admin_gid": first_admin_gid,
-                    "first_admin_email": first_admin_email,
-                    "additional_admin_emails": additional_admin_emails,
+                    "effective_admin_atlassian_status": analysis.effective_admin_atlassian_status if analysis else "",
+                    "first_admin_name": analysis.first_admin_name if analysis else "",
+                    "first_admin_email": analysis.first_admin_email if analysis else "",
+                    "first_admin_atlassian_status": analysis.first_admin_atlassian_status if analysis else "",
+                    "additional_admin_emails": analysis.additional_admin_emails if analysis else "",
                     "most_projects_owner_name": analysis.project_owner_name if analysis else "",
                     "most_projects_owner_email": analysis.project_owner_email if analysis else "",
+                    "most_projects_owner_atlassian_status": analysis.project_owner_atlassian_status if analysis else "",
                     "most_projects_owner_project_count": analysis.project_owner_project_count if analysis else 0,
                     "task_creator_name": analysis.task_creator_name if analysis else "",
                     "task_creator_email": analysis.task_creator_email if analysis else "",
+                    "task_creator_atlassian_status": analysis.task_creator_atlassian_status if analysis else "",
                     "task_creator_task_count": analysis.task_creator_task_count if analysis else 0,
                     "team_synced_at": format_report_date(row["synced_at"]),
                 }

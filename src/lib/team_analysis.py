@@ -39,7 +39,9 @@ class TeamAnalysis:
     team_gid: str
     team_name: str
     first_admin_gid: str
+    first_admin_name: str
     first_admin_email: str
+    first_admin_atlassian_status: str
     additional_admin_emails: str
     effective_admin: str
     effective_admin_name: str
@@ -266,7 +268,9 @@ def build_team_analysis(connection) -> Dict[str, TeamAnalysis]:
             team_gid=team_gid,
             team_name=team_name,
             first_admin_gid=first_admin.user_gid if first_admin else "",
-            first_admin_email=first_admin.display_value if first_admin else "",
+            first_admin_name=first_admin.display_name if first_admin else "",
+            first_admin_email=first_admin.email if first_admin else "",
+            first_admin_atlassian_status=first_admin.atlassian_status if first_admin else "",
             additional_admin_emails=", ".join(
                 admin.display_value for admin in admins[1:] if admin.display_value
             ),
