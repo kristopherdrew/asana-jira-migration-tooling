@@ -88,6 +88,7 @@ class ExportUsersTest(TestCase):
         self.assertEqual(user_one["tasks_created"], "0")
         self.assertEqual(user_one["tasks_completed"], "0")
         self.assertEqual(user_one["tasks_commented"], "0")
+        self.assertEqual(user_one["last_active_date"], "")
 
         user_two = next(row for row in reader if row["gid"] == "user_2")
         self.assertEqual(user_two["is_active"], "false")
@@ -98,6 +99,7 @@ class ExportUsersTest(TestCase):
         self.assertEqual(user_two["tasks_created"], "0")
         self.assertEqual(user_two["tasks_completed"], "0")
         self.assertEqual(user_two["tasks_commented"], "0")
+        self.assertEqual(user_two["last_active_date"], "")
 
     def test_export_users_includes_task_activity_counts(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -122,7 +124,9 @@ class ExportUsersTest(TestCase):
                 "gid": "task_1",
                 "name": "Task One",
                 "created_by": {"gid": "user_1"},
+                "created_at": "2025-03-01T00:00:00.000Z",
                 "completed_by": {"gid": "user_2"},
+                "completed_at": "2025-04-10T00:00:00.000Z",
             },
             sync_time,
         )
@@ -132,6 +136,7 @@ class ExportUsersTest(TestCase):
                 "gid": "task_2",
                 "name": "Task Two",
                 "created_by": {"gid": "user_1"},
+                "created_at": "2025-03-05T00:00:00.000Z",
             },
             sync_time,
         )
@@ -142,8 +147,10 @@ class ExportUsersTest(TestCase):
             self.connection,
             "task_1",
             [
-                {"gid": "c1", "created_by": {"gid": "user_2"}, "text": "first"},
-                {"gid": "c2", "created_by": {"gid": "user_2"}, "text": "second"},
+                {"gid": "c1", "created_by": {"gid": "user_2"}, "text": "first",
+                 "created_at": "2025-03-02T00:00:00.000Z"},
+                {"gid": "c2", "created_by": {"gid": "user_2"}, "text": "second",
+                 "created_at": "2025-03-03T00:00:00.000Z"},
             ],
             sync_time,
         )
@@ -151,16 +158,8 @@ class ExportUsersTest(TestCase):
             self.connection,
             "task_2",
             [
-                {"gid": "c3", "created_by": {"gid": "user_2"}, "text": "third"},
-            ],
-            sync_time,
-        )
-        # Replacing comments with an empty list marks Carol's prior comment deleted.
-        self.database.replace_task_comments(
-            self.connection,
-            "task_2",
-            [
-                {"gid": "c3", "created_by": {"gid": "user_2"}, "text": "third"},
+                {"gid": "c3", "created_by": {"gid": "user_2"}, "text": "third",
+                 "created_at": "2025-03-04T00:00:00.000Z"},
             ],
             sync_time,
         )
@@ -186,13 +185,18 @@ class ExportUsersTest(TestCase):
         self.assertEqual(rows["user_1"]["tasks_created"], "2")
         self.assertEqual(rows["user_1"]["tasks_completed"], "0")
         self.assertEqual(rows["user_1"]["tasks_commented"], "0")
+        # Latest of the two task creations.
+        self.assertEqual(rows["user_1"]["last_active_date"], "2025-03-05")
 
         self.assertEqual(rows["user_2"]["tasks_created"], "0")
         self.assertEqual(rows["user_2"]["tasks_completed"], "1")
         # Two comments on task_1 + one on task_2 => two distinct tasks.
         self.assertEqual(rows["user_2"]["tasks_commented"], "2")
+        # Completion (2025-04-10) is later than any of Bob's comments.
+        self.assertEqual(rows["user_2"]["last_active_date"], "2025-04-10")
 
         # Carol's only comment is deleted, so she has no activity.
         self.assertEqual(rows["user_3"]["tasks_created"], "0")
         self.assertEqual(rows["user_3"]["tasks_completed"], "0")
         self.assertEqual(rows["user_3"]["tasks_commented"], "0")
+        self.assertEqual(rows["user_3"]["last_active_date"], "")
