@@ -74,27 +74,36 @@ def _workspace_labels(connection) -> dict[str, List[str]]:
     return workspace_map
 
 
-def _task_activity_counts(connection) -> dict[str, dict[str, int]]:
-    """Return per-user task activity counts keyed by user GID.
+def _task_activity_counts(connection) -> dict[str, dict[str, object]]:
+    """Return per-user task activity keyed by user GID.
 
-    Each value holds the number of tasks the user created and completed, plus the
+    Each value holds the number of tasks the user created and completed, the
     number of distinct tasks on which the user authored at least one (non-deleted)
-    comment (not the number of comments).
+    comment (not the number of comments), and ``last_active`` — the most recent
+    timestamp across those three activities (raw ISO string, or "" when none).
     """
-    counts: dict[str, dict[str, int]] = {}
+    activity: dict[str, dict[str, object]] = {}
+
+    def _default() -> dict[str, object]:
+        return {"created": 0, "completed": 0, "commented": 0, "last_active": ""}
 
     def _accumulate(query: str, metric: str) -> None:
         for row in connection.execute(query).fetchall():
             user_gid = row["user_gid"]
             if not user_gid:
                 continue
-            counts.setdefault(
-                user_gid, {"created": 0, "completed": 0, "commented": 0}
-            )[metric] = row["task_count"]
+            entry = activity.setdefault(user_gid, _default())
+            entry[metric] = row["task_count"]
+            last_at = row["last_at"] or ""
+            # ISO 8601 timestamps compare correctly as strings.
+            if last_at > entry["last_active"]:
+                entry["last_active"] = last_at
 
     _accumulate(
         """
-        SELECT created_by_gid AS user_gid, COUNT(DISTINCT gid) AS task_count
+        SELECT created_by_gid AS user_gid,
+            COUNT(DISTINCT gid) AS task_count,
+            MAX(created_at) AS last_at
         FROM tasks
         WHERE TRIM(COALESCE(created_by_gid, '')) != ''
         GROUP BY created_by_gid
@@ -103,7 +112,9 @@ def _task_activity_counts(connection) -> dict[str, dict[str, int]]:
     )
     _accumulate(
         """
-        SELECT completed_by_gid AS user_gid, COUNT(DISTINCT gid) AS task_count
+        SELECT completed_by_gid AS user_gid,
+            COUNT(DISTINCT gid) AS task_count,
+            MAX(completed_at) AS last_at
         FROM tasks
         WHERE TRIM(COALESCE(completed_by_gid, '')) != ''
         GROUP BY completed_by_gid
@@ -112,7 +123,9 @@ def _task_activity_counts(connection) -> dict[str, dict[str, int]]:
     )
     _accumulate(
         """
-        SELECT created_by_gid AS user_gid, COUNT(DISTINCT task_gid) AS task_count
+        SELECT created_by_gid AS user_gid,
+            COUNT(DISTINCT task_gid) AS task_count,
+            MAX(created_at) AS last_at
         FROM task_comments
         WHERE is_deleted = 0
             AND TRIM(COALESCE(created_by_gid, '')) != ''
@@ -120,7 +133,7 @@ def _task_activity_counts(connection) -> dict[str, dict[str, int]]:
         """,
         "commented",
     )
-    return counts
+    return activity
 
 
 def export_users(
@@ -170,6 +183,7 @@ def export_users(
         "tasks_created",
         "tasks_completed",
         "tasks_commented",
+        "last_active_date",
         "user_url",
         "synced_at",
         "workspaces",
@@ -196,6 +210,7 @@ def export_users(
                     "tasks_created": activity.get("created", 0),
                     "tasks_completed": activity.get("completed", 0),
                     "tasks_commented": activity.get("commented", 0),
+                    "last_active_date": format_report_date(activity.get("last_active", "")),
                     "user_url": build_user_url(resolved_workspace_gid, row["gid"]),
                     "synced_at": format_report_date(row["synced_at"]),
                     "workspaces": "; ".join(distinct_workspaces),
