@@ -440,6 +440,15 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertNotIn("is_personal_project", alpha_task_description)
         self.assertEqual(alpha_task_description["num_tasks"], "10")
         self.assertEqual(alpha_task_description["actual_task_count"], "2")
+        self.assertEqual(alpha_task_description["owner_name"], "Alpha Owner")
+        self.assertEqual(alpha_task_description["owner_email"], "alpha@example.com")
+        self.assertEqual(alpha_task_description["owner_atlassian_status"], "active")
+        self.assertEqual(alpha_task_description["effective_owner_source"], "project_owner")
+        self.assertEqual(alpha_task_description["effective_owner_name"], "Alpha Owner")
+        self.assertEqual(alpha_task_description["effective_owner_email"], "alpha@example.com")
+        self.assertEqual(alpha_task_description["effective_owner_atlassian_status"], "active")
+        self.assertEqual(alpha_task_description["top_task_creator_name"], "")
+        self.assertEqual(alpha_task_description["top_task_creator_task_count"], "")
 
         beta_task = rows[4]
         self.assertEqual(beta_task["Parent Id"], "1")
@@ -470,6 +479,11 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(loose_description["team_name"], "")
         self.assertEqual(loose_description["team_url"], "")
         self.assertEqual(loose_description["project_url"], "https://app.asana.com/1/ws_1/project/proj_nt")
+        self.assertEqual(loose_description["owner_name"], "Display Owner")
+        self.assertEqual(loose_description["owner_atlassian_status"], "")
+        self.assertEqual(loose_description["effective_owner_source"], "")
+        self.assertEqual(loose_description["effective_owner_name"], "")
+        self.assertEqual(loose_description["top_task_creator_name"], "")
 
         self.assertNotIn("Unexported Project", [row["Summary"] for row in rows])
 
@@ -697,3 +711,16 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(delta_description["project_owner_atlassian_status"], "deactivated")
         self.assertEqual(delta_description["task_creator"], "Active Creator")
         self.assertEqual(delta_description["effective_admin_source"], "task_creator")
+
+        # proj_c1 owner is deactivated but has an active top task creator, so the
+        # project-level effective owner falls back to that creator.
+        gamma_task = next(row for row in rows if row["Summary"] == "Gamma Project")
+        gamma_task_description = _description_to_map(gamma_task["Description"])
+        self.assertEqual(gamma_task_description["owner_name"], "Inactive Owner")
+        self.assertEqual(gamma_task_description["owner_atlassian_status"], "deactivated")
+        self.assertEqual(gamma_task_description["effective_owner_source"], "task_creator")
+        self.assertEqual(gamma_task_description["effective_owner_name"], "Active Creator")
+        self.assertEqual(gamma_task_description["effective_owner_email"], "creator@example.com")
+        self.assertEqual(gamma_task_description["effective_owner_atlassian_status"], "active")
+        self.assertEqual(gamma_task_description["top_task_creator_name"], "Active Creator")
+        self.assertEqual(gamma_task_description["top_task_creator_task_count"], "1")

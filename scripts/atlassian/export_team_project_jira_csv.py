@@ -110,7 +110,37 @@ def _format_team_description(row: dict, analysis) -> str:
     )
 
 
+def _is_active_atlassian_status(status: Optional[str]) -> bool:
+    return _clean_text(status).casefold() == "active"
+
+
+def _effective_owner_from_project(row: dict) -> tuple[str, str, str, str]:
+    """Resolve a project's effective owner: the project owner when their
+    Atlassian account is active, otherwise the project's top active task
+    creator. Returns (source, name, email, atlassian_status)."""
+    owner_name = _row_owner_from_project(row)
+    if owner_name and _is_active_atlassian_status(row["owner_atlassian_status"]):
+        return (
+            "project_owner",
+            owner_name,
+            _clean_text(row["owner_email"]),
+            _clean_text(row["owner_atlassian_status"]),
+        )
+    creator_name = _clean_text(row["top_task_creator_name"])
+    if creator_name:
+        return (
+            "task_creator",
+            creator_name,
+            _clean_text(row["top_task_creator_email"]),
+            _clean_text(row["top_task_creator_atlassian_status"]),
+        )
+    return ("", "", "", "")
+
+
 def _format_project_description(row: dict, project_url: str) -> str:
+    effective_owner_source, effective_owner_name, effective_owner_email, effective_owner_status = (
+        _effective_owner_from_project(row)
+    )
     return _description_text(
         [
             ("project_url", project_url),
@@ -128,6 +158,17 @@ def _format_project_description(row: dict, project_url: str) -> str:
             ("last_task_resolved_at", format_report_date(row["last_task_resolved_at"])),
             ("last_task_updated_at", format_report_date(row["last_task_updated_at"])),
             ("actual_task_count", _count_to_text(row["actual_task_count"])),
+            ("owner_name", _row_owner_from_project(row)),
+            ("owner_email", _clean_text(row["owner_email"])),
+            ("owner_atlassian_status", _clean_text(row["owner_atlassian_status"])),
+            ("effective_owner_source", effective_owner_source),
+            ("effective_owner_name", effective_owner_name),
+            ("effective_owner_email", effective_owner_email),
+            ("effective_owner_atlassian_status", effective_owner_status),
+            ("top_task_creator_name", _clean_text(row["top_task_creator_name"])),
+            ("top_task_creator_email", _clean_text(row["top_task_creator_email"])),
+            ("top_task_creator_atlassian_status", _clean_text(row["top_task_creator_atlassian_status"])),
+            ("top_task_creator_task_count", _count_to_text(row["top_task_creator_task_count"])),
         ]
     )
 
@@ -181,6 +222,39 @@ def export_team_project_jira_csv(
                 JOIN tasks t
                     ON t.gid = tp.task_gid
                 GROUP BY tp.project_gid
+            ),
+            top_active_task_creators AS (
+                SELECT
+                    project_gid,
+                    creator_name,
+                    creator_email,
+                    creator_atlassian_status,
+                    task_count
+                FROM (
+                    SELECT
+                        tp.project_gid AS project_gid,
+                        COALESCE(u.name, '') AS creator_name,
+                        COALESCE(u.email, '') AS creator_email,
+                        COALESCE(ua.atlassian_status, '') AS creator_atlassian_status,
+                        COUNT(DISTINCT t.gid) AS task_count,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY tp.project_gid
+                            ORDER BY COUNT(DISTINCT t.gid) DESC,
+                                COALESCE(ua.atlassian_email, u.email, u.name, t.created_by_gid) COLLATE NOCASE,
+                                t.created_by_gid
+                        ) AS rn
+                    FROM task_projects tp
+                    JOIN tasks t
+                        ON t.gid = tp.task_gid
+                    JOIN user_atlassian_accounts ua
+                        ON ua.user_gid = t.created_by_gid
+                    LEFT JOIN users u
+                        ON u.gid = t.created_by_gid
+                    WHERE TRIM(COALESCE(t.created_by_gid, '')) != ''
+                        AND LOWER(TRIM(COALESCE(ua.atlassian_status, ''))) = 'active'
+                    GROUP BY tp.project_gid, t.created_by_gid
+                )
+                WHERE rn = 1
             )
             SELECT
                 p.gid,
@@ -206,12 +280,18 @@ def export_team_project_jira_csv(
                 u.name AS owner_display_name,
                 ua.atlassian_account_id AS owner_atlassian_id,
                 ua.atlassian_email AS owner_atlassian_email,
-                ua.atlassian_status AS owner_atlassian_status
+                ua.atlassian_status AS owner_atlassian_status,
+                tatc.creator_name AS top_task_creator_name,
+                tatc.creator_email AS top_task_creator_email,
+                tatc.creator_atlassian_status AS top_task_creator_atlassian_status,
+                tatc.task_count AS top_task_creator_task_count
             FROM projects p
             LEFT JOIN teams t
                 ON t.gid = p.team_gid
             LEFT JOIN actual_task_counts atc
                 ON atc.project_gid = p.gid
+            LEFT JOIN top_active_task_creators tatc
+                ON tatc.project_gid = p.gid
             LEFT JOIN users u
                 ON u.gid = p.owner_gid
             LEFT JOIN user_atlassian_accounts ua
