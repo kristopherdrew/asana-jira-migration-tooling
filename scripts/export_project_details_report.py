@@ -108,6 +108,39 @@ def export_project_details(
                 JOIN tasks t
                     ON t.gid = tp.task_gid
                 GROUP BY tp.project_gid
+            ),
+            top_active_task_creators AS (
+                SELECT
+                    project_gid,
+                    creator_name,
+                    creator_email,
+                    creator_atlassian_status,
+                    task_count
+                FROM (
+                    SELECT
+                        tp.project_gid AS project_gid,
+                        COALESCE(u.name, '') AS creator_name,
+                        COALESCE(u.email, '') AS creator_email,
+                        COALESCE(ua.atlassian_status, '') AS creator_atlassian_status,
+                        COUNT(DISTINCT t.gid) AS task_count,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY tp.project_gid
+                            ORDER BY COUNT(DISTINCT t.gid) DESC,
+                                COALESCE(ua.atlassian_email, u.email, u.name, t.created_by_gid) COLLATE NOCASE,
+                                t.created_by_gid
+                        ) AS rn
+                    FROM task_projects tp
+                    JOIN tasks t
+                        ON t.gid = tp.task_gid
+                    JOIN user_atlassian_accounts ua
+                        ON ua.user_gid = t.created_by_gid
+                    LEFT JOIN users u
+                        ON u.gid = t.created_by_gid
+                    WHERE TRIM(COALESCE(t.created_by_gid, '')) != ''
+                        AND LOWER(TRIM(COALESCE(ua.atlassian_status, ''))) = 'active'
+                    GROUP BY tp.project_gid, t.created_by_gid
+                )
+                WHERE rn = 1
             )
             SELECT
                 p.gid,
@@ -115,9 +148,9 @@ def export_project_details(
                 p.team_gid,
                 COALESCE(t.name, p.team_name) AS team_name,
                 p.archived,
-                p.resource_subtype,
-                p.owner_gid,
                 p.owner_name,
+                uo.email AS owner_email,
+                uoa.atlassian_status AS owner_atlassian_status,
                 p.privacy_setting,
                 p.created_at,
                 p.modified_at,
@@ -135,11 +168,18 @@ def export_project_details(
                 ta.last_task_updated_at,
                 atc.actual_task_count,
                 CASE WHEN atc.actual_task_count IS NULL THEN 'false' ELSE 'true' END AS actual_task_data_present,
+                tatc.creator_name AS top_task_creator_name,
+                tatc.creator_email AS top_task_creator_email,
+                tatc.creator_atlassian_status AS top_task_creator_atlassian_status,
+                tatc.task_count AS top_task_creator_task_count,
                 p.synced_at
             FROM projects p
             LEFT JOIN teams t ON t.gid = p.team_gid
             LEFT JOIN actual_task_counts atc ON atc.project_gid = p.gid
             LEFT JOIN task_activity ta ON ta.project_gid = p.gid
+            LEFT JOIN top_active_task_creators tatc ON tatc.project_gid = p.gid
+            LEFT JOIN users uo ON uo.gid = p.owner_gid
+            LEFT JOIN user_atlassian_accounts uoa ON uoa.user_gid = p.owner_gid
             {team_filter}
             ORDER BY COALESCE(t.name, p.team_name) COLLATE NOCASE, p.name COLLATE NOCASE, p.gid
         """
@@ -159,9 +199,9 @@ def export_project_details(
         "team_name",
         "team_url",
         "archived",
-        "resource_subtype",
-        "owner_gid",
         "owner_name",
+        "owner_email",
+        "owner_atlassian_status",
         "privacy_setting",
         "created_at",
         "modified_at",
@@ -170,16 +210,20 @@ def export_project_details(
         "completed",
         "completed_at",
         "is_personal_project",
+        "actual_task_data_present",
+        "actual_task_count",
         "num_tasks",
         "num_incomplete_tasks",
         "num_completed_tasks",
-        "task_counts_captured_at",
         "last_task_created_at",
         "last_task_resolved_at",
         "last_task_updated_at",
-        "actual_task_count",
-        "actual_task_data_present",
+        "top_task_creator_name",
+        "top_task_creator_email",
+        "top_task_creator_atlassian_status",
+        "top_task_creator_task_count",
         "synced_at",
+        "task_counts_captured_at",
     ]
 
     with output_path.open("w", newline="", encoding="utf-8") as handle:
@@ -196,9 +240,9 @@ def export_project_details(
                     "team_name": row["team_name"],
                     "team_url": build_team_url(row["team_gid"]),
                     "archived": _bool_to_text(row["archived"]),
-                    "resource_subtype": row["resource_subtype"],
-                    "owner_gid": row["owner_gid"],
                     "owner_name": row["owner_name"],
+                    "owner_email": row["owner_email"] or "",
+                    "owner_atlassian_status": row["owner_atlassian_status"] or "",
                     "privacy_setting": row["privacy_setting"],
                     "created_at": format_report_date(row["created_at"]),
                     "modified_at": format_report_date(row["modified_at"]),
@@ -216,6 +260,12 @@ def export_project_details(
                     "last_task_updated_at": format_report_date(row["last_task_updated_at"]),
                     "actual_task_count": "" if actual_task_count is None else actual_task_count,
                     "actual_task_data_present": _bool_to_text(actual_task_count is not None),
+                    "top_task_creator_name": row["top_task_creator_name"] or "",
+                    "top_task_creator_email": row["top_task_creator_email"] or "",
+                    "top_task_creator_atlassian_status": row["top_task_creator_atlassian_status"] or "",
+                    "top_task_creator_task_count": (
+                        "" if row["top_task_creator_task_count"] is None else row["top_task_creator_task_count"]
+                    ),
                     "synced_at": format_report_date(row["synced_at"]),
                 }
             )
