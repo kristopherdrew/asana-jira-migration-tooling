@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.asana_urls import build_project_url, infer_workspace_gid
+from src.lib.asana_urls import build_project_url, build_team_url, infer_workspace_gid
 from src.lib.database import Database
 from src.lib.date_formatting import format_report_date, parse_iso_datetime
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -395,6 +395,8 @@ def export_team_project_jira_csv(
                     "Task ID": epic_task_id,
                     "Parent Id": "",
                     "Summary": aggregate["team_name"] or "",
+                    "Team URL": build_team_url(team_gid),
+                    "Project URL": "",
                     "Owner": owner,
                     "Owner Email": analysis.effective_admin_email if analysis else "",
                     "Owner Atlassian ID": analysis.effective_admin_atlassian_id if analysis else "",
@@ -428,6 +430,8 @@ def export_team_project_jira_csv(
                     "Task ID": no_team_task_id,
                     "Parent Id": "",
                     "Summary": "No Team",
+                    "Team URL": "",
+                    "Project URL": "",
                     "Owner": "",
                     "Owner Email": "",
                     "Owner Atlassian ID": "",
@@ -466,12 +470,15 @@ def export_team_project_jira_csv(
             parent_id = epic_task_ids.get(team_gid, no_team_task_id or "")
             task_id = str(task_id_counter)
             task_id_counter += 1
+            project_url = build_project_url(resolved_workspace_gid, row["gid"])
             task_rows.append(
                 {
                     "Issue Type": "Task",
                     "Task ID": task_id,
                     "Parent Id": parent_id or "",
                     "Summary": row["name"] or "",
+                    "Team URL": build_team_url(team_gid),
+                    "Project URL": project_url,
                     "Owner": _row_owner_from_project(row),
                     "Owner Email": _row_owner_email_from_project(row),
                     "Owner Atlassian ID": _row_owner_atlassian_id_from_project(row),
@@ -481,10 +488,7 @@ def export_team_project_jira_csv(
                     "Project Status": "Archived" if bool(row["archived"]) else "Active",
                     "Labels": _label_for_last_active(row["last_task_updated_at"]),
                     "Instructions": TASK_INSTRUCTIONS,
-                    "Description": _format_project_description(
-                        row,
-                        build_project_url(resolved_workspace_gid, row["gid"]),
-                    ),
+                    "Description": _format_project_description(row, project_url),
                 }
             )
 
@@ -496,6 +500,8 @@ def export_team_project_jira_csv(
             ("Task ID", "Task ID"),
             ("Parent Id", "Parent Id"),
             ("Summary", "Summary"),
+            ("Team URL", "Team URL"),
+            ("Project URL", "Project URL"),
             ("Owner", "Owner"),
             ("Owner Email", "Owner Email"),
             ("Owner Atlassian ID", "Owner Atlassian ID"),
