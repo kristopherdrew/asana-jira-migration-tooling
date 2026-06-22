@@ -54,7 +54,7 @@ Menu highlights:
 - Category 1 (Initialization): teams + memberships → users → add the service user to every Asana team → projects → custom fields.
 - Category 2 (Tasks): tasks, task extras, personal tasks (full), incremental updates.
 - Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, sync attachments.
-- Category 4 (Reports): project details, team summary, users, team memberships.
+- Category 4 (Reports): project details, team summary, users, team memberships, custom field usage.
 - Category 5 (Credentials): create/update the referenced env file or switch the project to a different one.
 
 On first launch, if the interactive CLI cannot resolve a credentials file from the environment or `.asana_jira_env_path`, it starts a setup flow that asks for the Asana token, workspace GID, SSL verification flag, and optional Atlassian credentials, then writes the env file and project pointer for you.
@@ -272,6 +272,21 @@ Optional flags:
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
+
+### Custom Field Usage Report
+Exports one row per (project, custom field) so you can see which custom fields are actually in use per project — and of what kind — before deciding what to migrate into Jira. Only fields populated on at least one task in the project are emitted (a field enabled on a project but never filled in is omitted). Each row carries `project_gid`/`project_name`/`project_url`, `team_gid`/`team_name`, `archived`, `custom_field_gid`/`custom_field_name`, `field_type` (the field's `resource_subtype`: text/number/enum/multi_enum/date/people), `is_global_to_workspace`, `is_important` (from the project's custom field settings), `tasks_with_values` (distinct tasks in that project with a value set for the field), `project_task_count`, and `usage_pct` (`tasks_with_values / project_task_count`). A field counts as populated when it has a non-empty single value or any multi-enum selection; this matches the `values_found` semantic used by the `export_project_to_jira_csv.py` field-counts companion. The report stays empty until the task sync has populated `tasks`/`task_custom_fields`.
+```bash
+python3 -m scripts.export_custom_field_usage_report --database data/asana.sqlite
+```
+Required flags:
+- (none; uses `data/asana.sqlite` by default).
+
+Optional flags:
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated `custom_field_usage_<timestamp>.csv` filename.
+- `--team-gid <gid>` to limit the report to one team’s projects.
+- `--workspace-gid <gid>` to force the workspace used when building project URLs.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 ### Team Report
 Exports one row per team from SQLite with the team metadata, a direct Asana team URL, the total number of projects associated with that team, those projects split into active and archived counts, and a sum of the actual task-table counts when task rows are available. The report also records the effective admin chosen from the Atlassian-aware analysis chain: first active team admin, then the top active project owner if no active admin exists, then the top active task creator if the top owner is not active. Immediately after `actual_task_count_total` the export emits `effective_admin_source` followed by the winning `effective_admin_name` (Asana display name), `effective_admin_email`, and `effective_admin_atlassian_status`. Each user section follows the same `name`/`email`/`atlassian_status` shape (no Asana GID): `first_admin_*` (with `additional_admin_emails` listing the remaining admins as a status-free email list), `most_projects_owner_*` plus `most_projects_owner_project_count` (the user who owns the greatest number of projects), and `task_creator_*` plus `task_creator_task_count`. The team sync column is emitted as a date only.
