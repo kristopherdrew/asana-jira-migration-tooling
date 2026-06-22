@@ -55,6 +55,10 @@ Thumbs.db
 
 credentials.json
 
+# Local env-file pointer (machine-specific)
+
+.asana_jira_env_path
+
 # Allow the example file
 
 !credentials.json.example
