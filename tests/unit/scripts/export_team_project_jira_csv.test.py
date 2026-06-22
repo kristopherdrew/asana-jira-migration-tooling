@@ -7,7 +7,11 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from src.lib.database import Database
-from scripts.export_team_project_jira_csv import export_team_project_jira_csv
+from scripts.export_team_project_jira_csv import (
+    EPIC_INSTRUCTIONS,
+    TASK_INSTRUCTIONS,
+    export_team_project_jira_csv,
+)
 
 
 def _description_to_map(description: str) -> dict[str, str]:
@@ -353,6 +357,8 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         # Atlassian receives the owner source and the last-active label as two
         # separate columns that both share the "Labels" header.
         self.assertEqual(header.count("Labels"), 2)
+        # Instructions sits immediately before Description.
+        self.assertEqual(header.index("Instructions"), header.index("Description") - 1)
         owner_source_idx, last_active_idx = [i for i, name in enumerate(header) if name == "Labels"]
         # dict(zip(...)) collapses the duplicate "Labels" header to the last
         # (last-active) column, matching the dedicated index lookups below.
@@ -382,17 +388,19 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_epic["Parent Id"], "")
         self.assertEqual(alpha_epic["Project Status"], "")
         self.assertEqual(alpha_epic["Labels"], "")
+        self.assertEqual(alpha_epic["Instructions"], EPIC_INSTRUCTIONS)
         alpha_description = _description_to_map(alpha_epic["Description"])
-        self.assertEqual(alpha_description["team_url"], "https://app.asana.com/0/team_a/")
+        self.assertNotIn("team_url", alpha_description)
         self.assertEqual(alpha_description["project_count_total"], "3")
         self.assertEqual(alpha_description["project_count_active"], "2")
         self.assertEqual(alpha_description["project_count_archived"], "1")
-        self.assertEqual(alpha_description["project_task_count_total"], "15")
+        self.assertNotIn("project_task_count_total", alpha_description)
         self.assertEqual(alpha_description["actual_task_count_total"], "3")
         self.assertNotIn("first_admin_gid", alpha_description)
         self.assertEqual(alpha_description["first_admin_email"], "alice@example.com")
         self.assertEqual(alpha_description["additional_admin_emails"], "bob.atl@example.com")
         self.assertEqual(alpha_description["effective_admin"], "Alice Admin")
+        self.assertNotIn("effective_admin_atlassian_status", alpha_description)
         self.assertNotIn("effective_admin_atlassian_id", alpha_description)
         self.assertNotIn("effective_admin_atlassian_email", alpha_description)
         self.assertEqual(alpha_description["effective_admin_source"], "team_admin")
@@ -418,6 +426,7 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         no_team_epic = rows[2]
         self.assertEqual(no_team_epic["Summary"], "No Team")
         self.assertEqual(no_team_epic["Owner"], "")
+        self.assertEqual(no_team_epic["Instructions"], EPIC_INSTRUCTIONS)
         self.assertEqual(no_team_epic["Description"], "")
 
         alpha_task = rows[3]
@@ -430,15 +439,17 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_task["is_personal_project"], "false")
         self.assertEqual(alpha_task["Project Status"], "Active")
         self.assertEqual(alpha_task["Labels"], "last_active_2025")
+        self.assertEqual(alpha_task["Instructions"], TASK_INSTRUCTIONS)
         alpha_task_description = _description_to_map(alpha_task["Description"])
         self.assertEqual(alpha_task_description["project_url"], "https://app.asana.com/1/ws_1/project/proj_a1")
-        self.assertEqual(alpha_task_description["team_gid"], "team_a")
-        self.assertEqual(alpha_task_description["team_name"], "Alpha Team")
-        self.assertEqual(alpha_task_description["privacy_setting"], "private")
+        self.assertNotIn("team_gid", alpha_task_description)
+        self.assertNotIn("team_name", alpha_task_description)
+        self.assertNotIn("team_url", alpha_task_description)
+        self.assertNotIn("privacy_setting", alpha_task_description)
         self.assertEqual(alpha_task_description["created_at"], "2025-01-14")
         self.assertEqual(alpha_task_description["completed"], "false")
         self.assertNotIn("is_personal_project", alpha_task_description)
-        self.assertEqual(alpha_task_description["num_tasks"], "10")
+        self.assertNotIn("num_tasks", alpha_task_description)
         self.assertEqual(alpha_task_description["actual_task_count"], "2")
         self.assertEqual(alpha_task_description["owner_name"], "Alpha Owner")
         self.assertEqual(alpha_task_description["owner_email"], "alpha@example.com")
@@ -475,9 +486,9 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(loose_task["is_personal_project"], "false")
         self.assertEqual(loose_task["Labels"], "last_active_2022")
         loose_description = _description_to_map(loose_task["Description"])
-        self.assertEqual(loose_description["team_gid"], "")
-        self.assertEqual(loose_description["team_name"], "")
-        self.assertEqual(loose_description["team_url"], "")
+        self.assertNotIn("team_gid", loose_description)
+        self.assertNotIn("team_name", loose_description)
+        self.assertNotIn("team_url", loose_description)
         self.assertEqual(loose_description["project_url"], "https://app.asana.com/1/ws_1/project/proj_nt")
         self.assertEqual(loose_description["owner_name"], "Display Owner")
         self.assertEqual(loose_description["owner_atlassian_status"], "")
