@@ -34,7 +34,11 @@ from scripts import (  # noqa: E402
     export_users,
     export_team_report,
 )
-from scripts import export_project_details_report, export_team_memberships  # noqa: E402
+from scripts import (  # noqa: E402
+    export_project_details_report,
+    export_team_memberships,
+    export_custom_field_usage_report,
+)
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
     add_service_user_to_teams,
@@ -744,6 +748,16 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             args.extend(["--team-gid", team_gid])
         run_script(export_project_details_report.main, args)
 
+    def run_custom_field_usage_report() -> None:
+        args = args_report_defaults(log_level)
+        team_gid = _prompt_team_gid_from_lookup(
+            "custom field usage",
+            "Team GID to filter custom field usage (blank = all teams)",
+        )
+        if team_gid:
+            args.extend(["--team-gid", team_gid])
+        run_script(export_custom_field_usage_report.main, args)
+
     def run_team_memberships_report() -> None:
         args = args_report_defaults(log_level)
         team_gid = _prompt_team_gid_from_lookup(
@@ -790,6 +804,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         ),
         "5": MenuItem(
             "5",
+            "Export custom field usage report",
+            run_custom_field_usage_report,
+        ),
+        "6": MenuItem(
+            "6",
             "Export team/project Jira CSV",
             run_team_project_jira_export,
         ),
