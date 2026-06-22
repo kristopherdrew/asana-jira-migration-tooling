@@ -151,6 +151,11 @@ class ExportProjectDetailsReportTest(TestCase):
         self.assertEqual(project_one["owner_name"], "Olivia Owner")
         self.assertEqual(project_one["owner_email"], "olivia@example.com")
         self.assertEqual(project_one["owner_atlassian_status"], "active")
+        # Active project owner becomes the effective owner.
+        self.assertEqual(project_one["effective_owner_source"], "project_owner")
+        self.assertEqual(project_one["effective_owner_name"], "Olivia Owner")
+        self.assertEqual(project_one["effective_owner_email"], "olivia@example.com")
+        self.assertEqual(project_one["effective_owner_atlassian_status"], "active")
         self.assertEqual(project_one["top_task_creator_name"], "Adam Active")
         self.assertEqual(project_one["top_task_creator_email"], "adam@example.com")
         self.assertEqual(project_one["top_task_creator_atlassian_status"], "active")
@@ -254,6 +259,11 @@ class ExportProjectDetailsReportTest(TestCase):
         self.assertEqual(project_one["top_task_creator_email"], "active.low@example.com")
         self.assertEqual(project_one["top_task_creator_atlassian_status"], "active")
         self.assertEqual(project_one["top_task_creator_task_count"], "1")
+        # No project owner, so the effective owner falls back to the top active creator.
+        self.assertEqual(project_one["effective_owner_source"], "task_creator")
+        self.assertEqual(project_one["effective_owner_name"], "Active Low")
+        self.assertEqual(project_one["effective_owner_email"], "active.low@example.com")
+        self.assertEqual(project_one["effective_owner_atlassian_status"], "active")
 
     def test_exports_only_selected_team(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
