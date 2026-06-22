@@ -66,6 +66,37 @@ def _bool_to_text(value: Optional[int]) -> str:
     return "true" if bool(value) else "false"
 
 
+def _clean_text(value: Optional[str]) -> str:
+    return (value or "").strip()
+
+
+def _is_active_atlassian_status(status: Optional[str]) -> bool:
+    return _clean_text(status).casefold() == "active"
+
+
+def _effective_owner_from_project(row) -> tuple[str, str, str, str]:
+    """Resolve a project's effective owner: the project owner when their
+    Atlassian account is active, otherwise the project's top active task
+    creator. Returns (source, name, email, atlassian_status)."""
+    owner_name = _clean_text(row["owner_name"])
+    if owner_name and _is_active_atlassian_status(row["owner_atlassian_status"]):
+        return (
+            "project_owner",
+            owner_name,
+            _clean_text(row["owner_email"]),
+            _clean_text(row["owner_atlassian_status"]),
+        )
+    creator_name = _clean_text(row["top_task_creator_name"])
+    if creator_name:
+        return (
+            "task_creator",
+            creator_name,
+            _clean_text(row["top_task_creator_email"]),
+            _clean_text(row["top_task_creator_atlassian_status"]),
+        )
+    return ("", "", "", "")
+
+
 def export_project_details(
     database_path: str,
     output_dir: Path,
@@ -202,6 +233,10 @@ def export_project_details(
         "owner_name",
         "owner_email",
         "owner_atlassian_status",
+        "effective_owner_source",
+        "effective_owner_name",
+        "effective_owner_email",
+        "effective_owner_atlassian_status",
         "privacy_setting",
         "created_at",
         "modified_at",
@@ -231,6 +266,12 @@ def export_project_details(
         writer.writeheader()
         for row in rows:
             actual_task_count = row["actual_task_count"]
+            (
+                effective_owner_source,
+                effective_owner_name,
+                effective_owner_email,
+                effective_owner_atlassian_status,
+            ) = _effective_owner_from_project(row)
             writer.writerow(
                 {
                     "gid": row["gid"],
@@ -243,6 +284,10 @@ def export_project_details(
                     "owner_name": row["owner_name"],
                     "owner_email": row["owner_email"] or "",
                     "owner_atlassian_status": row["owner_atlassian_status"] or "",
+                    "effective_owner_source": effective_owner_source,
+                    "effective_owner_name": effective_owner_name,
+                    "effective_owner_email": effective_owner_email,
+                    "effective_owner_atlassian_status": effective_owner_atlassian_status,
                     "privacy_setting": row["privacy_setting"],
                     "created_at": format_report_date(row["created_at"]),
                     "modified_at": format_report_date(row["modified_at"]),
