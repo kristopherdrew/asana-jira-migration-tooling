@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.asana_urls import build_project_url, build_team_url, infer_workspace_gid
+from src.lib.asana_urls import build_project_url, infer_workspace_gid
 from src.lib.database import Database
 from src.lib.date_formatting import format_report_date, parse_iso_datetime
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -26,6 +26,49 @@ from src.lib.team_analysis import build_team_analysis
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
 logger = logging.getLogger(__name__)
+
+
+EPIC_INSTRUCTIONS = """Epic Owner Responsibilities
+
+This Epic represents a collection of projects that require assessment and migration planning.
+
+The Epic assignee is responsible for:
+
+* Monitoring all child tasks within this Epic.
+* Ensuring each project has been reviewed and assessed by the appropriate stakeholders.
+* Ensuring a migration decision has been recorded for every project.
+* Following up with project owners when assessments are missing or incomplete.
+* Reviewing child tasks periodically to verify that all required information has been provided.
+* Reassigning the Epic if they are not the appropriate Team Administrator or are not responsible for coordinating the assessment effort.
+
+The Epic should not be considered complete until all child tasks contain a documented migration decision and any required supporting information."""
+
+
+TASK_INSTRUCTIONS = """Project Assessment Instructions
+
+A migration decision is required for this project. Select one of the following options:
+
+Active
+
+Select Active if the project is currently being used and ongoing work is taking place.
+
+Active projects will be migrated as fully functioning projects. This information is used to estimate migration complexity, effort, and required configuration.
+
+Archive
+
+Select Archive if the project is no longer actively used but the historical information should be retained.
+
+Archived projects will be migrated in a simplified format focused on preserving project data and records. Configuration, workflows, and other advanced project settings may not be recreated.
+
+Abandon
+
+Select Abandon if the project is no longer needed and the data does not need to be migrated.
+
+Projects marked as Abandon will be excluded from the migration and will not be transferred to the target environment.
+
+Required Action
+
+Review the project and record a migration decision of Active, Archive, or Abandon. If additional context is needed to support the decision, include it in the task comments or designated assessment fields."""
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -86,17 +129,14 @@ def _label_for_last_active(last_task_updated_at: Optional[str]) -> str:
 def _format_team_description(row: dict, analysis) -> str:
     return _description_text(
         [
-            ("team_url", build_team_url(row["team_gid"])),
             ("project_count_total", _count_to_text(row["project_count_total"])),
             ("project_count_active", _count_to_text(row["project_count_active"])),
             ("project_count_archived", _count_to_text(row["project_count_archived"])),
-            ("project_task_count_total", _count_to_text(row["project_task_count_total"])),
             ("actual_task_count_total", _count_to_text(row["actual_task_count_total"])),
             ("first_admin_email", analysis.first_admin_email if analysis else ""),
             ("additional_admin_emails", analysis.additional_admin_emails if analysis else ""),
             ("effective_admin", analysis.effective_admin_name if analysis else ""),
             ("effective_admin_email", analysis.effective_admin_email if analysis else ""),
-            ("effective_admin_atlassian_status", analysis.effective_admin_atlassian_status if analysis else ""),
             ("effective_admin_source", analysis.effective_admin_source if analysis else ""),
             ("project_owner", analysis.project_owner_name if analysis else ""),
             ("project_owner_email", analysis.project_owner_email if analysis else ""),
@@ -144,14 +184,9 @@ def _format_project_description(row: dict, project_url: str) -> str:
     return _description_text(
         [
             ("project_url", project_url),
-            ("team_gid", row["team_gid"] or ""),
-            ("team_name", row["team_name"] or ""),
-            ("team_url", build_team_url(row["team_gid"])),
-            ("privacy_setting", row["privacy_setting"] or ""),
             ("created_at", format_report_date(row["created_at"])),
             ("completed", _bool_to_text(row["completed"])),
             ("completed_at", format_report_date(row["completed_at"])),
-            ("num_tasks", _count_to_text(row["num_tasks"])),
             ("num_incomplete_tasks", _count_to_text(row["num_incomplete_tasks"])),
             ("num_completed_tasks", _count_to_text(row["num_completed_tasks"])),
             ("last_task_created_at", format_report_date(row["last_task_created_at"])),
@@ -368,6 +403,7 @@ def export_team_project_jira_csv(
                     "is_personal_project": "",
                     "Project Status": "",
                     "Labels": "",
+                    "Instructions": EPIC_INSTRUCTIONS,
                     "Description": _format_team_description(
                         {
                             "team_gid": team_gid,
@@ -400,6 +436,7 @@ def export_team_project_jira_csv(
                     "is_personal_project": "",
                     "Project Status": "",
                     "Labels": "",
+                    "Instructions": EPIC_INSTRUCTIONS,
                     "Description": "",
                 }
             )
@@ -443,6 +480,7 @@ def export_team_project_jira_csv(
                     "is_personal_project": _bool_to_text(row["is_personal_project"]),
                     "Project Status": "Archived" if bool(row["archived"]) else "Active",
                     "Labels": _label_for_last_active(row["last_task_updated_at"]),
+                    "Instructions": TASK_INSTRUCTIONS,
                     "Description": _format_project_description(
                         row,
                         build_project_url(resolved_workspace_gid, row["gid"]),
@@ -462,10 +500,11 @@ def export_team_project_jira_csv(
             ("Owner Email", "Owner Email"),
             ("Owner Atlassian ID", "Owner Atlassian ID"),
             ("Owner Atlassian Status", "Owner Atlassian Status"),
-            ("Labels", "Owner Source"),
             ("is_personal_project", "is_personal_project"),
             ("Project Status", "Project Status"),
+            ("Labels", "Owner Source"),
             ("Labels", "Labels"),
+            ("Instructions", "Instructions"),
             ("Description", "Description"),
         ]
 
