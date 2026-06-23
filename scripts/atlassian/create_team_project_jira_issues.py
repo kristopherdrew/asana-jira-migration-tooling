@@ -62,7 +62,8 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--jira-project-key", required=True, help="Target Jira project key where issues are created (e.g., MIG).")
     parser.add_argument("--epic-issue-type", default="Epic", help="Issue type name for team epics (default: Epic).")
     parser.add_argument("--task-issue-type", default="Task", help="Issue type name for project tasks (default: Task).")
-    parser.add_argument("--field-map", help="Optional JSON file overriding column -> Jira custom field name mappings.")
+    parser.add_argument("--field-map", help="Optional JSON file overriding column -> Jira custom field name/id mappings.")
+    parser.add_argument("--map-fields", action="store_true", help="Interactively map each custom field to a Jira field id (blank = resolve by field name via createmeta), then optionally save the mapping to a file for future --field-map runs.")
     team_group = parser.add_mutually_exclusive_group()
     team_group.add_argument("--team-gid", help="Restrict creation to a single Asana team by GID (its Epic plus that team's project Tasks).")
     team_group.add_argument("--pick-team", action="store_true", help="Interactively search for a team by name and restrict creation to the selected team.")
@@ -93,6 +94,83 @@ def load_field_map(path: Optional[str]) -> Dict[str, str]:
     for column, jira_name in overrides.items():
         field_map[str(column)] = str(jira_name)
     return field_map
+
+
+def _resolve_field_def(
+    field_defs: Dict[str, Dict[str, object]], reference: str
+) -> Optional[Dict[str, object]]:
+    """Resolve a field-map value that may be a Jira field *name* or a field *id*.
+
+    Tries an exact field-name match first (the createmeta dict is keyed by name),
+    then falls back to scanning for a matching ``fieldId`` so interactive id-based
+    mappings work too. Returns the createmeta field definition or ``None``."""
+    reference = (reference or "").strip()
+    if not reference:
+        return None
+    if reference in field_defs:
+        return field_defs[reference]
+    for defn in field_defs.values():
+        if str(defn.get("fieldId")) == reference:
+            return defn
+    return None
+
+
+def prompt_field_map(
+    field_map: Dict[str, str],
+    field_defs_by_type: Dict[str, Dict[str, Dict[str, object]]],
+    *,
+    input_func=input,
+) -> Dict[str, str]:
+    """Interactively resolve each column to a Jira custom field.
+
+    For every column, prints the default field name and the field id it resolves to
+    via createmeta, then reads a field id from ``input_func``. A blank answer keeps
+    the default field name (resolved by name at build time); a non-blank answer is
+    stored verbatim as the field id. Returns the new column -> (id or name) map."""
+    print("\nInteractive field mapping — for each Asana column, enter the Jira custom")
+    print("field id to use, or press Enter to resolve it by field name via createmeta.")
+    resolved: Dict[str, str] = {}
+    for column, default_name in field_map.items():
+        found_id = None
+        for defs in field_defs_by_type.values():
+            defn = _resolve_field_def(defs, default_name)
+            if defn:
+                found_id = str(defn.get("fieldId"))
+                break
+        hint = f"-> {found_id}" if found_id else "NOT found via createmeta"
+        answer = input_func(
+            f"  {column} [default name '{default_name}' {hint}] field id: "
+        ).strip()
+        if answer:
+            if not any(_resolve_field_def(defs, answer) for defs in field_defs_by_type.values()):
+                print(f"    ! warning: '{answer}' is not on any create screen; it will be sent as-is.")
+            resolved[column] = answer
+        else:
+            resolved[column] = default_name
+    return resolved
+
+
+def save_field_map(field_map: Dict[str, str], path: Path) -> Path:
+    """Write the field map as JSON (loadable later via ``--field-map``)."""
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(field_map, handle, indent=2, sort_keys=True)
+    return path
+
+
+def maybe_save_field_map(
+    field_map: Dict[str, str],
+    *,
+    default_path: str = "field_map.json",
+    input_func=input,
+) -> Optional[Path]:
+    """Ask whether to persist the mapping for future runs and write it if confirmed."""
+    answer = input_func("\nSave this field mapping for future runs? [Y/n] ").strip().lower()
+    if answer in {"n", "no"}:
+        return None
+    path_str = input_func(f"  File path [{default_path}]: ").strip() or default_path
+    path = save_field_map(field_map, Path(path_str))
+    print(f"  Saved field mapping to {path.resolve()} (reuse with --field-map {path}).")
+    return path
 
 
 def resolve_issue_type_id(issue_types: List[Dict[str, object]], name: str) -> str:
@@ -182,11 +260,11 @@ def build_issue_payload(
         fields["parent"] = {"key": parent_key}
 
     adf_overrides = row.get("_adf_overrides") or {}
-    for column, jira_name in custom_field_map.items():
+    for column, field_ref in custom_field_map.items():
         value = (row.get(column) or "").strip()
         if not value:
             continue
-        defn = field_defs.get(jira_name)
+        defn = _resolve_field_def(field_defs, field_ref)
         if not defn:
             continue
         field_id = str(defn.get("fieldId"))
@@ -207,11 +285,11 @@ def _resolve_missing_field_warnings(
     field_defs: Dict[str, Dict[str, object]],
     issue_type_name: str,
 ) -> None:
-    for column, jira_name in custom_field_map.items():
-        if jira_name not in field_defs:
+    for column, field_ref in custom_field_map.items():
+        if _resolve_field_def(field_defs, field_ref) is None:
             logger.warning(
                 "Custom field '%s' (for column '%s') is not available on the %s create screen; values will be skipped.",
-                jira_name,
+                field_ref,
                 column,
                 issue_type_name,
             )
@@ -250,6 +328,7 @@ def create_team_project_jira_issues(
     epic_issue_type: str = "Epic",
     task_issue_type: str = "Task",
     field_map_path: Optional[str] = None,
+    map_fields: bool = False,
     workers: int = DEFAULT_WORKERS,
     limit: Optional[int] = None,
     dry_run: bool = False,
@@ -299,6 +378,12 @@ def create_team_project_jira_issues(
         task_type_id = resolve_issue_type_id(issue_types, task_issue_type)
         epic_fields = client.get_createmeta_fields(jira_project_key, epic_type_id)
         task_fields = client.get_createmeta_fields(jira_project_key, task_type_id)
+        if map_fields:
+            custom_field_map = prompt_field_map(
+                custom_field_map,
+                {epic_issue_type: epic_fields, task_issue_type: task_fields},
+            )
+            maybe_save_field_map(custom_field_map)
         _resolve_missing_field_warnings(custom_field_map, epic_fields, epic_issue_type)
         _resolve_missing_field_warnings(custom_field_map, task_fields, task_issue_type)
 
@@ -472,6 +557,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             epic_issue_type=args.epic_issue_type,
             task_issue_type=args.task_issue_type,
             field_map_path=args.field_map,
+            map_fields=args.map_fields,
             workers=max(args.workers, 1),
             limit=args.limit,
             dry_run=args.dry_run,

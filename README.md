@@ -436,7 +436,8 @@ Required flags:
 
 Optional flags:
 - `--epic-issue-type <name>` / `--task-issue-type <name>` issue-type names to resolve via `createmeta` (defaults `Epic` / `Task`).
-- `--field-map <path>` JSON object overriding column → Jira custom field name mappings.
+- `--field-map <path>` JSON object overriding column → Jira custom field mappings. Each value may be a Jira field **name** or a field **id**.
+- `--map-fields` interactively build the field map: for each managed column it shows the default field name and the field id it resolves to via `createmeta`, then prompts for a field id to use (press Enter to keep resolving by name). When finished it offers to save the map to a JSON file (default `field_map.json` in the current directory) so future runs can reuse it via `--field-map`.
 - `--workers <n>` concurrent workers for the task-creation pass (default `4`; epics are created sequentially first).
 - `--limit <n>` cap the number of issues created this run (epics counted first) for a cautious first pass; skips are not counted.
 - `--team-gid <gid>` restrict the run to a single team — its Epic plus that team's project Tasks (the synthetic `No Team` epic is excluded). Mutually exclusive with `--pick-team`.
