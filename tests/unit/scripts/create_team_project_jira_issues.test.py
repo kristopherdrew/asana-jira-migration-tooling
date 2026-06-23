@@ -23,10 +23,10 @@ EPIC_FIELDS = {
     "Description": {"fieldId": "description", "schema": {"type": "doc"}},
     "Assignee": {"fieldId": "assignee", "schema": {"type": "user"}},
     "Labels": {"fieldId": "labels", "schema": {"type": "array", "items": "string"}},
-    "Team URL": {"fieldId": "customfield_10001", "schema": {"type": "string"}},
-    "Project URL": {"fieldId": "customfield_10002", "schema": {"type": "string"}},
-    "Instructions": {"fieldId": "customfield_10003", "schema": {"type": "doc"}},
-    "Project Status": {"fieldId": "customfield_10005", "schema": {"type": "option"}},
+    "Team (Asana)": {"fieldId": "customfield_10001", "schema": {"type": "string"}},
+    "Project (Asana)": {"fieldId": "customfield_10002", "schema": {"type": "string"}},
+    "Testing Instructions": {"fieldId": "customfield_10003", "schema": {"type": "doc"}},
+    "Asana Current Project Status": {"fieldId": "customfield_10005", "schema": {"type": "option"}},
     "Project Count (Asana)": {"fieldId": "customfield_10010", "schema": {"type": "number"}},
     "Task Count (Asana)": {"fieldId": "customfield_10011", "schema": {"type": "number"}},
 }
@@ -77,7 +77,7 @@ class LoadFieldMapTest(TestCase):
             path.write_text('{"Team URL": "Asana Team URL"}', encoding="utf-8")
             field_map = load_field_map(str(path))
         self.assertEqual(field_map["Team URL"], "Asana Team URL")
-        self.assertEqual(field_map["Project URL"], "Project URL")  # default preserved
+        self.assertEqual(field_map["Project URL"], "Project (Asana)")  # default preserved
 
 
 class BuildIssuePayloadTest(TestCase):
@@ -177,7 +177,7 @@ class BuildIssuePayloadTest(TestCase):
 
     def test_instructions_plain_text_when_field_not_doc(self) -> None:
         string_fields = dict(EPIC_FIELDS)
-        string_fields["Instructions"] = {"fieldId": "customfield_10003", "schema": {"type": "string"}}
+        string_fields["Testing Instructions"] = {"fieldId": "customfield_10003", "schema": {"type": "string"}}
         override = {"type": "doc", "version": 1, "content": []}
         row = self._epic_row(**{"Instructions": "plain text", "_adf_overrides": {"Instructions": override}})
         payload = build_issue_payload(
@@ -207,7 +207,7 @@ class BuildIssuePayloadTest(TestCase):
         self.assertEqual(payload["fields"]["description"], override)
 
     def test_missing_custom_field_is_skipped(self) -> None:
-        fields_without_team_url = {k: v for k, v in EPIC_FIELDS.items() if k != "Team URL"}
+        fields_without_team_url = {k: v for k, v in EPIC_FIELDS.items() if k != "Team (Asana)"}
         payload = build_issue_payload(
             self._epic_row(),
             project_key="MIG",
