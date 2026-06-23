@@ -47,6 +47,8 @@ DEFAULT_FIELD_MAP: Dict[str, str] = {
     "Project URL": "Project URL",
     "Instructions": "Instructions",
     "Project Status": "Project Status",
+    "Project Count (Asana)": "Project Count (Asana)",
+    "Task Count (Asana)": "Task Count (Asana)",
 }
 
 REPORT_FIELDNAMES = ["kind", "asana_gid", "summary", "jira_key", "status", "message"]

@@ -399,6 +399,10 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_epic["Team URL"], "https://app.asana.com/0/team_a/")
         self.assertEqual(alpha_epic["Project URL"], "")
         self.assertEqual(alpha_epic["Instructions"], EPIC_INSTRUCTIONS)
+        # Counts surfaced as dedicated columns (3 projects incl. the unexported one;
+        # 3 actual tasks across the two projects that have task data).
+        self.assertEqual(alpha_epic["Project Count (Asana)"], "3")
+        self.assertEqual(alpha_epic["Task Count (Asana)"], "3")
         self.assertIn("Primary Details", alpha_epic["Description"])
         self.assertIn("Implied Details", alpha_epic["Description"])
         alpha_description = _description_to_map(alpha_epic["Description"])
@@ -442,6 +446,9 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(no_team_epic["Project URL"], "")
         self.assertEqual(no_team_epic["Instructions"], EPIC_INSTRUCTIONS)
         self.assertEqual(no_team_epic["Description"], "")
+        # The No Team epic aggregates the one team-less project (Loose Project) and its task.
+        self.assertEqual(no_team_epic["Project Count (Asana)"], "1")
+        self.assertEqual(no_team_epic["Task Count (Asana)"], "1")
 
         alpha_task = rows[3]
         self.assertEqual(alpha_task["Parent Id"], "1")
@@ -456,6 +463,9 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_task["Team URL"], "https://app.asana.com/0/team_a/")
         self.assertEqual(alpha_task["Project URL"], "https://app.asana.com/1/ws_1/project/proj_a1")
         self.assertEqual(alpha_task["Instructions"], TASK_INSTRUCTIONS)
+        # Tasks only carry their own actual task count; Project Count stays blank.
+        self.assertEqual(alpha_task["Project Count (Asana)"], "")
+        self.assertEqual(alpha_task["Task Count (Asana)"], "2")
         # The three section headers introduce the bulleted detail groups.
         self.assertIn("Primary Details", alpha_task["Description"])
         self.assertIn("Secondary Details", alpha_task["Description"])
@@ -498,11 +508,14 @@ class ExportTeamProjectJiraCsvTest(TestCase):
 
         loose_task = rows[7]
         self.assertEqual(loose_task["Parent Id"], "3")
-        self.assertEqual(loose_task["Owner"], "Display Owner")
+        # Display Owner has no active Atlassian account and there is no task creator,
+        # so there is no effective owner: the Owner columns/label are blank (the raw
+        # project owner is still recorded in the description below).
+        self.assertEqual(loose_task["Owner"], "")
         self.assertEqual(loose_task["Owner Email"], "")
         self.assertEqual(loose_task["Owner Atlassian ID"], "")
         self.assertEqual(loose_task["Owner Atlassian Status"], "")
-        self.assertEqual(owner_source_labels[7], "project_owner")
+        self.assertEqual(owner_source_labels[7], "")
         self.assertEqual(project_type_labels[7], "team_project")
         self.assertEqual(last_active_labels[7], "last_active_2022")
         self.assertEqual(loose_task["Team URL"], "")
@@ -863,3 +876,10 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(gamma_task_description["effective_owner_atlassian_status"], "active")
         self.assertEqual(gamma_task_description["top_task_creator_name"], "Active Creator")
         self.assertEqual(gamma_task_description["top_task_creator_task_count"], "1")
+        # The Task row's Owner columns + Owner Source label now mirror the effective
+        # owner (the active task creator), so the Jira assignee falls back to them.
+        self.assertEqual(gamma_task["Owner"], "Active Creator")
+        self.assertEqual(gamma_task["Owner Email"], "creator@example.com")
+        self.assertEqual(gamma_task["Owner Atlassian ID"], "atl-creator-active")
+        self.assertEqual(gamma_task["Owner Atlassian Status"], "active")
+        self.assertEqual(owner_source_by_summary["Gamma Project"], "task_creator")

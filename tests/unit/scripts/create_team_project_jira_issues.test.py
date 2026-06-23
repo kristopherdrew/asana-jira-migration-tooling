@@ -27,6 +27,8 @@ EPIC_FIELDS = {
     "Project URL": {"fieldId": "customfield_10002", "schema": {"type": "string"}},
     "Instructions": {"fieldId": "customfield_10003", "schema": {"type": "doc"}},
     "Project Status": {"fieldId": "customfield_10005", "schema": {"type": "option"}},
+    "Project Count (Asana)": {"fieldId": "customfield_10010", "schema": {"type": "number"}},
+    "Task Count (Asana)": {"fieldId": "customfield_10011", "schema": {"type": "number"}},
 }
 TASK_FIELDS = dict(EPIC_FIELDS, Parent={"fieldId": "parent", "schema": {"type": "issuelink"}})
 
@@ -341,6 +343,65 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
             sync_time,
         )
 
+    def _seed_inactive_owner_project(self) -> None:
+        """A project whose owner is a deactivated Atlassian user, with a task created
+        by an active Atlassian user, so the effective owner falls back to the creator."""
+        sync_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.database.upsert_team(self.connection, {"gid": "team_x", "name": "Xeno Team"}, sync_time)
+        self.database.upsert_user(
+            self.connection,
+            {"gid": "owner_x", "name": "Xander", "resource_type": "user", "email": "x@x.com", "is_active": True, "workspaces": []},
+            sync_time,
+        )
+        self.database.upsert_user(
+            self.connection,
+            {"gid": "creator_x", "name": "Cara", "resource_type": "user", "email": "c@x.com", "is_active": True, "workspaces": []},
+            sync_time,
+        )
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [
+                {"gid": "admin_a", "atlassianAccountId": "atl-admin-a", "atlassianEmail": "a.atl@x.com", "atlassianStatus": "active"},
+                {"gid": "owner_a", "atlassianAccountId": "atl-owner-a", "atlassianEmail": "o.atl@x.com", "atlassianStatus": "active"},
+                {"gid": "owner_x", "atlassianAccountId": "atl-owner-x", "atlassianEmail": "x.atl@x.com", "atlassianStatus": "deactivated"},
+                {"gid": "creator_x", "atlassianAccountId": "atl-creator-x", "atlassianEmail": "c.atl@x.com", "atlassianStatus": "active"},
+            ],
+            sync_time,
+        )
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_x",
+                "name": "Xeno Project",
+                "archived": False,
+                "owner": {"gid": "owner_x", "name": "Xander"},
+                "team": {"gid": "team_x", "name": "Xeno Team"},
+                "privacy_setting": "private",
+                "created_at": "2025-01-14T09:00:00Z",
+                "completed": False,
+                "completed_at": None,
+                "is_personal_project": False,
+                "num_tasks": 1,
+                "num_incomplete_tasks": 1,
+                "num_completed_tasks": 0,
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_x",
+                "name": "Task X",
+                "created_at": "2025-02-01T09:00:00Z",
+                "modified_at": "2025-03-05T09:00:00Z",
+                "completed_at": None,
+                "created_by": {"gid": "creator_x", "name": "Cara"},
+                "memberships": [{"project": {"gid": "proj_x", "name": "Xeno Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+
     def _run(self, client, **kwargs):
         # Release the write lock so the script's own connection can run DDL.
         self.connection.commit()
@@ -364,6 +425,15 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
         self.assertEqual(task_payload["fields"]["parent"], {"key": "MIG-1"})
         self.assertEqual(epic_payload["fields"]["assignee"], {"accountId": "atl-admin-a"})
 
+        # Count fields: the team epic carries both (1 project, 1 actual task); the
+        # task carries only Task Count (Project Count is blank for tasks).
+        self.assertEqual(epic_payload["fields"]["customfield_10010"], 1)
+        self.assertEqual(epic_payload["fields"]["customfield_10011"], 1)
+        self.assertEqual(task_payload["fields"]["customfield_10011"], 1)
+        self.assertNotIn("customfield_10010", task_payload["fields"])
+        # The project owner is active, so the task assignee is the project owner.
+        self.assertEqual(task_payload["fields"]["assignee"], {"accountId": "atl-owner-a"})
+
         # Instructions is a doc field here, so the rich ADF (heading + bullet list)
         # built in build_team_project_rows should flow through to the payload.
         instructions = task_payload["fields"]["customfield_10003"]
@@ -375,6 +445,17 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
         mappings = self.database.load_team_project_jira_mappings(self.connection)
         self.assertEqual(mappings[("team", "team_a")], "MIG-1")
         self.assertEqual(mappings[("project", "proj_1")], "MIG-2")
+
+    def test_task_assignee_falls_back_to_active_task_creator(self) -> None:
+        self._seed_inactive_owner_project()
+        client = FakeJiraClient()
+        # Scope to the inactive-owner team so the created list is just (epic, task).
+        self._run(client, team_gid="team_x")
+        self.assertEqual(len(client.created), 2)
+        _, task_payload = client.created
+        # Owner is deactivated -> effective owner is the active task creator.
+        self.assertEqual(task_payload["fields"]["assignee"], {"accountId": "atl-creator-x"})
+        self.assertIn("task_creator", task_payload["fields"]["labels"])
 
     def test_rerun_skips_existing(self) -> None:
         self._run(FakeJiraClient())
