@@ -142,6 +142,32 @@ class BuildIssuePayloadTest(TestCase):
         )
         self.assertEqual(payload["fields"]["parent"], {"key": "MIG-1"})
 
+    def test_instructions_uses_adf_override_for_doc_field(self) -> None:
+        override = {"type": "doc", "version": 1, "content": [{"type": "heading", "attrs": {"level": 2}, "content": []}]}
+        row = self._epic_row(**{"Instructions": "plain text fallback", "_adf_overrides": {"Instructions": override}})
+        payload = build_issue_payload(
+            row,
+            project_key="MIG",
+            issue_type_id="10000",
+            field_defs=EPIC_FIELDS,  # Instructions -> customfield_10003, schema doc
+            custom_field_map=load_field_map(None),
+        )
+        self.assertEqual(payload["fields"]["customfield_10003"], override)
+
+    def test_instructions_plain_text_when_field_not_doc(self) -> None:
+        string_fields = dict(EPIC_FIELDS)
+        string_fields["Instructions"] = {"fieldId": "customfield_10003", "schema": {"type": "string"}}
+        override = {"type": "doc", "version": 1, "content": []}
+        row = self._epic_row(**{"Instructions": "plain text", "_adf_overrides": {"Instructions": override}})
+        payload = build_issue_payload(
+            row,
+            project_key="MIG",
+            issue_type_id="10000",
+            field_defs=string_fields,
+            custom_field_map=load_field_map(None),
+        )
+        self.assertEqual(payload["fields"]["customfield_10003"], "plain text")
+
     def test_missing_custom_field_is_skipped(self) -> None:
         fields_without_team_url = {k: v for k, v in EPIC_FIELDS.items() if k != "Team URL"}
         payload = build_issue_payload(
@@ -263,6 +289,14 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
         self.assertEqual(task_payload["fields"]["issuetype"], {"id": "10001"})
         self.assertEqual(task_payload["fields"]["parent"], {"key": "MIG-1"})
         self.assertEqual(epic_payload["fields"]["assignee"], {"accountId": "atl-admin-a"})
+
+        # Instructions is a doc field here, so the rich ADF (heading + bullet list)
+        # built in build_team_project_rows should flow through to the payload.
+        instructions = task_payload["fields"]["customfield_10003"]
+        self.assertEqual(instructions["type"], "doc")
+        node_types = [node["type"] for node in instructions["content"]]
+        self.assertIn("heading", node_types)
+        self.assertIn("bulletList", node_types)
 
         mappings = self.database.load_team_project_jira_mappings(self.connection)
         self.assertEqual(mappings[("team", "team_a")], "MIG-1")

@@ -16,6 +16,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.lib.adf import (
+    BulletList,
+    Heading,
+    Paragraph,
+    Run,
+    render_blocks_adf,
+    render_blocks_text,
+)
 from src.lib.asana_urls import build_project_url, build_team_url, infer_workspace_gid
 from src.lib.database import Database
 from src.lib.date_formatting import format_report_date, parse_iso_datetime
@@ -28,47 +36,79 @@ DEFAULT_OUTPUT_DIR = "exports"
 logger = logging.getLogger(__name__)
 
 
-EPIC_INSTRUCTIONS = """Epic Owner Responsibilities
+# Instruction copy is authored once as structured blocks, then rendered to plain text
+# (for the CSV export) and to rich ADF (for the direct Jira API path) so the two paths
+# never drift. See src/lib/adf.py for the block model.
+EPIC_INSTRUCTION_BLOCKS = [
+    Heading("Epic Owner Responsibilities"),
+    Paragraph(
+        [
+            "This Epic groups the projects for one team that need assessment and "
+            "migration planning. As the Epic assignee, you are responsible for:"
+        ]
+    ),
+    BulletList(
+        [
+            ["Monitoring all child tasks within this Epic."],
+            ["Ensuring each project is reviewed and assessed by the appropriate stakeholders."],
+            ["Ensuring a migration decision is recorded for every project."],
+            ["Following up with project owners when assessments are missing or incomplete."],
+            ["Checking child tasks periodically to confirm the required information is provided."],
+            [
+                "Reassigning the Epic if you are not the appropriate Team Administrator or "
+                "are not coordinating this assessment effort."
+            ],
+        ]
+    ),
+    Paragraph(
+        [
+            "The Epic is complete only once every child task has a documented migration "
+            "decision and any required supporting information."
+        ]
+    ),
+]
 
-This Epic represents a collection of projects that require assessment and migration planning.
 
-The Epic assignee is responsible for:
+TASK_INSTRUCTION_BLOCKS = [
+    Heading("Project Assessment Instructions"),
+    Paragraph(["A migration decision is required for this project. Please choose one:"]),
+    BulletList(
+        [
+            [
+                Run("Active", bold=True),
+                " — the project is in active use with ongoing work. It will be migrated "
+                "as a fully functioning project (used to estimate migration complexity, "
+                "effort, and configuration).",
+            ],
+            [
+                Run("Archive", bold=True),
+                " — the project is no longer active but its history should be retained. "
+                "It will be migrated in a simplified, records-only format; configuration "
+                "and workflows may not be recreated.",
+            ],
+            [
+                Run("Abandon", bold=True),
+                " — the project is no longer needed and its data does not need to migrate. "
+                "It will be excluded from the migration entirely.",
+            ],
+        ]
+    ),
+    Paragraph(
+        [
+            Run("Required Action: ", bold=True),
+            "record a decision of Active, Archive, or Abandon. If additional context is "
+            "needed, add it in the task comments or the designated assessment fields.",
+        ]
+    ),
+]
 
-* Monitoring all child tasks within this Epic.
-* Ensuring each project has been reviewed and assessed by the appropriate stakeholders.
-* Ensuring a migration decision has been recorded for every project.
-* Following up with project owners when assessments are missing or incomplete.
-* Reviewing child tasks periodically to verify that all required information has been provided.
-* Reassigning the Epic if they are not the appropriate Team Administrator or are not responsible for coordinating the assessment effort.
 
-The Epic should not be considered complete until all child tasks contain a documented migration decision and any required supporting information."""
-
-
-TASK_INSTRUCTIONS = """Project Assessment Instructions
-
-A migration decision is required for this project. Select one of the following options:
-
-Active
-
-Select Active if the project is currently being used and ongoing work is taking place.
-
-Active projects will be migrated as fully functioning projects. This information is used to estimate migration complexity, effort, and required configuration.
-
-Archive
-
-Select Archive if the project is no longer actively used but the historical information should be retained.
-
-Archived projects will be migrated in a simplified format focused on preserving project data and records. Configuration, workflows, and other advanced project settings may not be recreated.
-
-Abandon
-
-Select Abandon if the project is no longer needed and the data does not need to be migrated.
-
-Projects marked as Abandon will be excluded from the migration and will not be transferred to the target environment.
-
-Required Action
-
-Review the project and record a migration decision of Active, Archive, or Abandon. If additional context is needed to support the decision, include it in the task comments or designated assessment fields."""
+# Plain-text renderings preserve the existing public constant names (imported by the
+# CSV export rows and by tests); the ADF renderings feed the direct-API creator.
+EPIC_INSTRUCTIONS = render_blocks_text(EPIC_INSTRUCTION_BLOCKS)
+TASK_INSTRUCTIONS = render_blocks_text(TASK_INSTRUCTION_BLOCKS)
+EPIC_INSTRUCTIONS_ADF = render_blocks_adf(EPIC_INSTRUCTION_BLOCKS)
+TASK_INSTRUCTIONS_ADF = render_blocks_adf(TASK_INSTRUCTION_BLOCKS)
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -412,6 +452,7 @@ def build_team_project_rows(
                 ),
                 "_kind": "team",
                 "_asana_gid": team_gid,
+                "_adf_overrides": {"Instructions": EPIC_INSTRUCTIONS_ADF},
             }
         )
 
@@ -439,6 +480,7 @@ def build_team_project_rows(
                 "Description": "",
                 "_kind": "no_team",
                 "_asana_gid": "",
+                "_adf_overrides": {"Instructions": EPIC_INSTRUCTIONS_ADF},
             }
         )
 
@@ -490,6 +532,7 @@ def build_team_project_rows(
                 "_asana_gid": _clean_text(row["gid"]),
                 "_parent_kind": "team" if team_gid else "no_team",
                 "_parent_asana_gid": team_gid,
+                "_adf_overrides": {"Instructions": TASK_INSTRUCTIONS_ADF},
             }
         )
 

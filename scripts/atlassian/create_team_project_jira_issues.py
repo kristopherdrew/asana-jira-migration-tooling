@@ -160,6 +160,7 @@ def build_issue_payload(
     if parent_key and "parent" in available_ids:
         fields["parent"] = {"key": parent_key}
 
+    adf_overrides = row.get("_adf_overrides") or {}
     for column, jira_name in custom_field_map.items():
         value = (row.get(column) or "").strip()
         if not value:
@@ -169,7 +170,13 @@ def build_issue_payload(
             continue
         field_id = str(defn.get("fieldId"))
         schema = defn.get("schema") or {}
-        fields[field_id] = format_custom_value(schema, value)
+        # Prefer a pre-built rich ADF document when the Jira field is rich-text;
+        # otherwise format the plain string per the field's schema type.
+        override = adf_overrides.get(column)
+        if override is not None and str(schema.get("type")) == "doc":
+            fields[field_id] = override
+        else:
+            fields[field_id] = format_custom_value(schema, value)
 
     return {"fields": fields}
 
