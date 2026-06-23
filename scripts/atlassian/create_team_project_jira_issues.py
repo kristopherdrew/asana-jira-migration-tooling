@@ -43,10 +43,10 @@ DEFAULT_WORKERS = 4
 # named differently. Standard fields (summary, description, assignee, labels,
 # parent) are handled separately and are not listed here.
 DEFAULT_FIELD_MAP: Dict[str, str] = {
-    "Team URL": "Team URL",
-    "Project URL": "Project URL",
-    "Instructions": "Instructions",
-    "Project Status": "Project Status",
+    "Team URL": "Team (Asana)",
+    "Project URL": "Project (Asana)",
+    "Instructions": "Testing Instructions",
+    "Project Status": "Asana Current Project Status",
     "Project Count (Asana)": "Project Count (Asana)",
     "Task Count (Asana)": "Task Count (Asana)",
 }
