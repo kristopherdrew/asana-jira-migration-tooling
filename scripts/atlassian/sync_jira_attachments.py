@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import csv
 import json
 import logging
@@ -18,14 +17,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
-from urllib import error, parse, request
+from urllib import error, request
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in os.sys.path:
     os.sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.config import Credentials, load_credentials
 from src.lib.database import Database
+from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.attachments import jira_unique_attachment_name
 
@@ -53,128 +53,6 @@ class AttachmentJob:
     attachment_name: str
     permanent_url: str
     jira_key: str
-
-
-class JiraApiError(Exception):
-    def __init__(self, status: int, message: str):
-        super().__init__(f"Jira API error {status}: {message}")
-        self.status = status
-
-
-class JiraClient:
-    def __init__(
-        self,
-        base_url: str,
-        username: str,
-        token: str,
-        skip_ssl_verification: bool = False,
-        timeout: int = 30,
-    ):
-        self._base_url = base_url.rstrip("/")
-        auth_bytes = f"{username}:{token}".encode("utf-8")
-        self._auth_header = f"Basic {base64.b64encode(auth_bytes).decode('ascii')}"
-        context = ssl.create_default_context()
-        if skip_ssl_verification:
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-        self._opener = request.build_opener(request.HTTPSHandler(context=context))
-        self._timeout = timeout
-
-    def _request(
-        self,
-        method: str,
-        path: str,
-        headers: Optional[Dict[str, str]] = None,
-        data: Optional[bytes] = None,
-        max_retries: int = 5,
-        backoff: float = 1.5,
-    ) -> bytes:
-        url = f"{self._base_url}{path}"
-        last_error: Optional[Exception] = None
-        for attempt in range(max_retries):
-            req = request.Request(url=url, method=method, data=data)
-            req.add_header("Authorization", self._auth_header)
-            req.add_header("User-Agent", "asana-jira-attachment-sync/1.0")
-            req.add_header("Accept", "application/json")
-            if headers:
-                for key, value in headers.items():
-                    req.add_header(key, value)
-            try:
-                with self._opener.open(req, timeout=self._timeout) as resp:
-                    return resp.read()
-            except error.HTTPError as exc:
-                if exc.code == 429:
-                    retry_after = self._parse_retry_after(exc)
-                    sleep_for = retry_after or (backoff ** attempt)
-                    time.sleep(sleep_for)
-                    last_error = JiraApiError(exc.code, "Rate limited")
-                    continue
-                if 500 <= exc.code < 600:
-                    time.sleep(backoff ** attempt)
-                    last_error = JiraApiError(exc.code, "Server error")
-                    continue
-                body = exc.read().decode("utf-8") if exc.fp else exc.reason
-                raise JiraApiError(exc.code, body or exc.reason) from exc
-            except error.URLError as exc:
-                time.sleep(backoff ** attempt)
-                last_error = exc
-        if last_error:
-            raise last_error
-        raise JiraApiError(0, "Request failed without response")
-
-    @staticmethod
-    def _parse_retry_after(exc: error.HTTPError) -> Optional[float]:
-        retry_header = exc.headers.get("Retry-After") if exc.headers else None
-        if not retry_header:
-            return None
-        try:
-            return float(retry_header)
-        except ValueError:
-            return None
-
-    def list_issue_attachment_names(self, jira_key: str) -> Set[str]:
-        encoded_key = parse.quote(jira_key)
-        path = f"/rest/api/3/issue/{encoded_key}?fields=attachment"
-        payload = self._request("GET", path)
-        try:
-            import json
-
-            data = json.loads(payload.decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            raise JiraApiError(0, f"Unable to parse attachment response for {jira_key}: {exc}") from exc
-        attachments = data.get("fields", {}).get("attachment", [])
-        names: Set[str] = set()
-        for entry in attachments:
-            filename = entry.get("filename")
-            if filename:
-                names.add(filename)
-        return names
-
-    def upload_attachment(self, jira_key: str, filename: str, file_path: Path) -> None:
-        boundary = f"----AsanaSyncBoundary{time.time_ns()}"
-        encoded_key = parse.quote(jira_key)
-        path = f"/rest/api/3/issue/{encoded_key}/attachments"
-        headers = {
-            "X-Atlassian-Token": "no-check",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-        }
-        with file_path.open("rb") as handle:
-            file_bytes = handle.read()
-        body = self._build_multipart(boundary, filename, file_bytes)
-        self._request("POST", path, headers=headers, data=body)
-
-    @staticmethod
-    def _build_multipart(boundary: str, filename: str, file_bytes: bytes) -> bytes:
-        parts = [
-            f"--{boundary}".encode("utf-8"),
-            f"Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"".encode("utf-8"),
-            b"Content-Type: application/octet-stream",
-            b"",
-            file_bytes,
-            f"--{boundary}--".encode("utf-8"),
-            b"",
-        ]
-        return b"\r\n".join(parts)
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:

@@ -224,28 +224,21 @@ def _row_owner_atlassian_status_from_project(row: dict) -> str:
     return _clean_text(row["owner_atlassian_status"])
 
 
-def export_team_project_jira_csv(
-    database_path: str,
-    output_dir: Path,
-    filename: Optional[str] = None,
+def build_team_project_rows(
+    connection,
     workspace_gid: Optional[str] = None,
-) -> Path:
-    database = Database(db_path=database_path)
-    output_dir = output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+) -> tuple[list[dict], list[dict]]:
+    """Build the Team→Epic and Project→Task rows shared by the CSV exporter and
+    the direct Jira issue creator.
 
-    if not filename:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        filename = f"team_project_jira_import_{timestamp}.csv"
-
-    output_path = output_dir / filename
-    logger.debug("Writing Jira team/project import export to %s", output_path)
-
-    with database.connect() as connection:
-        database.initialize(connection)
-        resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
-        project_rows = connection.execute(
-            """
+    Returns ``(epic_rows, task_rows)``. Each row carries the CSV columns plus
+    internal ``_kind``/``_asana_gid`` (and, for tasks, ``_parent_kind``/
+    ``_parent_asana_gid``) metadata keys used to resolve real Jira parent keys when
+    creating issues via the API. The CSV writer ignores the underscore-prefixed
+    keys."""
+    resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
+    project_rows = connection.execute(
+        """
             WITH actual_task_counts AS (
                 SELECT
                     tp.project_gid,
@@ -335,193 +328,226 @@ def export_team_project_jira_csv(
                 p.name COLLATE NOCASE,
                 p.gid
             """
-        ).fetchall()
+    ).fetchall()
 
-        project_rows = [dict(row) for row in project_rows]
-        team_analysis = build_team_analysis(connection)
+    project_rows = [dict(row) for row in project_rows]
+    team_analysis = build_team_analysis(connection)
 
-        team_groups: dict[str, list[dict]] = defaultdict(list)
-        no_team_projects: list[dict] = []
-        for row in project_rows:
-            team_gid = _clean_text(row["team_gid"])
-            if team_gid:
-                team_groups[team_gid].append(row)
-            else:
-                if row["actual_task_count"] is not None:
-                    no_team_projects.append(row)
+    team_groups: dict[str, list[dict]] = defaultdict(list)
+    no_team_projects: list[dict] = []
+    for row in project_rows:
+        team_gid = _clean_text(row["team_gid"])
+        if team_gid:
+            team_groups[team_gid].append(row)
+        else:
+            if row["actual_task_count"] is not None:
+                no_team_projects.append(row)
 
-        team_aggregates: dict[str, dict[str, object]] = {}
-        for team_gid, rows in team_groups.items():
-            project_count_total = len(rows)
-            project_count_active = sum(1 for row in rows if not bool(row["archived"]))
-            project_count_archived = sum(1 for row in rows if bool(row["archived"]))
-            project_task_count_total = sum(int(row["num_tasks"] or 0) for row in rows)
-            actual_task_count_values = [int(row["actual_task_count"]) for row in rows if row["actual_task_count"] is not None]
-            actual_task_count_total = sum(actual_task_count_values) if actual_task_count_values else None
-            team_name = next((row["team_name"] for row in rows if _clean_text(row["team_name"])), team_gid)
-            team_aggregates[team_gid] = {
-                "team_gid": team_gid,
-                "team_name": team_name,
-                "project_count_total": project_count_total,
-                "project_count_active": project_count_active,
-                "project_count_archived": project_count_archived,
-                "project_task_count_total": project_task_count_total,
-                "actual_task_count_total": actual_task_count_total,
-                "rows": rows,
-            }
-
-        epic_rows: list[dict[str, str]] = []
-        epic_task_ids: dict[str, str] = {}
-        task_id_counter = 1
-
-        sorted_team_ids = sorted(
-            team_aggregates.keys(),
-            key=lambda gid: (
-                (team_aggregates[gid]["team_name"] or "").casefold(),
-                gid,
-            ),
-        )
-        for team_gid in sorted_team_ids:
-            aggregate = team_aggregates[team_gid]
-            analysis = team_analysis.get(team_gid)
-            owner = analysis.effective_admin_name if analysis else ""
-
-            epic_task_id = str(task_id_counter)
-            task_id_counter += 1
-            epic_task_ids[team_gid] = epic_task_id
-            epic_rows.append(
-                {
-                    "Issue Type": "Epic",
-                    "Task ID": epic_task_id,
-                    "Parent Id": "",
-                    "Summary": aggregate["team_name"] or "",
-                    "Team URL": build_team_url(team_gid),
-                    "Project URL": "",
-                    "Owner": owner,
-                    "Owner Email": analysis.effective_admin_email if analysis else "",
-                    "Owner Atlassian ID": analysis.effective_admin_atlassian_id if analysis else "",
-                    "Owner Atlassian Status": analysis.effective_admin_atlassian_status if analysis else "",
-                    "Owner Source": analysis.effective_admin_source if analysis else "",
-                    "is_personal_project": "",
-                    "Project Status": "",
-                    "Labels": "",
-                    "Instructions": EPIC_INSTRUCTIONS,
-                    "Description": _format_team_description(
-                        {
-                            "team_gid": team_gid,
-                            "project_count_total": aggregate["project_count_total"],
-                            "project_count_active": aggregate["project_count_active"],
-                            "project_count_archived": aggregate["project_count_archived"],
-                            "project_task_count_total": aggregate["project_task_count_total"],
-                            "actual_task_count_total": aggregate["actual_task_count_total"],
-                        },
-                        analysis,
-                    ),
-                }
-            )
-
-        no_team_task_id: Optional[str] = None
-        if no_team_projects:
-            no_team_task_id = str(task_id_counter)
-            task_id_counter += 1
-            epic_rows.append(
-                {
-                    "Issue Type": "Epic",
-                    "Task ID": no_team_task_id,
-                    "Parent Id": "",
-                    "Summary": "No Team",
-                    "Team URL": "",
-                    "Project URL": "",
-                    "Owner": "",
-                    "Owner Email": "",
-                    "Owner Atlassian ID": "",
-                    "Owner Atlassian Status": "",
-                    "Owner Source": "",
-                    "is_personal_project": "",
-                    "Project Status": "",
-                    "Labels": "",
-                    "Instructions": EPIC_INSTRUCTIONS,
-                    "Description": "",
-                }
-            )
-
-        task_rows: list[dict[str, str]] = []
-        project_row_sort_key = {
-            team_gid: index
-            for index, team_gid in enumerate(sorted_team_ids)
+    team_aggregates: dict[str, dict[str, object]] = {}
+    for team_gid, rows in team_groups.items():
+        project_count_total = len(rows)
+        project_count_active = sum(1 for row in rows if not bool(row["archived"]))
+        project_count_archived = sum(1 for row in rows if bool(row["archived"]))
+        project_task_count_total = sum(int(row["num_tasks"] or 0) for row in rows)
+        actual_task_count_values = [int(row["actual_task_count"]) for row in rows if row["actual_task_count"] is not None]
+        actual_task_count_total = sum(actual_task_count_values) if actual_task_count_values else None
+        team_name = next((row["team_name"] for row in rows if _clean_text(row["team_name"])), team_gid)
+        team_aggregates[team_gid] = {
+            "team_gid": team_gid,
+            "team_name": team_name,
+            "project_count_total": project_count_total,
+            "project_count_active": project_count_active,
+            "project_count_archived": project_count_archived,
+            "project_task_count_total": project_task_count_total,
+            "actual_task_count_total": actual_task_count_total,
+            "rows": rows,
         }
-        no_team_order = len(project_row_sort_key)
 
-        def _project_parent_sort_value(row: dict) -> int:
-            team_gid = _clean_text(row["team_gid"])
-            if not team_gid:
-                return no_team_order
-            return project_row_sort_key.get(team_gid, no_team_order)
+    epic_rows: list[dict[str, str]] = []
+    epic_task_ids: dict[str, str] = {}
+    task_id_counter = 1
 
-        for row in sorted(
-            [project_row for project_row in project_rows if project_row["actual_task_count"] is not None],
-            key=lambda row: (
-                _project_parent_sort_value(row),
-                (row["name"] or "").casefold(),
-                row["gid"],
-            ),
-        ):
-            team_gid = _clean_text(row["team_gid"])
-            parent_id = epic_task_ids.get(team_gid, no_team_task_id or "")
-            task_id = str(task_id_counter)
-            task_id_counter += 1
-            project_url = build_project_url(resolved_workspace_gid, row["gid"])
-            task_rows.append(
-                {
-                    "Issue Type": "Task",
-                    "Task ID": task_id,
-                    "Parent Id": parent_id or "",
-                    "Summary": row["name"] or "",
-                    "Team URL": build_team_url(team_gid),
-                    "Project URL": project_url,
-                    "Owner": _row_owner_from_project(row),
-                    "Owner Email": _row_owner_email_from_project(row),
-                    "Owner Atlassian ID": _row_owner_atlassian_id_from_project(row),
-                    "Owner Atlassian Status": _row_owner_atlassian_status_from_project(row),
-                    "Owner Source": "project_owner",
-                    "is_personal_project": _bool_to_text(row["is_personal_project"]),
-                    "Project Status": "Archived" if bool(row["archived"]) else "Active",
-                    "Labels": _label_for_last_active(row["last_task_updated_at"]),
-                    "Instructions": TASK_INSTRUCTIONS,
-                    "Description": _format_project_description(row, project_url),
-                }
-            )
+    sorted_team_ids = sorted(
+        team_aggregates.keys(),
+        key=lambda gid: (
+            (team_aggregates[gid]["team_name"] or "").casefold(),
+            gid,
+        ),
+    )
+    for team_gid in sorted_team_ids:
+        aggregate = team_aggregates[team_gid]
+        analysis = team_analysis.get(team_gid)
+        owner = analysis.effective_admin_name if analysis else ""
 
-        # Each entry pairs the CSV header with the internal row key. The owner
-        # source is emitted as a second "Labels" column because Atlassian merges
-        # repeated columns of the same name into multiple label values.
-        columns = [
-            ("Issue Type", "Issue Type"),
-            ("Task ID", "Task ID"),
-            ("Parent Id", "Parent Id"),
-            ("Summary", "Summary"),
-            ("Team URL", "Team URL"),
-            ("Project URL", "Project URL"),
-            ("Owner", "Owner"),
-            ("Owner Email", "Owner Email"),
-            ("Owner Atlassian ID", "Owner Atlassian ID"),
-            ("Owner Atlassian Status", "Owner Atlassian Status"),
-            ("is_personal_project", "is_personal_project"),
-            ("Project Status", "Project Status"),
-            ("Labels", "Owner Source"),
-            ("Labels", "Labels"),
-            ("Instructions", "Instructions"),
-            ("Description", "Description"),
-        ]
+        epic_task_id = str(task_id_counter)
+        task_id_counter += 1
+        epic_task_ids[team_gid] = epic_task_id
+        epic_rows.append(
+            {
+                "Issue Type": "Epic",
+                "Task ID": epic_task_id,
+                "Parent Id": "",
+                "Summary": aggregate["team_name"] or "",
+                "Team URL": build_team_url(team_gid),
+                "Project URL": "",
+                "Owner": owner,
+                "Owner Email": analysis.effective_admin_email if analysis else "",
+                "Owner Atlassian ID": analysis.effective_admin_atlassian_id if analysis else "",
+                "Owner Atlassian Status": analysis.effective_admin_atlassian_status if analysis else "",
+                "Owner Source": analysis.effective_admin_source if analysis else "",
+                "is_personal_project": "",
+                "Project Status": "",
+                "Labels": "",
+                "Instructions": EPIC_INSTRUCTIONS,
+                "Description": _format_team_description(
+                    {
+                        "team_gid": team_gid,
+                        "project_count_total": aggregate["project_count_total"],
+                        "project_count_active": aggregate["project_count_active"],
+                        "project_count_archived": aggregate["project_count_archived"],
+                        "project_task_count_total": aggregate["project_task_count_total"],
+                        "actual_task_count_total": aggregate["actual_task_count_total"],
+                    },
+                    analysis,
+                ),
+                "_kind": "team",
+                "_asana_gid": team_gid,
+            }
+        )
 
-        with output_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.writer(handle)
-            writer.writerow([header for header, _ in columns])
-            for row in epic_rows + task_rows:
-                writer.writerow([row.get(key, "") for _, key in columns])
+    no_team_task_id: Optional[str] = None
+    if no_team_projects:
+        no_team_task_id = str(task_id_counter)
+        task_id_counter += 1
+        epic_rows.append(
+            {
+                "Issue Type": "Epic",
+                "Task ID": no_team_task_id,
+                "Parent Id": "",
+                "Summary": "No Team",
+                "Team URL": "",
+                "Project URL": "",
+                "Owner": "",
+                "Owner Email": "",
+                "Owner Atlassian ID": "",
+                "Owner Atlassian Status": "",
+                "Owner Source": "",
+                "is_personal_project": "",
+                "Project Status": "",
+                "Labels": "",
+                "Instructions": EPIC_INSTRUCTIONS,
+                "Description": "",
+                "_kind": "no_team",
+                "_asana_gid": "",
+            }
+        )
 
-        logger.info("Exported %s epic row(s) and %s task row(s) to %s.", len(epic_rows), len(task_rows), output_path)
-        return output_path
+    task_rows: list[dict[str, str]] = []
+    project_row_sort_key = {
+        team_gid: index
+        for index, team_gid in enumerate(sorted_team_ids)
+    }
+    no_team_order = len(project_row_sort_key)
+
+    def _project_parent_sort_value(row: dict) -> int:
+        team_gid = _clean_text(row["team_gid"])
+        if not team_gid:
+            return no_team_order
+        return project_row_sort_key.get(team_gid, no_team_order)
+
+    for row in sorted(
+        [project_row for project_row in project_rows if project_row["actual_task_count"] is not None],
+        key=lambda row: (
+            _project_parent_sort_value(row),
+            (row["name"] or "").casefold(),
+            row["gid"],
+        ),
+    ):
+        team_gid = _clean_text(row["team_gid"])
+        parent_id = epic_task_ids.get(team_gid, no_team_task_id or "")
+        task_id = str(task_id_counter)
+        task_id_counter += 1
+        project_url = build_project_url(resolved_workspace_gid, row["gid"])
+        task_rows.append(
+            {
+                "Issue Type": "Task",
+                "Task ID": task_id,
+                "Parent Id": parent_id or "",
+                "Summary": row["name"] or "",
+                "Team URL": build_team_url(team_gid),
+                "Project URL": project_url,
+                "Owner": _row_owner_from_project(row),
+                "Owner Email": _row_owner_email_from_project(row),
+                "Owner Atlassian ID": _row_owner_atlassian_id_from_project(row),
+                "Owner Atlassian Status": _row_owner_atlassian_status_from_project(row),
+                "Owner Source": "project_owner",
+                "is_personal_project": _bool_to_text(row["is_personal_project"]),
+                "Project Status": "Archived" if bool(row["archived"]) else "Active",
+                "Labels": _label_for_last_active(row["last_task_updated_at"]),
+                "Instructions": TASK_INSTRUCTIONS,
+                "Description": _format_project_description(row, project_url),
+                "_kind": "project",
+                "_asana_gid": _clean_text(row["gid"]),
+                "_parent_kind": "team" if team_gid else "no_team",
+                "_parent_asana_gid": team_gid,
+            }
+        )
+
+    return epic_rows, task_rows
+
+
+# Each entry pairs the CSV header with the internal row key. The owner source is
+# emitted as a second "Labels" column because Atlassian merges repeated columns of
+# the same name into multiple label values.
+CSV_COLUMNS = [
+    ("Issue Type", "Issue Type"),
+    ("Task ID", "Task ID"),
+    ("Parent Id", "Parent Id"),
+    ("Summary", "Summary"),
+    ("Team URL", "Team URL"),
+    ("Project URL", "Project URL"),
+    ("Owner", "Owner"),
+    ("Owner Email", "Owner Email"),
+    ("Owner Atlassian ID", "Owner Atlassian ID"),
+    ("Owner Atlassian Status", "Owner Atlassian Status"),
+    ("is_personal_project", "is_personal_project"),
+    ("Project Status", "Project Status"),
+    ("Labels", "Owner Source"),
+    ("Labels", "Labels"),
+    ("Instructions", "Instructions"),
+    ("Description", "Description"),
+]
+
+
+def export_team_project_jira_csv(
+    database_path: str,
+    output_dir: Path,
+    filename: Optional[str] = None,
+    workspace_gid: Optional[str] = None,
+) -> Path:
+    database = Database(db_path=database_path)
+    output_dir = output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not filename:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        filename = f"team_project_jira_import_{timestamp}.csv"
+
+    output_path = output_dir / filename
+    logger.debug("Writing Jira team/project import export to %s", output_path)
+
+    with database.connect() as connection:
+        database.initialize(connection)
+        epic_rows, task_rows = build_team_project_rows(connection, workspace_gid)
+
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow([header for header, _ in CSV_COLUMNS])
+        for row in epic_rows + task_rows:
+            writer.writerow([row.get(key, "") for _, key in CSV_COLUMNS])
+
+    logger.info("Exported %s epic row(s) and %s task row(s) to %s.", len(epic_rows), len(task_rows), output_path)
+    return output_path
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:

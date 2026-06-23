@@ -420,6 +420,29 @@ Optional flags:
 - `--workspace-gid <gid>` to force the workspace used when building project URLs.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
+### Create Team/Project Jira Issues (Direct API)
+A direct alternative to the CSV import above: instead of generating a CSV for the Jira import wizard, this creates the same Team→Epic and Project→Task hierarchy by POSTing to the Jira Cloud REST API. It reuses the exact row-building logic of `export_team_project_jira_csv` (same owner resolution, descriptions, and `No Team` epic), then for each row resolves issue-type and custom-field IDs via `createmeta`, creates all Epics first, captures their real Jira keys, and links each Task to its team's Epic via `parent`. Standard fields map directly (`summary`; `description` as ADF; `assignee` by Atlassian accountId when the owner's account is active; `labels` from the owner source + last-active label, spaces stripped); the remaining columns (`Team URL`, `Project URL`, `Instructions`, `is_personal_project`, `Project Status`) map to Jira custom fields resolved by field name (override the column→field-name map with `--field-map`). Created issues are recorded in the `team_project_jira_mappings` table, so re-runs skip anything already created (no duplicates). Requires `ATLASSIAN_USERNAME`/`ATLASSIAN_TOKEN` in the resolved credentials.
+```bash
+# Preview the payloads without creating anything
+python3 -m scripts.create_team_project_jira_issues --jira-base-url https://example.atlassian.net --jira-project-key MIG --dry-run
+# Create issues (prompts for confirmation; use --yes to skip)
+python3 -m scripts.create_team_project_jira_issues --jira-base-url https://example.atlassian.net --jira-project-key MIG
+```
+Required flags:
+- `--jira-base-url <url>` for the Jira site (e.g., `https://example.atlassian.net`).
+- `--jira-project-key <KEY>` the target Jira project where Epics/Tasks are created.
+
+Optional flags:
+- `--epic-issue-type <name>` / `--task-issue-type <name>` issue-type names to resolve via `createmeta` (defaults `Epic` / `Task`).
+- `--field-map <path>` JSON object overriding column → Jira custom field name mappings.
+- `--workers <n>` concurrent workers for the task-creation pass (default `4`; epics are created sequentially first).
+- `--limit <n>` cap the number of issues created this run (epics counted first) for a cautious first pass; skips are not counted.
+- `--dry-run` resolve fields and print the JSON payloads without creating issues.
+- `--yes` skip the confirmation prompt.
+- `--database <path>`, `--workspace-gid <gid>`, `--output-dir <path>`, `--log-level <LEVEL>` as elsewhere.
+
+A run report CSV (`team_project_jira_create_<timestamp>.csv`) records each entry's `kind`, `asana_gid`, `summary`, resulting `jira_key`, and `status` (`created`, `skipped-existing`, `skipped-limit`, `dry-run`, or `error`).
+
 ### Import Jira Task Keys
 Persists Jira issue keys (after a Jira import) back to SQLite so future exports know which tasks already exist in Jira. Expects Jira export headers `Issue key` and `External issue ID` by default; override column names with `--jira-column` and/or `--task-column` if your export labels them differently (e.g., `Issue Key`, `Custom field (Asana Task ID)`). BOMs and surrounding whitespace in headers are ignored.
 ```bash
