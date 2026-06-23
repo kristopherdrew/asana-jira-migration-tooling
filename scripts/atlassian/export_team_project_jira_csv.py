@@ -239,8 +239,16 @@ def _clean_text(value: Optional[str]) -> str:
     return (value or "").strip()
 
 
-def _description_text(lines: list[tuple[str, str]]) -> str:
-    return "\n".join(f"{field}: {value}" for field, value in lines)
+def _sectioned_description_blocks(sections: list) -> list:
+    """Render labeled sections of key/value pairs into structured ADF blocks: a
+    level-3 heading per section followed by a bullet list with bold field names."""
+    blocks: list = []
+    for title, pairs in sections:
+        blocks.append(Heading(title, level=3))
+        blocks.append(
+            BulletList([[Run(f"{key}:", bold=True), f" {value}"] for key, value in pairs])
+        )
+    return blocks
 
 
 def _label_for_last_active(last_task_updated_at: Optional[str]) -> str:
@@ -250,28 +258,41 @@ def _label_for_last_active(last_task_updated_at: Optional[str]) -> str:
     return f"last_active_{parsed.year}"
 
 
-def _format_team_description(row: dict, analysis) -> str:
-    return _description_text(
-        [
-            ("project_count_total", _count_to_text(row["project_count_total"])),
-            ("project_count_active", _count_to_text(row["project_count_active"])),
-            ("project_count_archived", _count_to_text(row["project_count_archived"])),
-            ("actual_task_count_total", _count_to_text(row["actual_task_count_total"])),
-            ("first_admin_email", analysis.first_admin_email if analysis else ""),
-            ("additional_admin_emails", analysis.additional_admin_emails if analysis else ""),
-            ("effective_admin", analysis.effective_admin_name if analysis else ""),
-            ("effective_admin_email", analysis.effective_admin_email if analysis else ""),
-            ("effective_admin_source", analysis.effective_admin_source if analysis else ""),
-            ("project_owner", analysis.project_owner_name if analysis else ""),
-            ("project_owner_email", analysis.project_owner_email if analysis else ""),
-            ("project_owner_atlassian_status", analysis.project_owner_atlassian_status if analysis else ""),
-            ("project_owner_project_count", _count_to_text(analysis.project_owner_project_count if analysis else 0)),
-            ("task_creator", analysis.task_creator_name if analysis else ""),
-            ("task_creator_email", analysis.task_creator_email if analysis else ""),
-            ("task_creator_atlassian_status", analysis.task_creator_atlassian_status if analysis else ""),
-            ("task_creator_task_count", _count_to_text(analysis.task_creator_task_count if analysis else 0)),
-        ]
-    )
+def _build_team_description_blocks(row: dict, analysis) -> list:
+    """Build the Team->Epic description as structured ADF blocks: two sections
+    (Primary / Implied Details), each a level-3 heading followed by a bold-keyed
+    bullet list. The majority project owner across the team is labeled
+    ``majority_project_owner`` to distinguish it from a single project's owner."""
+    sections = [
+        (
+            "Primary Details",
+            [
+                ("first_admin_email", analysis.first_admin_email if analysis else ""),
+                ("additional_admin_emails", analysis.additional_admin_emails if analysis else ""),
+                ("project_count_total", _count_to_text(row["project_count_total"])),
+                ("project_count_active", _count_to_text(row["project_count_active"])),
+                ("project_count_archived", _count_to_text(row["project_count_archived"])),
+                ("actual_task_count_total", _count_to_text(row["actual_task_count_total"])),
+            ],
+        ),
+        (
+            "Implied Details",
+            [
+                ("effective_admin", analysis.effective_admin_name if analysis else ""),
+                ("effective_admin_email", analysis.effective_admin_email if analysis else ""),
+                ("effective_admin_source", analysis.effective_admin_source if analysis else ""),
+                ("majority_project_owner", analysis.project_owner_name if analysis else ""),
+                ("majority_project_owner_email", analysis.project_owner_email if analysis else ""),
+                ("majority_project_owner_atlassian_status", analysis.project_owner_atlassian_status if analysis else ""),
+                ("majority_project_owner_project_count", _count_to_text(analysis.project_owner_project_count if analysis else 0)),
+                ("task_creator", analysis.task_creator_name if analysis else ""),
+                ("task_creator_email", analysis.task_creator_email if analysis else ""),
+                ("task_creator_atlassian_status", analysis.task_creator_atlassian_status if analysis else ""),
+                ("task_creator_task_count", _count_to_text(analysis.task_creator_task_count if analysis else 0)),
+            ],
+        ),
+    ]
+    return _sectioned_description_blocks(sections)
 
 
 def _is_active_atlassian_status(status: Optional[str]) -> bool:
@@ -301,35 +322,50 @@ def _effective_owner_from_project(row: dict) -> tuple[str, str, str, str]:
     return ("", "", "", "")
 
 
-def _format_project_description(row: dict, project_url: str) -> str:
+def _build_project_description_blocks(row: dict) -> list:
+    """Build the Project->Task description as structured ADF blocks: three sections,
+    each a level-3 heading followed by a bullet list whose item keys are bold."""
     effective_owner_source, effective_owner_name, effective_owner_email, effective_owner_status = (
         _effective_owner_from_project(row)
     )
-    return _description_text(
-        [
-            ("project_url", project_url),
-            ("created_at", format_report_date(row["created_at"])),
-            ("completed", _bool_to_text(row["completed"])),
-            ("completed_at", format_report_date(row["completed_at"])),
-            ("num_incomplete_tasks", _count_to_text(row["num_incomplete_tasks"])),
-            ("num_completed_tasks", _count_to_text(row["num_completed_tasks"])),
-            ("last_task_created_at", format_report_date(row["last_task_created_at"])),
-            ("last_task_resolved_at", format_report_date(row["last_task_resolved_at"])),
-            ("last_task_updated_at", format_report_date(row["last_task_updated_at"])),
-            ("actual_task_count", _count_to_text(row["actual_task_count"])),
-            ("owner_name", _row_owner_from_project(row)),
-            ("owner_email", _clean_text(row["owner_email"])),
-            ("owner_atlassian_status", _clean_text(row["owner_atlassian_status"])),
-            ("effective_owner_source", effective_owner_source),
-            ("effective_owner_name", effective_owner_name),
-            ("effective_owner_email", effective_owner_email),
-            ("effective_owner_atlassian_status", effective_owner_status),
-            ("top_task_creator_name", _clean_text(row["top_task_creator_name"])),
-            ("top_task_creator_email", _clean_text(row["top_task_creator_email"])),
-            ("top_task_creator_atlassian_status", _clean_text(row["top_task_creator_atlassian_status"])),
-            ("top_task_creator_task_count", _count_to_text(row["top_task_creator_task_count"])),
-        ]
-    )
+    sections = [
+        (
+            "Primary Details",
+            [
+                ("actual_task_count", _count_to_text(row["actual_task_count"])),
+                ("owner_name", _row_owner_from_project(row)),
+                ("owner_email", _clean_text(row["owner_email"])),
+                ("owner_atlassian_status", _clean_text(row["owner_atlassian_status"])),
+                ("project_created_at", format_report_date(row["created_at"])),
+                ("project_completed", _bool_to_text(row["completed"])),
+                ("project_completed_at", format_report_date(row["completed_at"])),
+            ],
+        ),
+        (
+            "Secondary Details",
+            [
+                ("num_incomplete_tasks", _count_to_text(row["num_incomplete_tasks"])),
+                ("num_completed_tasks", _count_to_text(row["num_completed_tasks"])),
+                ("last_task_created_at", format_report_date(row["last_task_created_at"])),
+                ("last_task_resolved_at", format_report_date(row["last_task_resolved_at"])),
+                ("last_task_updated_at", format_report_date(row["last_task_updated_at"])),
+            ],
+        ),
+        (
+            "Implied Details",
+            [
+                ("effective_owner_source", effective_owner_source),
+                ("effective_owner_name", effective_owner_name),
+                ("effective_owner_email", effective_owner_email),
+                ("effective_owner_atlassian_status", effective_owner_status),
+                ("top_task_creator_name", _clean_text(row["top_task_creator_name"])),
+                ("top_task_creator_email", _clean_text(row["top_task_creator_email"])),
+                ("top_task_creator_atlassian_status", _clean_text(row["top_task_creator_atlassian_status"])),
+                ("top_task_creator_task_count", _count_to_text(row["top_task_creator_task_count"])),
+            ],
+        ),
+    ]
+    return _sectioned_description_blocks(sections)
 
 
 def _row_owner_from_project(row: dict) -> str:
@@ -506,6 +542,17 @@ def build_team_project_rows(
         epic_task_id = str(task_id_counter)
         task_id_counter += 1
         epic_task_ids[team_gid] = epic_task_id
+        team_description_blocks = _build_team_description_blocks(
+            {
+                "team_gid": team_gid,
+                "project_count_total": aggregate["project_count_total"],
+                "project_count_active": aggregate["project_count_active"],
+                "project_count_archived": aggregate["project_count_archived"],
+                "project_task_count_total": aggregate["project_task_count_total"],
+                "actual_task_count_total": aggregate["actual_task_count_total"],
+            },
+            analysis,
+        )
         epic_rows.append(
             {
                 "Issue Type": "Epic",
@@ -523,20 +570,13 @@ def build_team_project_rows(
                 "Project Status": "",
                 "Labels": "",
                 "Instructions": EPIC_INSTRUCTIONS,
-                "Description": _format_team_description(
-                    {
-                        "team_gid": team_gid,
-                        "project_count_total": aggregate["project_count_total"],
-                        "project_count_active": aggregate["project_count_active"],
-                        "project_count_archived": aggregate["project_count_archived"],
-                        "project_task_count_total": aggregate["project_task_count_total"],
-                        "actual_task_count_total": aggregate["actual_task_count_total"],
-                    },
-                    analysis,
-                ),
+                "Description": render_blocks_text(team_description_blocks),
                 "_kind": "team",
                 "_asana_gid": team_gid,
-                "_adf_overrides": {"Instructions": EPIC_INSTRUCTIONS_ADF},
+                "_adf_overrides": {
+                    "Instructions": EPIC_INSTRUCTIONS_ADF,
+                    "Description": render_blocks_adf(team_description_blocks),
+                },
             }
         )
 
@@ -599,6 +639,7 @@ def build_team_project_rows(
         instructions_adf = (
             PERSONAL_TASK_INSTRUCTIONS_ADF if is_personal else TASK_INSTRUCTIONS_ADF
         )
+        description_blocks = _build_project_description_blocks(row)
         task_rows.append(
             {
                 "Issue Type": "Task",
@@ -616,12 +657,15 @@ def build_team_project_rows(
                 "Project Status": "Archived" if bool(row["archived"]) else "Active",
                 "Labels": _label_for_last_active(row["last_task_updated_at"]),
                 "Instructions": instructions,
-                "Description": _format_project_description(row, project_url),
+                "Description": render_blocks_text(description_blocks),
                 "_kind": "project",
                 "_asana_gid": _clean_text(row["gid"]),
                 "_parent_kind": "team" if team_gid else "no_team",
                 "_parent_asana_gid": team_gid,
-                "_adf_overrides": {"Instructions": instructions_adf},
+                "_adf_overrides": {
+                    "Instructions": instructions_adf,
+                    "Description": render_blocks_adf(description_blocks),
+                },
             }
         )
 

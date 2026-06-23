@@ -140,8 +140,14 @@ def build_issue_payload(
     }
 
     description = (row.get("Description") or "").strip()
-    if description and "description" in available_ids:
-        fields["description"] = text_to_adf(description)
+    if "description" in available_ids:
+        # Prefer a pre-built rich ADF document (Task rows) and fall back to converting
+        # the plain-text description (Epic rows have no override).
+        override = (row.get("_adf_overrides") or {}).get("Description")
+        if override is not None:
+            fields["description"] = override
+        elif description:
+            fields["description"] = text_to_adf(description)
 
     account_id = (row.get("Owner Atlassian ID") or "").strip()
     if account_id and "assignee" in available_ids and _is_active_status(row.get("Owner Atlassian Status")):
