@@ -5,8 +5,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
 from src.lib.database import Database
+from scripts.atlassian import create_team_project_jira_issues as creator
 from scripts.atlassian.create_team_project_jira_issues import (
     build_issue_payload,
     create_team_project_jira_issues,
@@ -301,6 +303,44 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
             sync_time,
         )
 
+    def _seed_second_team(self) -> None:
+        """Add a second team/project/task so single-team filtering is exercised."""
+        sync_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.database.upsert_team(self.connection, {"gid": "team_b", "name": "Beta Team"}, sync_time)
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_2",
+                "name": "Beta Project",
+                "archived": False,
+                "owner": {"gid": "owner_a", "name": "Olly"},
+                "team": {"gid": "team_b", "name": "Beta Team"},
+                "privacy_setting": "private",
+                "created_at": "2025-01-14T09:00:00Z",
+                "completed": False,
+                "completed_at": None,
+                "is_personal_project": False,
+                "num_tasks": 1,
+                "num_incomplete_tasks": 1,
+                "num_completed_tasks": 0,
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_2",
+                "name": "Task 2",
+                "created_at": "2025-02-01T09:00:00Z",
+                "modified_at": "2025-03-05T09:00:00Z",
+                "completed_at": None,
+                "created_by": {"gid": "admin_a", "name": "Alice"},
+                "memberships": [{"project": {"gid": "proj_2", "name": "Beta Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+
     def _run(self, client, **kwargs):
         # Release the write lock so the script's own connection can run DDL.
         self.connection.commit()
@@ -355,3 +395,33 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
         mappings = self.database.load_team_project_jira_mappings(self.connection)
         self.assertIn(("team", "team_a"), mappings)
         self.assertNotIn(("project", "proj_1"), mappings)
+
+    def test_team_gid_restricts_to_single_team(self) -> None:
+        self._seed_second_team()
+        client = FakeJiraClient()
+        self._run(client, team_gid="team_a")
+        # Only Alpha Team's epic + its single project task; Beta is excluded.
+        self.assertEqual(len(client.created), 2)
+        mappings = self.database.load_team_project_jira_mappings(self.connection)
+        self.assertEqual(set(mappings), {("team", "team_a"), ("project", "proj_1")})
+
+    def test_unknown_team_gid_raises(self) -> None:
+        with self.assertRaises(SystemExit):
+            self._run(FakeJiraClient(), team_gid="team_missing")
+
+    def test_pick_team_uses_interactive_selection(self) -> None:
+        self._seed_second_team()
+        client = FakeJiraClient()
+        with patch.object(creator, "search_team", return_value=("team_b", "Beta Team")) as picker:
+            self._run(client, pick_team=True)
+        picker.assert_called_once()
+        self.assertEqual(len(client.created), 2)
+        mappings = self.database.load_team_project_jira_mappings(self.connection)
+        self.assertEqual(set(mappings), {("team", "team_b"), ("project", "proj_2")})
+
+    def test_pick_team_quit_aborts(self) -> None:
+        client = FakeJiraClient()
+        with patch.object(creator, "search_team", return_value=None):
+            with self.assertRaises(SystemExit):
+                self._run(client, pick_team=True)
+        self.assertEqual(client.created, [])
