@@ -108,6 +108,16 @@ def _is_active_status(status: Optional[str]) -> bool:
     return (status or "").strip().casefold() == "active"
 
 
+def _is_rich_text_schema(schema: Dict[str, object]) -> bool:
+    """True for Jira fields that expect an ADF document over the v3 REST API: the
+    system rich-text fields (createmeta ``type`` ``doc``) and "Paragraph" custom
+    fields, which createmeta reports as ``type`` ``string`` with a ``:textarea``
+    custom type even though the v3 API rejects a plain string for them."""
+    if str(schema.get("type")) == "doc":
+        return True
+    return str(schema.get("custom", "")).endswith(":textarea")
+
+
 def format_custom_value(schema: Dict[str, object], value: str) -> object:
     """Format a string value for a Jira custom field based on its createmeta schema."""
     field_type = str(schema.get("type", "string"))
@@ -123,7 +133,7 @@ def format_custom_value(schema: Dict[str, object], value: str) -> object:
             return float(value) if "." in value else int(value)
         except ValueError:
             return value
-    if field_type == "doc":
+    if _is_rich_text_schema(schema):
         return text_to_adf(value)
     return value
 
@@ -184,7 +194,7 @@ def build_issue_payload(
         # Prefer a pre-built rich ADF document when the Jira field is rich-text;
         # otherwise format the plain string per the field's schema type.
         override = adf_overrides.get(column)
-        if override is not None and str(schema.get("type")) == "doc":
+        if override is not None and _is_rich_text_schema(schema):
             fields[field_id] = override
         else:
             fields[field_id] = format_custom_value(schema, value)
