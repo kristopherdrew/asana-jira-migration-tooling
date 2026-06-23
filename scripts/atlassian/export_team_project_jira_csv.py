@@ -519,7 +519,7 @@ def build_team_project_rows(
                 "Owner Atlassian ID": analysis.effective_admin_atlassian_id if analysis else "",
                 "Owner Atlassian Status": analysis.effective_admin_atlassian_status if analysis else "",
                 "Owner Source": analysis.effective_admin_source if analysis else "",
-                "is_personal_project": "",
+                "Project Type": "",
                 "Project Status": "",
                 "Labels": "",
                 "Instructions": EPIC_INSTRUCTIONS,
@@ -557,7 +557,7 @@ def build_team_project_rows(
                 "Owner Atlassian ID": "",
                 "Owner Atlassian Status": "",
                 "Owner Source": "",
-                "is_personal_project": "",
+                "Project Type": "",
                 "Project Status": "",
                 "Labels": "",
                 "Instructions": EPIC_INSTRUCTIONS,
@@ -612,7 +612,7 @@ def build_team_project_rows(
                 "Owner Atlassian ID": _row_owner_atlassian_id_from_project(row),
                 "Owner Atlassian Status": _row_owner_atlassian_status_from_project(row),
                 "Owner Source": "project_owner",
-                "is_personal_project": _bool_to_text(row["is_personal_project"]),
+                "Project Type": "personal_project" if is_personal else "team_project",
                 "Project Status": "Archived" if bool(row["archived"]) else "Active",
                 "Labels": _label_for_last_active(row["last_task_updated_at"]),
                 "Instructions": instructions,
@@ -628,9 +628,10 @@ def build_team_project_rows(
     return epic_rows, task_rows
 
 
-# Each entry pairs the CSV header with the internal row key. The owner source is
-# emitted as a second "Labels" column because Atlassian merges repeated columns of
-# the same name into multiple label values.
+# Each entry pairs the CSV header with the internal row key. Several keys are emitted
+# under a repeated "Labels" header because Atlassian merges repeated columns of the
+# same name into multiple label values: the owner source, the last-active year, and
+# the project type (personal_project / team_project).
 CSV_COLUMNS = [
     ("Issue Type", "Issue Type"),
     ("Task ID", "Task ID"),
@@ -642,10 +643,10 @@ CSV_COLUMNS = [
     ("Owner Email", "Owner Email"),
     ("Owner Atlassian ID", "Owner Atlassian ID"),
     ("Owner Atlassian Status", "Owner Atlassian Status"),
-    ("is_personal_project", "is_personal_project"),
     ("Project Status", "Project Status"),
     ("Labels", "Owner Source"),
     ("Labels", "Labels"),
+    ("Labels", "Project Type"),
     ("Instructions", "Instructions"),
     ("Description", "Description"),
 ]
