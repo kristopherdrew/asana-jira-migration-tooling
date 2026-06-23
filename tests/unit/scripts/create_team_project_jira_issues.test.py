@@ -59,6 +59,13 @@ class FormatCustomValueTest(TestCase):
         self.assertEqual(format_custom_value({"type": "array", "items": "string"}, "a"), ["a"])
         self.assertEqual(format_custom_value({"type": "number"}, "10"), 10)
         self.assertEqual(format_custom_value({"type": "doc"}, "hi")["type"], "doc")
+        # A "Paragraph" custom field is reported as type string + :textarea custom,
+        # but the v3 API needs ADF, so it is converted to a doc.
+        textarea = {"type": "string", "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea"}
+        self.assertEqual(format_custom_value(textarea, "hi")["type"], "doc")
+        # A plain URL/text string field stays a string.
+        url = {"type": "string", "custom": "com.atlassian.jira.plugin.system.customfieldtypes:url"}
+        self.assertEqual(format_custom_value(url, "http://x"), "http://x")
 
 
 class ResolveIssueTypeTest(TestCase):
@@ -171,6 +178,25 @@ class BuildIssuePayloadTest(TestCase):
             project_key="MIG",
             issue_type_id="10000",
             field_defs=EPIC_FIELDS,  # Instructions -> customfield_10003, schema doc
+            custom_field_map=load_field_map(None),
+        )
+        self.assertEqual(payload["fields"]["customfield_10003"], override)
+
+    def test_instructions_uses_adf_override_for_textarea_field(self) -> None:
+        # A real "Paragraph" field: createmeta type string + :textarea custom. The
+        # pre-built ADF override should still be used (the v3 API needs ADF here).
+        override = {"type": "doc", "version": 1, "content": [{"type": "heading", "attrs": {"level": 2}, "content": []}]}
+        textarea_fields = dict(EPIC_FIELDS)
+        textarea_fields["Testing Instructions"] = {
+            "fieldId": "customfield_10003",
+            "schema": {"type": "string", "custom": "com.atlassian.jira.plugin.system.customfieldtypes:textarea"},
+        }
+        row = self._epic_row(**{"Instructions": "plain text fallback", "_adf_overrides": {"Instructions": override}})
+        payload = build_issue_payload(
+            row,
+            project_key="MIG",
+            issue_type_id="10000",
+            field_defs=textarea_fields,
             custom_field_map=load_field_map(None),
         )
         self.assertEqual(payload["fields"]["customfield_10003"], override)
