@@ -520,6 +520,17 @@ CREATE TABLE IF NOT EXISTS exported_tasks (
 );
 """
 
+TEAM_PROJECT_JIRA_MAPPINGS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS team_project_jira_mappings (
+    asana_gid TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    jira_key TEXT NOT NULL,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (asana_gid, kind),
+    UNIQUE (jira_key)
+);
+"""
+
 
 class Database:
     """Lightweight wrapper around sqlite3 for schema management and inserts."""
@@ -560,6 +571,7 @@ class Database:
         connection.executescript(USER_ATLASSIAN_ACCOUNTS_SCHEMA)
         connection.executescript(PERSONAL_TASK_CURSORS_SCHEMA)
         connection.executescript(EXPORTED_TASKS_SCHEMA)
+        connection.executescript(TEAM_PROJECT_JIRA_MAPPINGS_SCHEMA)
         connection.commit()
         self._ensure_column(connection, "tasks", "hierarchy_depth", "INTEGER")
         self._ensure_column(connection, "tasks", "is_personal", "INTEGER DEFAULT 0")
@@ -1986,6 +1998,82 @@ class Database:
         deleted = connection.execute("DELETE FROM jira_project_mappings").rowcount
         connection.commit()
         return deleted
+
+    def upsert_team_project_jira_mappings(
+        self,
+        connection: sqlite3.Connection,
+        mappings: Iterable[Dict[str, str]],
+        synced_at: datetime,
+    ) -> int:
+        """Persist Asana team/project -> Jira issue key mappings.
+
+        Each mapping requires ``kind`` ('team', 'project', or 'no_team') and a
+        ``jira_key``. The ``asana_gid`` is the team or project GID (empty for the
+        synthetic 'no_team' epic). Raises ``ValueError`` when a Jira key is already
+        mapped to a different Asana entity.
+        """
+        rows = []
+        jira_keys: List[str] = []
+        seen_keys: Set[Tuple[str, str]] = set()
+        stamp = synced_at.isoformat()
+        for mapping in mappings:
+            kind = (mapping.get("kind") or "").strip()
+            asana_gid = (mapping.get("asana_gid") or "").strip()
+            jira_key = (mapping.get("jira_key") or "").strip()
+            if not kind or not jira_key:
+                continue
+            key = (asana_gid, kind)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            rows.append((asana_gid, kind, jira_key, stamp))
+            jira_keys.append(jira_key)
+
+        if jira_keys:
+            placeholders = ",".join("?" for _ in jira_keys)
+            conflicts = connection.execute(
+                f"""
+                SELECT jira_key, asana_gid, kind
+                FROM team_project_jira_mappings
+                WHERE jira_key IN ({placeholders})
+                """,
+                tuple(jira_keys),
+            ).fetchall()
+            conflict_map = {row["jira_key"]: (row["asana_gid"], row["kind"]) for row in conflicts}
+            for asana_gid, kind, jira_key, _ in rows:
+                existing = conflict_map.get(jira_key)
+                if existing and existing != (asana_gid, kind):
+                    raise ValueError(
+                        "Jira key '%s' already mapped to %s %s"
+                        % (jira_key, existing[1], existing[0])
+                    )
+
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO team_project_jira_mappings (asana_gid, kind, jira_key, synced_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(asana_gid, kind) DO UPDATE SET
+                    jira_key=excluded.jira_key,
+                    synced_at=excluded.synced_at
+                """,
+                rows,
+            )
+        connection.commit()
+        return len(rows)
+
+    def load_team_project_jira_mappings(
+        self, connection: sqlite3.Connection
+    ) -> Dict[Tuple[str, str], str]:
+        """Return existing mappings keyed by ``(kind, asana_gid)`` -> jira_key."""
+        rows = connection.execute(
+            "SELECT asana_gid, kind, jira_key FROM team_project_jira_mappings"
+        ).fetchall()
+        return {
+            (row["kind"], row["asana_gid"] or ""): row["jira_key"]
+            for row in rows
+            if row["kind"] and row["jira_key"]
+        }
 
     def replace_task_comments(
         self,
