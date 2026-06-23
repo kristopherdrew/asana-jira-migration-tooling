@@ -185,6 +185,23 @@ class BuildIssuePayloadTest(TestCase):
         )
         self.assertEqual(payload["fields"]["customfield_10003"], "plain text")
 
+    def test_description_uses_adf_override_when_present(self) -> None:
+        override = {"type": "doc", "version": 1, "content": [{"type": "heading", "attrs": {"level": 3}, "content": []}]}
+        row = {
+            "Summary": "Proj",
+            "Owner Source": "project_owner",
+            "Description": "plain text fallback",
+            "_adf_overrides": {"Description": override},
+        }
+        payload = build_issue_payload(
+            row,
+            project_key="MIG",
+            issue_type_id="10001",
+            field_defs=TASK_FIELDS,
+            custom_field_map=load_field_map(None),
+        )
+        self.assertEqual(payload["fields"]["description"], override)
+
     def test_missing_custom_field_is_skipped(self) -> None:
         fields_without_team_url = {k: v for k, v in EPIC_FIELDS.items() if k != "Team URL"}
         payload = build_issue_payload(

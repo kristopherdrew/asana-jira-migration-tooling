@@ -27,6 +27,9 @@ def _description_to_map(description: str) -> dict[str, str]:
             value = value.lstrip()
         else:
             continue
+        # Bulleted descriptions prefix each key with "  • "; strip it so callers can
+        # look up the bare field name. Section-header lines have no colon and are skipped.
+        key = key.strip().lstrip("•").strip()
         result[key] = value
     return result
 
@@ -396,6 +399,8 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_epic["Team URL"], "https://app.asana.com/0/team_a/")
         self.assertEqual(alpha_epic["Project URL"], "")
         self.assertEqual(alpha_epic["Instructions"], EPIC_INSTRUCTIONS)
+        self.assertIn("Primary Details", alpha_epic["Description"])
+        self.assertIn("Implied Details", alpha_epic["Description"])
         alpha_description = _description_to_map(alpha_epic["Description"])
         self.assertNotIn("team_url", alpha_description)
         self.assertEqual(alpha_description["project_count_total"], "3")
@@ -411,10 +416,10 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertNotIn("effective_admin_atlassian_id", alpha_description)
         self.assertNotIn("effective_admin_atlassian_email", alpha_description)
         self.assertEqual(alpha_description["effective_admin_source"], "team_admin")
-        self.assertEqual(alpha_description["project_owner"], "Alpha Owner")
-        self.assertNotIn("project_owner_atlassian_id", alpha_description)
-        self.assertNotIn("project_owner_atlassian_email", alpha_description)
-        self.assertEqual(alpha_description["project_owner_project_count"], "2")
+        self.assertEqual(alpha_description["majority_project_owner"], "Alpha Owner")
+        self.assertNotIn("majority_project_owner_atlassian_id", alpha_description)
+        self.assertNotIn("majority_project_owner_atlassian_email", alpha_description)
+        self.assertEqual(alpha_description["majority_project_owner_project_count"], "2")
         self.assertNotIn("is_personal_project", alpha_description)
 
         beta_epic = rows[1]
@@ -426,8 +431,8 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         beta_description = _description_to_map(beta_epic["Description"])
         self.assertEqual(beta_description["effective_admin"], "Alpha Owner")
         self.assertEqual(beta_description["effective_admin_source"], "project_owner")
-        self.assertEqual(beta_description["project_owner"], "Alpha Owner")
-        self.assertEqual(beta_description["project_owner_project_count"], "1")
+        self.assertEqual(beta_description["majority_project_owner"], "Alpha Owner")
+        self.assertEqual(beta_description["majority_project_owner_project_count"], "1")
         self.assertEqual(beta_description["task_creator"], "")
 
         no_team_epic = rows[2]
@@ -451,14 +456,18 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_task["Team URL"], "https://app.asana.com/0/team_a/")
         self.assertEqual(alpha_task["Project URL"], "https://app.asana.com/1/ws_1/project/proj_a1")
         self.assertEqual(alpha_task["Instructions"], TASK_INSTRUCTIONS)
+        # The three section headers introduce the bulleted detail groups.
+        self.assertIn("Primary Details", alpha_task["Description"])
+        self.assertIn("Secondary Details", alpha_task["Description"])
+        self.assertIn("Implied Details", alpha_task["Description"])
         alpha_task_description = _description_to_map(alpha_task["Description"])
-        self.assertEqual(alpha_task_description["project_url"], "https://app.asana.com/1/ws_1/project/proj_a1")
+        self.assertNotIn("project_url", alpha_task_description)
         self.assertNotIn("team_gid", alpha_task_description)
         self.assertNotIn("team_name", alpha_task_description)
         self.assertNotIn("team_url", alpha_task_description)
         self.assertNotIn("privacy_setting", alpha_task_description)
-        self.assertEqual(alpha_task_description["created_at"], "2025-01-14")
-        self.assertEqual(alpha_task_description["completed"], "false")
+        self.assertEqual(alpha_task_description["project_created_at"], "2025-01-14")
+        self.assertEqual(alpha_task_description["project_completed"], "false")
         self.assertNotIn("is_personal_project", alpha_task_description)
         self.assertNotIn("num_tasks", alpha_task_description)
         self.assertEqual(alpha_task_description["actual_task_count"], "2")
@@ -502,7 +511,7 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertNotIn("team_gid", loose_description)
         self.assertNotIn("team_name", loose_description)
         self.assertNotIn("team_url", loose_description)
-        self.assertEqual(loose_description["project_url"], "https://app.asana.com/1/ws_1/project/proj_nt")
+        self.assertNotIn("project_url", loose_description)
         self.assertEqual(loose_description["owner_name"], "Display Owner")
         self.assertEqual(loose_description["owner_atlassian_status"], "")
         self.assertEqual(loose_description["effective_owner_source"], "")
@@ -837,8 +846,8 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(delta_epic["Owner Email"], "creator@example.com")
         self.assertEqual(owner_source_by_summary["Delta Team"], "task_creator")
         delta_description = _description_to_map(delta_epic["Description"])
-        self.assertEqual(delta_description["project_owner"], "Inactive Owner")
-        self.assertEqual(delta_description["project_owner_atlassian_status"], "deactivated")
+        self.assertEqual(delta_description["majority_project_owner"], "Inactive Owner")
+        self.assertEqual(delta_description["majority_project_owner_atlassian_status"], "deactivated")
         self.assertEqual(delta_description["task_creator"], "Active Creator")
         self.assertEqual(delta_description["effective_admin_source"], "task_creator")
 
