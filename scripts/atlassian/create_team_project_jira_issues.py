@@ -29,6 +29,7 @@ from src.lib.config import Credentials, load_credentials
 from src.lib.database import Database
 from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.team_picker import search_team
 from scripts.atlassian.export_team_project_jira_csv import build_team_project_rows
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,9 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--epic-issue-type", default="Epic", help="Issue type name for team epics (default: Epic).")
     parser.add_argument("--task-issue-type", default="Task", help="Issue type name for project tasks (default: Task).")
     parser.add_argument("--field-map", help="Optional JSON file overriding column -> Jira custom field name mappings.")
+    team_group = parser.add_mutually_exclusive_group()
+    team_group.add_argument("--team-gid", help="Restrict creation to a single Asana team by GID (its Epic plus that team's project Tasks).")
+    team_group.add_argument("--pick-team", action="store_true", help="Interactively search for a team by name and restrict creation to the selected team.")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Concurrent workers for task creation (default: {DEFAULT_WORKERS}).")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help=f"Directory for the run report CSV (default: {DEFAULT_OUTPUT_DIR}/).")
     parser.add_argument("--limit", type=int, help="Cap the number of issues created this run (epics counted first). Skips are not counted.")
@@ -201,6 +205,20 @@ def _resolve_missing_field_warnings(
             )
 
 
+def _filter_rows_to_team(
+    epic_rows: List[Dict[str, str]],
+    task_rows: List[Dict[str, str]],
+    team_gid: str,
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Restrict rows to a single team: its Epic plus that team's project Tasks.
+
+    The synthetic ``No Team`` epic and its orphan-project tasks are excluded; only
+    real teams are addressable by GID (and selectable via the interactive picker)."""
+    epics = [r for r in epic_rows if r.get("_kind") == "team" and r.get("_asana_gid") == team_gid]
+    tasks = [r for r in task_rows if r.get("_parent_kind") == "team" and r.get("_parent_asana_gid") == team_gid]
+    return epics, tasks
+
+
 def write_report(rows: List[Dict[str, str]], output_path: Path) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", newline="", encoding="utf-8") as handle:
@@ -224,6 +242,8 @@ def create_team_project_jira_issues(
     limit: Optional[int] = None,
     dry_run: bool = False,
     assume_yes: bool = False,
+    team_gid: Optional[str] = None,
+    pick_team: bool = False,
     client: Optional[JiraClient] = None,
 ) -> Path:
     credentials = load_credentials()
@@ -235,6 +255,24 @@ def create_team_project_jira_issues(
         database.initialize(connection)
         epic_rows, task_rows = build_team_project_rows(connection, workspace_gid)
         existing = database.load_team_project_jira_mappings(connection)
+
+        selected_team_gid = team_gid
+        if pick_team:
+            selection = search_team(connection)
+            if selection is None:
+                raise SystemExit("No team selected; nothing to create.")
+            selected_team_gid = selection[0]
+
+        if selected_team_gid:
+            epic_rows, task_rows = _filter_rows_to_team(epic_rows, task_rows, selected_team_gid)
+            if not epic_rows:
+                raise SystemExit(f"No migratable team found with GID '{selected_team_gid}'.")
+            logger.info(
+                "Restricting creation to team '%s' (%s): 1 epic and %s task(s).",
+                epic_rows[0].get("Summary", ""),
+                selected_team_gid,
+                len(task_rows),
+            )
 
         if client is None:
             client = JiraClient(
@@ -426,6 +464,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             limit=args.limit,
             dry_run=args.dry_run,
             assume_yes=args.yes,
+            team_gid=args.team_gid,
+            pick_team=args.pick_team,
         )
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(str(exc)) from exc

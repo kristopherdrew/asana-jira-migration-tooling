@@ -427,6 +427,8 @@ A direct alternative to the CSV import above: instead of generating a CSV for th
 python3 -m scripts.create_team_project_jira_issues --jira-base-url https://example.atlassian.net --jira-project-key MIG --dry-run
 # Create issues (prompts for confirmation; use --yes to skip)
 python3 -m scripts.create_team_project_jira_issues --jira-base-url https://example.atlassian.net --jira-project-key MIG
+# Create issues for a single team only (interactively search for the team by name)
+python3 -m scripts.create_team_project_jira_issues --jira-base-url https://example.atlassian.net --jira-project-key MIG --pick-team
 ```
 Required flags:
 - `--jira-base-url <url>` for the Jira site (e.g., `https://example.atlassian.net`).
@@ -437,6 +439,8 @@ Optional flags:
 - `--field-map <path>` JSON object overriding column → Jira custom field name mappings.
 - `--workers <n>` concurrent workers for the task-creation pass (default `4`; epics are created sequentially first).
 - `--limit <n>` cap the number of issues created this run (epics counted first) for a cautious first pass; skips are not counted.
+- `--team-gid <gid>` restrict the run to a single team — its Epic plus that team's project Tasks (the synthetic `No Team` epic is excluded). Mutually exclusive with `--pick-team`.
+- `--pick-team` launch the interactive picker to search teams by name and create issues only for the selected team.
 - `--dry-run` resolve fields and print the JSON payloads without creating issues.
 - `--yes` skip the confirmation prompt.
 - `--database <path>`, `--workspace-gid <gid>`, `--output-dir <path>`, `--log-level <LEVEL>` as elsewhere.
