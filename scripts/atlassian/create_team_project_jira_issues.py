@@ -45,7 +45,6 @@ DEFAULT_FIELD_MAP: Dict[str, str] = {
     "Team URL": "Team URL",
     "Project URL": "Project URL",
     "Instructions": "Instructions",
-    "is_personal_project": "is_personal_project",
     "Project Status": "Project Status",
 }
 
@@ -150,7 +149,7 @@ def build_issue_payload(
 
     if "labels" in available_ids:
         labels = []
-        for raw in (row.get("Owner Source"), row.get("Labels")):
+        for raw in (row.get("Owner Source"), row.get("Labels"), row.get("Project Type")):
             token = (raw or "").strip()
             if token:
                 labels.append("_".join(token.split()))

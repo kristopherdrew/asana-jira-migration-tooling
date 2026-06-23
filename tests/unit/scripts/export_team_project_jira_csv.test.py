@@ -355,16 +355,20 @@ class ExportTeamProjectJiraCsvTest(TestCase):
             raw_rows = list(csv.reader(handle))
 
         header = raw_rows[0]
-        # Atlassian receives the owner source and the last-active label as two
-        # separate columns that both share the "Labels" header.
-        self.assertEqual(header.count("Labels"), 2)
+        # Atlassian receives the owner source, the last-active label, and the project
+        # type as three separate columns that all share the "Labels" header.
+        self.assertEqual(header.count("Labels"), 3)
         # Instructions sits immediately before Description.
         self.assertEqual(header.index("Instructions"), header.index("Description") - 1)
-        owner_source_idx, last_active_idx = [i for i, name in enumerate(header) if name == "Labels"]
+        owner_source_idx, last_active_idx, project_type_idx = [
+            i for i, name in enumerate(header) if name == "Labels"
+        ]
         # dict(zip(...)) collapses the duplicate "Labels" header to the last
-        # (last-active) column, matching the dedicated index lookups below.
+        # (project-type) column, matching the dedicated index lookups below.
         rows = [dict(zip(header, values)) for values in raw_rows[1:]]
         owner_source_labels = [values[owner_source_idx] for values in raw_rows[1:]]
+        last_active_labels = [values[last_active_idx] for values in raw_rows[1:]]
+        project_type_labels = [values[project_type_idx] for values in raw_rows[1:]]
 
         self.assertEqual([row["Issue Type"] for row in rows], ["Epic", "Epic", "Epic", "Task", "Task", "Task", "Task", "Task"])
         self.assertEqual([row["Task ID"] for row in rows], ["1", "2", "3", "4", "5", "6", "7", "8"])
@@ -385,10 +389,10 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_epic["Owner Atlassian ID"], "atl-admin-a")
         self.assertEqual(alpha_epic["Owner Atlassian Status"], "active")
         self.assertEqual(owner_source_labels[0], "team_admin")
-        self.assertEqual(alpha_epic["is_personal_project"], "")
+        self.assertEqual(project_type_labels[0], "")
         self.assertEqual(alpha_epic["Parent Id"], "")
         self.assertEqual(alpha_epic["Project Status"], "")
-        self.assertEqual(alpha_epic["Labels"], "")
+        self.assertEqual(last_active_labels[0], "")
         self.assertEqual(alpha_epic["Team URL"], "https://app.asana.com/0/team_a/")
         self.assertEqual(alpha_epic["Project URL"], "")
         self.assertEqual(alpha_epic["Instructions"], EPIC_INSTRUCTIONS)
@@ -418,7 +422,7 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(beta_epic["Owner Email"], "alpha@example.com")
         self.assertEqual(beta_epic["Owner Atlassian ID"], "atl-owner-alpha")
         self.assertEqual(owner_source_labels[1], "project_owner")
-        self.assertEqual(beta_epic["is_personal_project"], "")
+        self.assertEqual(project_type_labels[1], "")
         beta_description = _description_to_map(beta_epic["Description"])
         self.assertEqual(beta_description["effective_admin"], "Alpha Owner")
         self.assertEqual(beta_description["effective_admin_source"], "project_owner")
@@ -441,9 +445,9 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(alpha_task["Owner Atlassian ID"], "atl-owner-alpha")
         self.assertEqual(alpha_task["Owner Atlassian Status"], "active")
         self.assertEqual(owner_source_labels[3], "project_owner")
-        self.assertEqual(alpha_task["is_personal_project"], "false")
+        self.assertEqual(project_type_labels[3], "team_project")
         self.assertEqual(alpha_task["Project Status"], "Active")
-        self.assertEqual(alpha_task["Labels"], "last_active_2025")
+        self.assertEqual(last_active_labels[3], "last_active_2025")
         self.assertEqual(alpha_task["Team URL"], "https://app.asana.com/0/team_a/")
         self.assertEqual(alpha_task["Project URL"], "https://app.asana.com/1/ws_1/project/proj_a1")
         self.assertEqual(alpha_task["Instructions"], TASK_INSTRUCTIONS)
@@ -473,9 +477,9 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(beta_task["Owner"], "Zeta Owner")
         self.assertEqual(beta_task["Owner Email"], "zeta.atl@example.com")
         self.assertEqual(beta_task["Owner Atlassian ID"], "atl-owner-zeta")
-        self.assertEqual(beta_task["is_personal_project"], "false")
+        self.assertEqual(project_type_labels[4], "team_project")
         self.assertEqual(beta_task["Project Status"], "Archived")
-        self.assertEqual(beta_task["Labels"], "last_active_2024")
+        self.assertEqual(last_active_labels[4], "last_active_2024")
 
         gamma_task = rows[5]
         self.assertEqual(gamma_task["Parent Id"], "2")
@@ -490,8 +494,8 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(loose_task["Owner Atlassian ID"], "")
         self.assertEqual(loose_task["Owner Atlassian Status"], "")
         self.assertEqual(owner_source_labels[7], "project_owner")
-        self.assertEqual(loose_task["is_personal_project"], "false")
-        self.assertEqual(loose_task["Labels"], "last_active_2022")
+        self.assertEqual(project_type_labels[7], "team_project")
+        self.assertEqual(last_active_labels[7], "last_active_2022")
         self.assertEqual(loose_task["Team URL"], "")
         self.assertEqual(loose_task["Project URL"], "https://app.asana.com/1/ws_1/project/proj_nt")
         loose_description = _description_to_map(loose_task["Description"])
@@ -595,15 +599,21 @@ class ExportTeamProjectJiraCsvTest(TestCase):
             raw_rows = list(csv.reader(handle))
 
         header = raw_rows[0]
+        summary_idx = header.index("Summary")
+        # The project-type label is the third (last) repeated "Labels" column.
+        project_type_idx = [i for i, name in enumerate(header) if name == "Labels"][2]
         rows = [dict(zip(header, values)) for values in raw_rows[1:]]
+        project_type_by_summary = {
+            values[summary_idx]: values[project_type_idx] for values in raw_rows[1:]
+        }
         by_summary = {row["Summary"]: row for row in rows if row["Issue Type"] == "Task"}
 
         standard_task = by_summary["Alpha Project"]
-        self.assertEqual(standard_task["is_personal_project"], "false")
+        self.assertEqual(project_type_by_summary["Alpha Project"], "team_project")
         self.assertEqual(standard_task["Instructions"], TASK_INSTRUCTIONS)
 
         personal_task = by_summary["Alpha Owner"]
-        self.assertEqual(personal_task["is_personal_project"], "true")
+        self.assertEqual(project_type_by_summary["Alpha Owner"], "personal_project")
         self.assertEqual(personal_task["Instructions"], PERSONAL_TASK_INSTRUCTIONS)
         self.assertNotEqual(PERSONAL_TASK_INSTRUCTIONS, TASK_INSTRUCTIONS)
 
@@ -807,7 +817,7 @@ class ExportTeamProjectJiraCsvTest(TestCase):
             raw_rows = list(csv.reader(handle))
 
         header = raw_rows[0]
-        self.assertEqual(header.count("Labels"), 2)
+        self.assertEqual(header.count("Labels"), 3)
         owner_source_idx = [i for i, name in enumerate(header) if name == "Labels"][0]
         rows = [dict(zip(header, values)) for values in raw_rows[1:]]
         owner_source_by_summary = {

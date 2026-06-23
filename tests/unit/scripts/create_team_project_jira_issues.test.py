@@ -24,7 +24,6 @@ EPIC_FIELDS = {
     "Team URL": {"fieldId": "customfield_10001", "schema": {"type": "string"}},
     "Project URL": {"fieldId": "customfield_10002", "schema": {"type": "string"}},
     "Instructions": {"fieldId": "customfield_10003", "schema": {"type": "doc"}},
-    "is_personal_project": {"fieldId": "customfield_10004", "schema": {"type": "string"}},
     "Project Status": {"fieldId": "customfield_10005", "schema": {"type": "option"}},
 }
 TASK_FIELDS = dict(EPIC_FIELDS, Parent={"fieldId": "parent", "schema": {"type": "issuelink"}})
@@ -130,6 +129,24 @@ class BuildIssuePayloadTest(TestCase):
             custom_field_map=load_field_map(None),
         )
         self.assertEqual(payload["fields"]["labels"], ["team_admin", "last_active_2025"])
+
+    def test_project_type_added_as_label(self) -> None:
+        payload = build_issue_payload(
+            {
+                "Summary": "Proj",
+                "Owner Source": "project_owner",
+                "Labels": "last_active_2025",
+                "Project Type": "personal_project",
+            },
+            project_key="MIG",
+            issue_type_id="10001",
+            field_defs=TASK_FIELDS,
+            custom_field_map=load_field_map(None),
+        )
+        self.assertEqual(
+            payload["fields"]["labels"],
+            ["project_owner", "last_active_2025", "personal_project"],
+        )
 
     def test_task_parent_link(self) -> None:
         payload = build_issue_payload(
