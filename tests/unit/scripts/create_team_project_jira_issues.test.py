@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -10,10 +11,13 @@ from unittest.mock import patch
 from src.lib.database import Database
 from scripts.atlassian import create_team_project_jira_issues as creator
 from scripts.atlassian.create_team_project_jira_issues import (
+    _resolve_field_def,
     build_issue_payload,
     create_team_project_jira_issues,
     format_custom_value,
     load_field_map,
+    maybe_save_field_map,
+    prompt_field_map,
     resolve_issue_type_id,
 )
 
@@ -85,6 +89,53 @@ class LoadFieldMapTest(TestCase):
             field_map = load_field_map(str(path))
         self.assertEqual(field_map["Team URL"], "Asana Team URL")
         self.assertEqual(field_map["Project URL"], "Project (Asana)")  # default preserved
+
+
+class FieldRefResolutionTest(TestCase):
+    def test_resolve_by_name_and_id(self) -> None:
+        self.assertEqual(_resolve_field_def(EPIC_FIELDS, "Team (Asana)")["fieldId"], "customfield_10001")
+        self.assertEqual(_resolve_field_def(EPIC_FIELDS, "customfield_10001")["fieldId"], "customfield_10001")
+        self.assertIsNone(_resolve_field_def(EPIC_FIELDS, "nope"))
+        self.assertIsNone(_resolve_field_def(EPIC_FIELDS, ""))
+
+    def test_build_issue_payload_accepts_field_id_mapping(self) -> None:
+        # A field-map value given as a raw field id resolves via fieldId, not name.
+        payload = build_issue_payload(
+            {"Summary": "Alpha", "Team URL": "https://t/", "Owner Source": ""},
+            project_key="MIG",
+            issue_type_id="10000",
+            field_defs=EPIC_FIELDS,
+            custom_field_map={"Team URL": "customfield_10001"},
+        )
+        self.assertEqual(payload["fields"]["customfield_10001"], "https://t/")
+
+
+class InteractiveFieldMapTest(TestCase):
+    def test_prompt_keeps_default_on_blank_and_takes_id(self) -> None:
+        # Columns iterate in DEFAULT_FIELD_MAP order: Team URL, Project URL,
+        # Instructions, Project Status, Project Count, Task Count.
+        answers = iter(["customfield_10002", "", "", "", "", ""])
+        result = prompt_field_map(
+            load_field_map(None),
+            {"Epic": EPIC_FIELDS, "Task": TASK_FIELDS},
+            input_func=lambda *_: next(answers),
+        )
+        self.assertEqual(result["Team URL"], "customfield_10002")  # id taken verbatim
+        self.assertEqual(result["Project URL"], "Project (Asana)")  # blank keeps default name
+        self.assertEqual(result["Task Count (Asana)"], "Task Count (Asana)")
+
+    def test_maybe_save_writes_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fm.json"
+            answers = iter(["y", str(path)])
+            saved = maybe_save_field_map(
+                {"Team URL": "customfield_10001"}, input_func=lambda *_: next(answers)
+            )
+            self.assertEqual(saved, path)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"Team URL": "customfield_10001"})
+
+    def test_maybe_save_skips_on_no(self) -> None:
+        self.assertIsNone(maybe_save_field_map({"x": "y"}, input_func=lambda *_: "n"))
 
 
 class BuildIssuePayloadTest(TestCase):
