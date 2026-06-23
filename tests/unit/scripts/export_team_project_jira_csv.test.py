@@ -9,6 +9,7 @@ from unittest import TestCase
 from src.lib.database import Database
 from scripts.export_team_project_jira_csv import (
     EPIC_INSTRUCTIONS,
+    PERSONAL_TASK_INSTRUCTIONS,
     TASK_INSTRUCTIONS,
     export_team_project_jira_csv,
 )
@@ -505,6 +506,106 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(loose_description["top_task_creator_name"], "")
 
         self.assertNotIn("Unexported Project", [row["Summary"] for row in rows])
+
+    def test_personal_project_task_uses_personal_instructions(self) -> None:
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        self.database.upsert_team(self.connection, {"gid": "team_a", "name": "Alpha Team"}, sync_time)
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "owner_alpha",
+                "name": "Alpha Owner",
+                "resource_type": "user",
+                "email": "alpha@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        # A standard team project and a personal task tracker (no team, personal flag set).
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_a1",
+                "name": "Alpha Project",
+                "archived": False,
+                "owner": {"gid": "owner_alpha", "name": "Alpha Owner"},
+                "team": {"gid": "team_a", "name": "Alpha Team"},
+                "privacy_setting": "private",
+                "created_at": "2025-01-14T09:00:00Z",
+                "completed": False,
+                "is_personal_project": False,
+                "num_tasks": 1,
+                "num_incomplete_tasks": 1,
+                "num_completed_tasks": 0,
+            },
+            sync_time,
+        )
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "personal_owner_alpha",
+                "name": "Alpha Owner",
+                "resource_subtype": "personal_project_placeholder",
+                "archived": False,
+                "owner": {"gid": "owner_alpha", "name": "Alpha Owner"},
+                "team": {"gid": None, "name": "Alpha Owner"},
+                "privacy_setting": "private",
+                "created_at": "2025-01-14T09:00:00Z",
+                "completed": False,
+                "is_personal_project": True,
+                "num_tasks": 1,
+                "num_incomplete_tasks": 1,
+                "num_completed_tasks": 0,
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_a1",
+                "name": "Task A1",
+                "created_at": "2025-02-01T09:00:00Z",
+                "modified_at": "2025-03-05T09:00:00Z",
+                "completed_at": None,
+                "memberships": [{"project": {"gid": "proj_a1", "name": "Alpha Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_p1",
+                "name": "Personal Task",
+                "created_at": "2025-02-02T09:00:00Z",
+                "modified_at": "2025-03-06T09:00:00Z",
+                "completed_at": None,
+                "memberships": [{"project": {"gid": "personal_owner_alpha", "name": "Alpha Owner"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.connection.commit()
+
+        output_path = export_team_project_jira_csv(str(self.db_path), self.workspace / "exports", filename="report.csv")
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            raw_rows = list(csv.reader(handle))
+
+        header = raw_rows[0]
+        rows = [dict(zip(header, values)) for values in raw_rows[1:]]
+        by_summary = {row["Summary"]: row for row in rows if row["Issue Type"] == "Task"}
+
+        standard_task = by_summary["Alpha Project"]
+        self.assertEqual(standard_task["is_personal_project"], "false")
+        self.assertEqual(standard_task["Instructions"], TASK_INSTRUCTIONS)
+
+        personal_task = by_summary["Alpha Owner"]
+        self.assertEqual(personal_task["is_personal_project"], "true")
+        self.assertEqual(personal_task["Instructions"], PERSONAL_TASK_INSTRUCTIONS)
+        self.assertNotEqual(PERSONAL_TASK_INSTRUCTIONS, TASK_INSTRUCTIONS)
 
     def test_prefers_active_admin_then_task_creator_when_top_owner_is_inactive(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
