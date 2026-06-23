@@ -40,64 +40,146 @@ logger = logging.getLogger(__name__)
 # (for the CSV export) and to rich ADF (for the direct Jira API path) so the two paths
 # never drift. See src/lib/adf.py for the block model.
 EPIC_INSTRUCTION_BLOCKS = [
-    Heading("Epic Owner Responsibilities"),
-    Paragraph(
-        [
-            "This Epic groups the projects for one team that need assessment and "
-            "migration planning. As the Epic assignee, you are responsible for:"
-        ]
-    ),
+    Heading("Instructions", level=1),
+    Paragraph(["This Epic represents an Asana team that you are the effective owner of."]),
+    Paragraph(["The Epic assignee is responsible for:"]),
     BulletList(
         [
-            ["Monitoring all child tasks within this Epic."],
-            ["Ensuring each project is reviewed and assessed by the appropriate stakeholders."],
-            ["Ensuring a migration decision is recorded for every project."],
-            ["Following up with project owners when assessments are missing or incomplete."],
-            ["Checking child tasks periodically to confirm the required information is provided."],
             [
-                "Reassigning the Epic if you are not the appropriate Team Administrator or "
-                "are not coordinating this assessment effort."
+                "If someone else should be representing this Asana team, please reassign "
+                "this epic to that person."
             ],
+            [
+                "Review all tasks within the Epic (which represent individual Asana "
+                "projects). If a project owner is incorrect, reassign the task immediately."
+            ],
+            ["Ensure a migration decision has been recorded for every project by July 8."],
         ]
     ),
     Paragraph(
         [
-            "The Epic is complete only once every child task has a documented migration "
-            "decision and any required supporting information."
+            "The Epic should not be considered complete until all child tasks contain a "
+            "documented migration decision and any required supporting information."
         ]
     ),
 ]
 
 
 TASK_INSTRUCTION_BLOCKS = [
-    Heading("Project Assessment Instructions"),
-    Paragraph(["A migration decision is required for this project. Please choose one:"]),
+    Heading("Instructions", level=1),
+    Paragraph(
+        ["A migration decision is required for this project. Select one of the following options:"]
+    ),
+    Heading("Active", level=3),
     BulletList(
         [
             [
-                Run("Active", bold=True),
-                " — the project is in active use with ongoing work. It will be migrated "
-                "as a fully functioning project (used to estimate migration complexity, "
-                "effort, and configuration).",
+                "Select Active if the project is currently being used, ongoing work is "
+                "taking place or there are reporting requirements."
             ],
             [
-                Run("Archive", bold=True),
-                " — the project is no longer active but its history should be retained. "
-                "It will be migrated in a simplified, records-only format; configuration "
-                "and workflows may not be recreated.",
-            ],
-            [
-                Run("Abandon", bold=True),
-                " — the project is no longer needed and its data does not need to migrate. "
-                "It will be excluded from the migration entirely.",
+                "The migration team will be reaching out with next steps to align on Jira "
+                "project configurations."
             ],
         ]
     ),
+    Heading("Archive-Read Only", level=3),
+    BulletList(
+        [
+            [
+                "Select Archive if the project is no longer actively used but the "
+                "historical information should be retained and be able to be queried."
+            ],
+            [
+                "Archived projects will be migrated in a simplified format focused on "
+                "preserving project data and records. Configuration, workflows, and other "
+                "advanced project settings will not be recreated."
+            ],
+        ]
+    ),
+    Heading("Archive-Preservation Only", level=3),
+    BulletList(
+        [
+            [
+                "Select Archive if the project is no longer actively used but the "
+                "historical information should be retained and will ",
+                Run("NOT", bold=True),
+                " be able to be queried. Data will be preserved and can be unarchived if "
+                "needed by the Roblox Atlassian team.",
+            ],
+            [
+                "Archived projects will be migrated in a simplified format focused on "
+                "preserving project data and records. Configuration, workflows, and other "
+                "advanced project settings will not be recreated."
+            ],
+        ]
+    ),
+    Heading("Abandon", level=3),
+    BulletList(
+        [
+            [
+                "Select Abandon if the project is no longer needed and the data does not "
+                "need to be migrated."
+            ],
+            [
+                "Projects marked as Abandon will be excluded from the migration. You will "
+                "lose access to this data once the migration is complete."
+            ],
+        ]
+    ),
+    Heading("Required Action", level=2),
     Paragraph(
         [
-            Run("Required Action: ", bold=True),
-            "record a decision of Active, Archive, or Abandon. If additional context is "
-            "needed, add it in the task comments or the designated assessment fields.",
+            "Review the project and record a migration decision of Active, Archive-Read "
+            "Only, Archive-Preservation Only or Abandon. If additional context is needed to "
+            "support the decision, include it in the task comments or designated assessment "
+            "fields."
+        ]
+    ),
+]
+
+
+PERSONAL_TASK_INSTRUCTION_BLOCKS = [
+    Heading("Instructions", level=1),
+    Paragraph(
+        [
+            "A migration decision is required for this project containing personal tasks. "
+            "This has been classified as a personal task tracker because it is connected to "
+            "your user account, not a team. Select one of the following options:"
+        ]
+    ),
+    Heading("Active-Personal Task Tracker", level=3),
+    BulletList(
+        [
+            [
+                "Select Active if the project is currently being used or ongoing work is "
+                "taking place."
+            ],
+            [
+                "This project will be migrated into a personal Task Tracker space that will "
+                "only be visible to you."
+            ],
+        ]
+    ),
+    Heading("Abandon", level=3),
+    BulletList(
+        [
+            [
+                "Select Abandon if the project is no longer needed and the data does not "
+                "need to be migrated."
+            ],
+            [
+                "Projects marked as Abandon will be excluded from the migration. You will "
+                "lose access to this data once the migration is complete."
+            ],
+        ]
+    ),
+    Heading("Required Action", level=2),
+    Paragraph(
+        [
+            "Review the project and record a migration decision of Active or Abandon. If "
+            "additional context is needed to support the decision, include it in the task "
+            "comments or designated assessment fields."
         ]
     ),
 ]
@@ -107,8 +189,10 @@ TASK_INSTRUCTION_BLOCKS = [
 # CSV export rows and by tests); the ADF renderings feed the direct-API creator.
 EPIC_INSTRUCTIONS = render_blocks_text(EPIC_INSTRUCTION_BLOCKS)
 TASK_INSTRUCTIONS = render_blocks_text(TASK_INSTRUCTION_BLOCKS)
+PERSONAL_TASK_INSTRUCTIONS = render_blocks_text(PERSONAL_TASK_INSTRUCTION_BLOCKS)
 EPIC_INSTRUCTIONS_ADF = render_blocks_adf(EPIC_INSTRUCTION_BLOCKS)
 TASK_INSTRUCTIONS_ADF = render_blocks_adf(TASK_INSTRUCTION_BLOCKS)
+PERSONAL_TASK_INSTRUCTIONS_ADF = render_blocks_adf(PERSONAL_TASK_INSTRUCTION_BLOCKS)
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -510,6 +594,11 @@ def build_team_project_rows(
         task_id = str(task_id_counter)
         task_id_counter += 1
         project_url = build_project_url(resolved_workspace_gid, row["gid"])
+        is_personal = bool(row["is_personal_project"])
+        instructions = PERSONAL_TASK_INSTRUCTIONS if is_personal else TASK_INSTRUCTIONS
+        instructions_adf = (
+            PERSONAL_TASK_INSTRUCTIONS_ADF if is_personal else TASK_INSTRUCTIONS_ADF
+        )
         task_rows.append(
             {
                 "Issue Type": "Task",
@@ -526,13 +615,13 @@ def build_team_project_rows(
                 "is_personal_project": _bool_to_text(row["is_personal_project"]),
                 "Project Status": "Archived" if bool(row["archived"]) else "Active",
                 "Labels": _label_for_last_active(row["last_task_updated_at"]),
-                "Instructions": TASK_INSTRUCTIONS,
+                "Instructions": instructions,
                 "Description": _format_project_description(row, project_url),
                 "_kind": "project",
                 "_asana_gid": _clean_text(row["gid"]),
                 "_parent_kind": "team" if team_gid else "no_team",
                 "_parent_asana_gid": team_gid,
-                "_adf_overrides": {"Instructions": TASK_INSTRUCTIONS_ADF},
+                "_adf_overrides": {"Instructions": instructions_adf},
             }
         )
 
