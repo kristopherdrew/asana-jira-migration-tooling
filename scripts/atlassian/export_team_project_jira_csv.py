@@ -10,7 +10,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, NamedTuple, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -299,35 +299,48 @@ def _is_active_atlassian_status(status: Optional[str]) -> bool:
     return _clean_text(status).casefold() == "active"
 
 
-def _effective_owner_from_project(row: dict) -> tuple[str, str, str, str]:
+class _EffectiveOwner(NamedTuple):
+    """Resolved effective owner of a project. ``email`` keeps the raw users-table
+    email (used in the description); ``atlassian_id``/``atlassian_status`` drive the
+    Jira assignee for the Task row."""
+
+    source: str
+    name: str
+    email: str
+    atlassian_id: str
+    atlassian_status: str
+
+
+def _effective_owner_from_project(row: dict) -> _EffectiveOwner:
     """Resolve a project's effective owner: the project owner when their
-    Atlassian account is active, otherwise the project's top active task
-    creator. Returns (source, name, email, atlassian_status)."""
+    Atlassian account is active, otherwise the project's top active task creator
+    (the ``top_active_task_creators`` CTE only surfaces active Atlassian users, so a
+    fallback creator is always assignable). Returns an empty owner when neither applies."""
     owner_name = _row_owner_from_project(row)
     if owner_name and _is_active_atlassian_status(row["owner_atlassian_status"]):
-        return (
+        return _EffectiveOwner(
             "project_owner",
             owner_name,
             _clean_text(row["owner_email"]),
+            _clean_text(row["owner_atlassian_id"]),
             _clean_text(row["owner_atlassian_status"]),
         )
     creator_name = _clean_text(row["top_task_creator_name"])
     if creator_name:
-        return (
+        return _EffectiveOwner(
             "task_creator",
             creator_name,
             _clean_text(row["top_task_creator_email"]),
+            _clean_text(row["top_task_creator_atlassian_id"]),
             _clean_text(row["top_task_creator_atlassian_status"]),
         )
-    return ("", "", "", "")
+    return _EffectiveOwner("", "", "", "", "")
 
 
 def _build_project_description_blocks(row: dict) -> list:
     """Build the Project->Task description as structured ADF blocks: three sections,
     each a level-3 heading followed by a bullet list whose item keys are bold."""
-    effective_owner_source, effective_owner_name, effective_owner_email, effective_owner_status = (
-        _effective_owner_from_project(row)
-    )
+    effective = _effective_owner_from_project(row)
     sections = [
         (
             "Primary Details",
@@ -354,10 +367,10 @@ def _build_project_description_blocks(row: dict) -> list:
         (
             "Implied Details",
             [
-                ("effective_owner_source", effective_owner_source),
-                ("effective_owner_name", effective_owner_name),
-                ("effective_owner_email", effective_owner_email),
-                ("effective_owner_atlassian_status", effective_owner_status),
+                ("effective_owner_source", effective.source),
+                ("effective_owner_name", effective.name),
+                ("effective_owner_email", effective.email),
+                ("effective_owner_atlassian_status", effective.atlassian_status),
                 ("top_task_creator_name", _clean_text(row["top_task_creator_name"])),
                 ("top_task_creator_email", _clean_text(row["top_task_creator_email"])),
                 ("top_task_creator_atlassian_status", _clean_text(row["top_task_creator_atlassian_status"])),
@@ -374,14 +387,6 @@ def _row_owner_from_project(row: dict) -> str:
 
 def _row_owner_email_from_project(row: dict) -> str:
     return _clean_text(row["owner_atlassian_email"]) or _clean_text(row["owner_email"])
-
-
-def _row_owner_atlassian_id_from_project(row: dict) -> str:
-    return _clean_text(row["owner_atlassian_id"])
-
-
-def _row_owner_atlassian_status_from_project(row: dict) -> str:
-    return _clean_text(row["owner_atlassian_status"])
 
 
 def build_team_project_rows(
@@ -416,6 +421,7 @@ def build_team_project_rows(
                     project_gid,
                     creator_name,
                     creator_email,
+                    creator_atlassian_id,
                     creator_atlassian_status,
                     task_count
                 FROM (
@@ -423,6 +429,7 @@ def build_team_project_rows(
                         tp.project_gid AS project_gid,
                         COALESCE(u.name, '') AS creator_name,
                         COALESCE(u.email, '') AS creator_email,
+                        COALESCE(ua.atlassian_account_id, '') AS creator_atlassian_id,
                         COALESCE(ua.atlassian_status, '') AS creator_atlassian_status,
                         COUNT(DISTINCT t.gid) AS task_count,
                         ROW_NUMBER() OVER (
@@ -471,6 +478,7 @@ def build_team_project_rows(
                 ua.atlassian_status AS owner_atlassian_status,
                 tatc.creator_name AS top_task_creator_name,
                 tatc.creator_email AS top_task_creator_email,
+                tatc.creator_atlassian_id AS top_task_creator_atlassian_id,
                 tatc.creator_atlassian_status AS top_task_creator_atlassian_status,
                 tatc.task_count AS top_task_creator_task_count
             FROM projects p
@@ -568,6 +576,12 @@ def build_team_project_rows(
                 "Owner Source": analysis.effective_admin_source if analysis else "",
                 "Project Type": "",
                 "Project Status": "",
+                "Project Count (Asana)": str(aggregate["project_count_total"]),
+                "Task Count (Asana)": (
+                    ""
+                    if aggregate["actual_task_count_total"] is None
+                    else str(aggregate["actual_task_count_total"])
+                ),
                 "Labels": "",
                 "Instructions": EPIC_INSTRUCTIONS,
                 "Description": render_blocks_text(team_description_blocks),
@@ -584,6 +598,10 @@ def build_team_project_rows(
     if no_team_projects:
         no_team_task_id = str(task_id_counter)
         task_id_counter += 1
+        # The No-Team bucket only contains projects with synced task data (filtered
+        # above), so every entry has a non-None actual_task_count.
+        no_team_project_count = len(no_team_projects)
+        no_team_task_total = sum(int(project["actual_task_count"]) for project in no_team_projects)
         epic_rows.append(
             {
                 "Issue Type": "Epic",
@@ -599,6 +617,8 @@ def build_team_project_rows(
                 "Owner Source": "",
                 "Project Type": "",
                 "Project Status": "",
+                "Project Count (Asana)": str(no_team_project_count),
+                "Task Count (Asana)": str(no_team_task_total),
                 "Labels": "",
                 "Instructions": EPIC_INSTRUCTIONS,
                 "Description": "",
@@ -640,6 +660,15 @@ def build_team_project_rows(
             PERSONAL_TASK_INSTRUCTIONS_ADF if is_personal else TASK_INSTRUCTIONS_ADF
         )
         description_blocks = _build_project_description_blocks(row)
+        # Mirror the Epic behavior: the Task owner/assignee is the effective owner
+        # (project owner if their Atlassian account is active, else the top active
+        # task creator). The raw project owner is still recorded in the description.
+        effective_owner = _effective_owner_from_project(row)
+        owner_email = (
+            _row_owner_email_from_project(row)
+            if effective_owner.source == "project_owner"
+            else effective_owner.email
+        )
         task_rows.append(
             {
                 "Issue Type": "Task",
@@ -648,13 +677,15 @@ def build_team_project_rows(
                 "Summary": row["name"] or "",
                 "Team URL": build_team_url(team_gid),
                 "Project URL": project_url,
-                "Owner": _row_owner_from_project(row),
-                "Owner Email": _row_owner_email_from_project(row),
-                "Owner Atlassian ID": _row_owner_atlassian_id_from_project(row),
-                "Owner Atlassian Status": _row_owner_atlassian_status_from_project(row),
-                "Owner Source": "project_owner",
+                "Owner": effective_owner.name,
+                "Owner Email": owner_email,
+                "Owner Atlassian ID": effective_owner.atlassian_id,
+                "Owner Atlassian Status": effective_owner.atlassian_status,
+                "Owner Source": effective_owner.source,
                 "Project Type": "personal_project" if is_personal else "team_project",
                 "Project Status": "Archived" if bool(row["archived"]) else "Active",
+                "Project Count (Asana)": "",
+                "Task Count (Asana)": str(int(row["actual_task_count"])),
                 "Labels": _label_for_last_active(row["last_task_updated_at"]),
                 "Instructions": instructions,
                 "Description": render_blocks_text(description_blocks),
@@ -688,6 +719,8 @@ CSV_COLUMNS = [
     ("Owner Atlassian ID", "Owner Atlassian ID"),
     ("Owner Atlassian Status", "Owner Atlassian Status"),
     ("Project Status", "Project Status"),
+    ("Project Count (Asana)", "Project Count (Asana)"),
+    ("Task Count (Asana)", "Task Count (Asana)"),
     ("Labels", "Owner Source"),
     ("Labels", "Labels"),
     ("Labels", "Project Type"),
