@@ -299,10 +299,63 @@ import json, ssl, time
 from urllib import error, parse, request
 ```
 
-> **Takeaway:** Write your rules down once, in `CLAUDE.md`. From then on the AI
-> inherits your standards on every turn, and you stop being the rule police.
-> Start small — even five lines is enough — and grow it as you discover what you
-> care about.
+#### You don't have to write `CLAUDE.md` by hand — Claude will help
+
+This is the part that's easy to miss: **`CLAUDE.md` is just a normal text file,
+and Claude can create, maintain, and update it for you.** You rarely need to
+edit it manually.
+
+**Creating it.** From inside your project, run the built-in command:
+
+```
+/init
+```
+
+Claude scans your codebase — its structure, how it's built, how tests are run,
+the conventions already in use — and writes a starter `CLAUDE.md` for you. You
+then read it and tweak anything that's wrong. That's how a useful rules file
+exists on day one without you typing it from scratch.
+
+You can also just *ask*, in plain English:
+
+> "Create a `CLAUDE.md` that documents our coding standards: Python 3.11+, always
+> `python3`, standard library only, tests next to the code, and never commit
+> without my approval."
+
+Claude writes the file like it writes any other.
+
+**Maintaining and updating it.** The rules file should grow as your project
+teaches you what you care about. The reliable way to update it is simply to ask:
+
+> "Update `CLAUDE.md` to add a rule that every new command must support a
+> `--dry-run` flag."
+
+> "We just added a new export script — add it to the CLI catalog section of
+> `CLAUDE.md` with a one-line description of what it does."
+
+Two habits make this powerful:
+
+- **When you correct Claude, ask it to record the correction.** If you find
+  yourself saying "no, we always do it *this* way," follow up with "add that to
+  `CLAUDE.md` so it sticks." Next session, Claude already knows.
+- **Treat the rules file as living documentation.** This project, for instance,
+  keeps a running catalog of every command — its inputs, outputs, and options —
+  right in the rules file, so the description and the tool never drift apart.
+
+**A couple of handy extras** (nice to know, not required for beginners):
+
+- Type **`/memory`** to see and edit all the instruction files Claude currently
+  has loaded.
+- A file at **`~/.claude/CLAUDE.md`** in your home folder holds *personal* rules
+  that apply to every project on your machine (and is never shared with your
+  team) — good for preferences that are about *you*, not the project.
+- Inside a `CLAUDE.md` you can pull in another file with `@path/to/file.md`, so
+  you can keep long references in their own files and just point to them.
+
+> **Takeaway:** Write your rules down once, in `CLAUDE.md` — but let Claude do
+> the writing. Start it with `/init`, then grow it by *asking* Claude to record
+> each new convention as you discover it. From then on the AI inherits your
+> standards on every turn, and you stop being the rule police.
 
 ### Pillar 2 — Reusable helpers mean you decide things once
 
