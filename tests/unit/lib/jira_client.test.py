@@ -38,6 +38,15 @@ class CreateIssueTest(TestCase):
             client.create_issue({"fields": {}})
 
 
+class JiraApiErrorTest(TestCase):
+    def test_status_and_body_are_accessible(self) -> None:
+        body = '{"errors": {"assignee": "User x cannot be assigned issues."}}'
+        err = JiraApiError(400, body)
+        self.assertEqual(err.status, 400)
+        self.assertEqual(err.body, body)
+        self.assertIn("Jira API error 400", str(err))
+
+
 class CreateMetaTest(TestCase):
     def test_issue_types(self) -> None:
         client = _RecordingClient([

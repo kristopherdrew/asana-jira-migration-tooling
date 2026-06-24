@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from src.lib.database import Database
+from src.lib.jira_client import JiraApiError
 from scripts.atlassian import create_team_project_jira_issues as creator
 from scripts.atlassian.create_team_project_jira_issues import (
     _resolve_field_def,
@@ -40,8 +42,12 @@ ISSUE_TYPES = [{"id": "10000", "name": "Epic"}, {"id": "10001", "name": "Task"}]
 
 
 class FakeJiraClient:
-    def __init__(self):
+    def __init__(self, behavior=None):
         self.created = []
+        self.attempts = []  # every payload passed to create_issue, including failures
+        # Optional callable (payload, attempt_no) -> Optional[Exception]; when it
+        # returns an exception that exception is raised instead of succeeding.
+        self._behavior = behavior
 
     def get_createmeta_issue_types(self, project_key):
         return ISSUE_TYPES
@@ -50,9 +56,24 @@ class FakeJiraClient:
         return EPIC_FIELDS if issue_type_id == "10000" else TASK_FIELDS
 
     def create_issue(self, payload):
+        self.attempts.append(payload)
+        if self._behavior is not None:
+            exc = self._behavior(payload, len(self.attempts))
+            if exc is not None:
+                raise exc
         key = f"MIG-{len(self.created) + 1}"
         self.created.append(payload)
         return {"key": key, "id": str(len(self.created))}
+
+
+ASSIGNEE_400_BODY = json.dumps(
+    {"errorMessages": [], "errors": {"assignee": "User 'x' cannot be assigned issues."}}
+)
+
+
+def _read_report(report_path):
+    with open(report_path, newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
 
 
 class FormatCustomValueTest(TestCase):
@@ -583,3 +604,75 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
             with self.assertRaises(SystemExit):
                 self._run(client, pick_team=True)
         self.assertEqual(client.created, [])
+
+    def test_unassignable_assignee_falls_back_to_unassigned(self) -> None:
+        # Jira rejects the assignee with a 400; the issue is retried with no
+        # assignee and still created.
+        def behavior(payload, _attempt):
+            if "assignee" in payload["fields"]:
+                return JiraApiError(400, ASSIGNEE_400_BODY)
+            return None
+
+        client = FakeJiraClient(behavior=behavior)
+        report = self._run(client, team_gid="team_a")
+
+        self.assertEqual(len(client.created), 2)  # epic + task, both created
+        for payload in client.created:
+            self.assertNotIn("assignee", payload["fields"])
+        mappings = self.database.load_team_project_jira_mappings(self.connection)
+        self.assertEqual(set(mappings), {("team", "team_a"), ("project", "proj_1")})
+
+        created_rows = [r for r in _read_report(report) if r["status"] == "created"]
+        self.assertEqual(len(created_rows), 2)
+        self.assertTrue(all(r["message"] == creator.ASSIGNEE_DROPPED_MESSAGE for r in created_rows))
+
+    def test_non_assignee_400_still_errors(self) -> None:
+        # A 400 that is not about the assignee must not silently drop the assignee.
+        body = json.dumps({"errorMessages": [], "errors": {"summary": "is required"}})
+
+        def behavior(payload, _attempt):
+            return JiraApiError(400, body)
+
+        client = FakeJiraClient(behavior=behavior)
+        report = self._run(client, team_gid="team_a")
+
+        self.assertEqual(client.created, [])
+        self.assertEqual(self.database.load_team_project_jira_mappings(self.connection), {})
+        statuses = {r["status"] for r in _read_report(report)}
+        self.assertIn("error", statuses)
+
+    def test_rate_limited_task_is_requeued_and_succeeds(self) -> None:
+        # The task is rate limited on its first attempt, then succeeds on requeue.
+        def behavior(payload, attempt):
+            if payload["fields"]["issuetype"]["id"] == "10001" and attempt == 2:
+                return JiraApiError(429, "Rate limited")
+            return None
+
+        client = FakeJiraClient(behavior=behavior)
+        with patch.object(creator.time, "sleep") as sleeper:
+            self._run(client, team_gid="team_a")
+
+        self.assertEqual(len(client.created), 2)  # epic + task (after requeue)
+        mappings = self.database.load_team_project_jira_mappings(self.connection)
+        self.assertEqual(set(mappings), {("team", "team_a"), ("project", "proj_1")})
+        sleeper.assert_called()  # a requeue delay occurred
+
+    def test_rate_limited_task_errors_after_max_rounds(self) -> None:
+        # The task is rate limited on every attempt; after the bounded retries it
+        # is recorded as an error (and left unmapped for a future re-run).
+        def behavior(payload, _attempt):
+            if payload["fields"]["issuetype"]["id"] == "10001":
+                return JiraApiError(429, "Rate limited")
+            return None
+
+        client = FakeJiraClient(behavior=behavior)
+        with patch.object(creator.time, "sleep"):
+            report = self._run(client, team_gid="team_a")
+
+        self.assertEqual(len(client.created), 1)  # only the epic
+        task_attempts = [p for p in client.attempts if p["fields"]["issuetype"]["id"] == "10001"]
+        self.assertEqual(len(task_attempts), creator.MAX_RATE_LIMIT_ROUNDS + 1)
+        mappings = self.database.load_team_project_jira_mappings(self.connection)
+        self.assertEqual(set(mappings), {("team", "team_a")})
+        error_rows = [r for r in _read_report(report) if r["status"] == "error"]
+        self.assertTrue(any(r["kind"] == "project" for r in error_rows))

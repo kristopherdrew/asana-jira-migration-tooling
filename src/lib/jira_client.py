@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import json
+import random
 import ssl
 import time
 from typing import Dict, List, Optional, Set
@@ -20,6 +21,9 @@ class JiraApiError(Exception):
     def __init__(self, status: int, message: str):
         super().__init__(f"Jira API error {status}: {message}")
         self.status = status
+        # Raw error body/reason as returned by Jira, so callers can inspect the
+        # error payload (e.g. the per-field ``errors`` dict) beyond the message.
+        self.body = message
 
 
 class JiraClient:
@@ -49,7 +53,7 @@ class JiraClient:
         path: str,
         headers: Optional[Dict[str, str]] = None,
         data: Optional[bytes] = None,
-        max_retries: int = 5,
+        max_retries: int = 8,
         backoff: float = 1.5,
     ) -> bytes:
         url = f"{self._base_url}{path}"
@@ -68,7 +72,9 @@ class JiraClient:
             except error.HTTPError as exc:
                 if exc.code == 429:
                     retry_after = self._parse_retry_after(exc)
-                    sleep_for = retry_after or (backoff ** attempt)
+                    # Add a little jitter so parallel workers don't all wake up
+                    # and re-hit the rate limit in lockstep.
+                    sleep_for = (retry_after or (backoff ** attempt)) + random.uniform(0, 0.5)
                     time.sleep(sleep_for)
                     last_error = JiraApiError(exc.code, "Rate limited")
                     continue

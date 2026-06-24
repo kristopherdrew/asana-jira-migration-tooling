@@ -15,6 +15,7 @@ import csv
 import json
 import logging
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +38,16 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
 DEFAULT_WORKERS = 4
+
+# When a creation is rate limited even after the Jira client's own retries, the
+# item is requeued to the end of the run and retried up to this many extra rounds
+# (with an escalating delay) before being recorded as a hard error.
+MAX_RATE_LIMIT_ROUNDS = 3
+RATE_LIMIT_REQUEUE_DELAY = 5.0  # seconds, multiplied by the round number
+
+# Message recorded in the run report when an issue is created after dropping an
+# assignee Jira refused to accept.
+ASSIGNEE_DROPPED_MESSAGE = "assignee dropped (user not assignable)"
 
 # Maps an internal row column to the Jira custom field *name* it should populate.
 # Override individual entries with a --field-map JSON file when the Jira field is
@@ -215,6 +226,51 @@ def format_custom_value(schema: Dict[str, object], value: str) -> object:
     if _is_rich_text_schema(schema):
         return text_to_adf(value)
     return value
+
+
+def _is_unassignable_error(exc: Exception) -> bool:
+    """True when Jira rejected the request specifically because of the assignee.
+
+    Jira returns ``400`` with a per-field ``errors`` dict like
+    ``{"errors": {"assignee": "User '...' cannot be assigned issues."}}`` when the
+    (active) account can't be assigned issues in the target project. Parses the
+    error body, falling back to a substring check if it isn't JSON."""
+    if not isinstance(exc, JiraApiError) or exc.status != 400:
+        return False
+    body = getattr(exc, "body", "") or ""
+    try:
+        parsed = json.loads(body)
+        errors = parsed.get("errors") if isinstance(parsed, dict) else None
+        if isinstance(errors, dict) and "assignee" in errors:
+            return True
+    except (ValueError, TypeError):
+        pass
+    lowered = body.lower()
+    return "assignee" in lowered and "cannot be assigned" in lowered
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    """True when the Jira client exhausted its retries on an HTTP 429."""
+    return isinstance(exc, JiraApiError) and exc.status == 429
+
+
+def _create_issue_with_assignee_fallback(
+    client: JiraClient, payload: Dict[str, object]
+) -> Tuple[Dict[str, object], bool]:
+    """Create an issue, retrying once without the assignee if Jira rejects it.
+
+    Returns ``(response, assignee_dropped)``. Only the assignee-rejected ``400``
+    triggers the retry; every other error (including rate limits) propagates so
+    the caller's own retry/requeue handling still applies."""
+    try:
+        return client.create_issue(payload), False
+    except JiraApiError as exc:
+        fields = payload.get("fields") if isinstance(payload, dict) else None
+        if _is_unassignable_error(exc) and isinstance(fields, dict) and "assignee" in fields:
+            retry_fields = {k: v for k, v in fields.items() if k != "assignee"}
+            retry_payload = {**payload, "fields": retry_fields}
+            return client.create_issue(retry_payload), True
+        raise
 
 
 def build_issue_payload(
@@ -445,41 +501,58 @@ def create_team_project_jira_issues(
                     "message": "",
                 })
 
-        # Pass A — epics (sequential; tasks depend on their keys).
-        for row in pending_epics:
-            key = (row["_kind"], row["_asana_gid"])
-            payload = build_issue_payload(
-                row,
-                project_key=jira_project_key,
-                issue_type_id=epic_type_id,
-                field_defs=epic_fields,
-                custom_field_map=custom_field_map,
-            )
-            if limit_reached():
-                results.append(_result(row, "", "skipped-limit", ""))
-                continue
-            if dry_run:
-                dry_counter += 1
-                dry_key = f"{jira_project_key}-NEW{dry_counter}"
-                created_keys[key] = dry_key
-                logger.info("[dry-run] Epic payload:\n%s", json.dumps(payload, indent=2))
-                results.append(_result(row, dry_key, "dry-run", ""))
-                continue
-            try:
-                response = client.create_issue(payload)
-                jira_key = str(response.get("key", ""))
-                created_keys[key] = jira_key
-                database.upsert_team_project_jira_mappings(
-                    connection,
-                    [{"kind": row["_kind"], "asana_gid": row["_asana_gid"], "jira_key": jira_key}],
-                    datetime.now(timezone.utc),
+        # Pass A — epics (sequential; tasks depend on their keys). Rate-limited
+        # creations are requeued and retried in later rounds.
+        epic_queue = list(pending_epics)
+        epic_round = 0
+        while epic_queue:
+            epic_requeue: List[Dict[str, str]] = []
+            for row in epic_queue:
+                key = (row["_kind"], row["_asana_gid"])
+                payload = build_issue_payload(
+                    row,
+                    project_key=jira_project_key,
+                    issue_type_id=epic_type_id,
+                    field_defs=epic_fields,
+                    custom_field_map=custom_field_map,
                 )
-                created_count += 1
-                results.append(_result(row, jira_key, "created", ""))
-                logger.info("Created epic %s for %s", jira_key, row.get("Summary", ""))
-            except (JiraApiError, ValueError) as exc:
-                results.append(_result(row, "", "error", str(exc)))
-                logger.error("Failed to create epic for %s: %s", row.get("Summary", ""), exc)
+                if limit_reached():
+                    results.append(_result(row, "", "skipped-limit", ""))
+                    continue
+                if dry_run:
+                    dry_counter += 1
+                    dry_key = f"{jira_project_key}-NEW{dry_counter}"
+                    created_keys[key] = dry_key
+                    logger.info("[dry-run] Epic payload:\n%s", json.dumps(payload, indent=2))
+                    results.append(_result(row, dry_key, "dry-run", ""))
+                    continue
+                try:
+                    response, assignee_dropped = _create_issue_with_assignee_fallback(client, payload)
+                    jira_key = str(response.get("key", ""))
+                    created_keys[key] = jira_key
+                    database.upsert_team_project_jira_mappings(
+                        connection,
+                        [{"kind": row["_kind"], "asana_gid": row["_asana_gid"], "jira_key": jira_key}],
+                        datetime.now(timezone.utc),
+                    )
+                    created_count += 1
+                    results.append(_result(row, jira_key, "created", ASSIGNEE_DROPPED_MESSAGE if assignee_dropped else ""))
+                    if assignee_dropped:
+                        logger.warning("Created epic %s for %s without assignee (user not assignable).", jira_key, row.get("Summary", ""))
+                    else:
+                        logger.info("Created epic %s for %s", jira_key, row.get("Summary", ""))
+                except (JiraApiError, ValueError) as exc:
+                    if _is_rate_limited(exc) and epic_round < MAX_RATE_LIMIT_ROUNDS:
+                        epic_requeue.append(row)
+                        logger.warning("Rate limited creating epic for %s; requeued (round %s).", row.get("Summary", ""), epic_round + 1)
+                        continue
+                    results.append(_result(row, "", "error", str(exc)))
+                    logger.error("Failed to create epic for %s: %s", row.get("Summary", ""), exc)
+            if not epic_requeue:
+                break
+            epic_round += 1
+            time.sleep(RATE_LIMIT_REQUEUE_DELAY * epic_round)
+            epic_queue = epic_requeue
 
         # Pass B — tasks (parallel network calls; mappings persisted on the main thread).
         remaining = pending_tasks if limit is None else pending_tasks[: max(0, limit - created_count)]
@@ -507,32 +580,53 @@ def create_team_project_jira_issues(
                 logger.info("[dry-run] Task payload:\n%s", json.dumps(payload, indent=2))
                 results.append(_result(row, dry_key, "dry-run", ""))
         elif remaining:
-            def worker(row: Dict[str, str]) -> Tuple[Dict[str, str], Optional[str], Optional[str]]:
+            def worker(row: Dict[str, str]) -> Dict[str, object]:
                 _, payload, parent_key = build_task(row)
                 if not parent_key:
-                    return row, None, "parent epic was not created (skipped or failed)"
+                    return {"row": row, "jira_key": None, "error": "parent epic was not created (skipped or failed)", "dropped_assignee": False, "rate_limited": False}
                 try:
-                    response = client.create_issue(payload)
-                    return row, str(response.get("key", "")), None
-                except (JiraApiError, ValueError) as exc:
-                    return row, None, str(exc)
+                    response, assignee_dropped = _create_issue_with_assignee_fallback(client, payload)
+                    return {"row": row, "jira_key": str(response.get("key", "")), "error": None, "dropped_assignee": assignee_dropped, "rate_limited": False}
+                except JiraApiError as exc:
+                    return {"row": row, "jira_key": None, "error": str(exc), "dropped_assignee": False, "rate_limited": _is_rate_limited(exc)}
+                except ValueError as exc:
+                    return {"row": row, "jira_key": None, "error": str(exc), "dropped_assignee": False, "rate_limited": False}
 
-            with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-                future_map = {executor.submit(worker, row): row for row in remaining}
-                for future in as_completed(future_map):
-                    row, jira_key, error_message = future.result()
-                    if error_message:
-                        results.append(_result(row, "", "error", error_message))
-                        logger.error("Failed to create task for %s: %s", row.get("Summary", ""), error_message)
-                        continue
-                    database.upsert_team_project_jira_mappings(
-                        connection,
-                        [{"kind": row["_kind"], "asana_gid": row["_asana_gid"], "jira_key": jira_key}],
-                        datetime.now(timezone.utc),
-                    )
-                    created_count += 1
-                    results.append(_result(row, jira_key, "created", ""))
-                    logger.info("Created task %s for %s", jira_key, row.get("Summary", ""))
+            # Rate-limited tasks are requeued and retried in later rounds.
+            task_queue = list(remaining)
+            task_round = 0
+            while task_queue:
+                task_requeue: List[Dict[str, str]] = []
+                with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+                    future_map = {executor.submit(worker, row): row for row in task_queue}
+                    for future in as_completed(future_map):
+                        res = future.result()
+                        row = res["row"]
+                        if res["rate_limited"] and task_round < MAX_RATE_LIMIT_ROUNDS:
+                            task_requeue.append(row)
+                            logger.warning("Rate limited creating task for %s; requeued (round %s).", row.get("Summary", ""), task_round + 1)
+                            continue
+                        if res["error"]:
+                            results.append(_result(row, "", "error", res["error"]))
+                            logger.error("Failed to create task for %s: %s", row.get("Summary", ""), res["error"])
+                            continue
+                        jira_key = res["jira_key"]
+                        database.upsert_team_project_jira_mappings(
+                            connection,
+                            [{"kind": row["_kind"], "asana_gid": row["_asana_gid"], "jira_key": jira_key}],
+                            datetime.now(timezone.utc),
+                        )
+                        created_count += 1
+                        results.append(_result(row, jira_key, "created", ASSIGNEE_DROPPED_MESSAGE if res["dropped_assignee"] else ""))
+                        if res["dropped_assignee"]:
+                            logger.warning("Created task %s for %s without assignee (user not assignable).", jira_key, row.get("Summary", ""))
+                        else:
+                            logger.info("Created task %s for %s", jira_key, row.get("Summary", ""))
+                if not task_requeue:
+                    break
+                task_round += 1
+                time.sleep(RATE_LIMIT_REQUEUE_DELAY * task_round)
+                task_queue = task_requeue
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     report_path = Path(output_dir) / f"team_project_jira_create_{timestamp}.csv"
