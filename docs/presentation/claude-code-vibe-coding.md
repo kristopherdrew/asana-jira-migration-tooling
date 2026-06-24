@@ -92,6 +92,33 @@ third-party HTTP library anywhere, just urllib.
 
 ---
 
+## Pillar 1, cont. — Claude writes & maintains CLAUDE.md
+
+You don't hand-author it — `CLAUDE.md` is just a text file Claude manages:
+
+- **Create:** run **`/init`** → Claude scans the codebase and drafts it for you
+- **Or ask:** *"Create a CLAUDE.md with our standards: python3, stdlib only…"*
+- **Update:** *"Add a rule that every command needs a `--dry-run` flag"*
+- **Capture corrections:** after fixing Claude, say *"add that to CLAUDE.md so
+  it sticks"* — next session it already knows
+- **`/memory`** views/edits loaded rules; **`~/.claude/CLAUDE.md`** holds your
+  personal, machine-wide rules
+
+**Methodology:** the rules file is *living* — let Claude grow it as the project
+teaches you what you care about.
+
+<!--
+This is the slide that answers "but who writes the rules file?" Answer: mostly
+Claude. /init bootstraps it from the existing code. Then it grows by asking in
+plain English — it's just a markdown file Claude edits like any other. The
+killer habit: when you correct Claude's behavior, immediately ask it to record
+the correction in CLAUDE.md, so the lesson persists across sessions. Mention
+this project keeps its whole CLI command catalog in CLAUDE.md so docs and tools
+never drift. Note: ~/.claude/CLAUDE.md is personal and never committed.
+-->
+
+---
+
 ## Pillar 2 — Reusable helpers streamlined decisions
 
 `src/lib/` = a force multiplier. **13 shared modules**, **181 `src.lib.*`
