@@ -23,6 +23,17 @@ def build_user_url(workspace_gid: Optional[str], user_gid: Optional[str]) -> str
     return f"https://app.asana.com/1/{workspace_gid}/profile/{user_gid}"
 
 
+def build_user_task_list_url(user_task_list_gid: Optional[str]) -> str:
+    """Return the deep link to a user's "My Tasks" list.
+
+    ``user_task_list_gid`` is the GID returned by Asana's
+    ``GET /users/{user_gid}/user_task_list`` endpoint.
+    """
+    if not user_task_list_gid:
+        return ""
+    return f"https://app.asana.com/0/{user_task_list_gid}/list"
+
+
 def infer_workspace_gid(connection) -> Optional[str]:
     candidates: list[str] = []
     seen: set[str] = set()

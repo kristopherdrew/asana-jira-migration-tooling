@@ -81,6 +81,41 @@ class DatabaseUsersTest(TestCase):
         self.assertEqual(len(workspace_rows), 1)
         self.assertEqual(workspace_rows[0]["workspace_gid"], "ws_b")
 
+    def test_initialize_adds_user_task_list_gid_column(self) -> None:
+        columns = [
+            row["name"] for row in self.connection.execute("PRAGMA table_info(users)")
+        ]
+        self.assertIn("user_task_list_gid", columns)
+
+    def test_update_user_task_list_gid_round_trips(self) -> None:
+        user = {"gid": "user_utl", "name": "User UTL", "resource_type": "user"}
+        sync_time = synced_at_timestamp()
+        self.database.upsert_user(self.connection, user, sync_time)
+        self.connection.commit()
+
+        later = synced_at_timestamp()
+        self.database.update_user_task_list_gid(self.connection, "user_utl", "utl_99", later)
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT user_task_list_gid FROM users WHERE gid = ?", ("user_utl",)
+        ).fetchone()
+        self.assertEqual(row["user_task_list_gid"], "utl_99")
+
+    def test_update_user_task_list_gid_accepts_none(self) -> None:
+        user = {"gid": "user_none", "name": "User None", "resource_type": "user"}
+        sync_time = synced_at_timestamp()
+        self.database.upsert_user(self.connection, user, sync_time)
+        self.connection.commit()
+
+        self.database.update_user_task_list_gid(self.connection, "user_none", None, sync_time)
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT user_task_list_gid FROM users WHERE gid = ?", ("user_none",)
+        ).fetchone()
+        self.assertIsNone(row["user_task_list_gid"])
+
     def test_initialize_adds_atlassian_status_column(self) -> None:
         columns = [
             row["name"]

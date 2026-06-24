@@ -5,19 +5,21 @@ from __future__ import annotations
 
 import argparse
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, Optional
 
 from src.lib.config import load_credentials
 from src.lib.database import Database, synced_at_timestamp
 from src.lib.http_client import AsanaHttpClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
-from src.tasks.users import fetch_workspace_users
+from src.tasks.users import fetch_user_task_list, fetch_workspace_users
 
 
 DEFAULT_CONFIG_ROOT = "."
 DEFAULT_DB_PATH = "data/asana.sqlite"
 USER_PAGE_SIZE = 100
 PROGRESS_INTERVAL = 10
+DEFAULT_WORKERS = 4
 logger = logging.getLogger(__name__)
 
 
@@ -32,6 +34,15 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         type=int,
         default=USER_PAGE_SIZE,
         help=f"Page size for API pagination (default: {USER_PAGE_SIZE}).",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=(
+            "Concurrent workers for the My Tasks (user task list) fetch pass "
+            f"(default: {DEFAULT_WORKERS})."
+        ),
     )
     parser.add_argument(
         "--log-level",
@@ -61,6 +72,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     user_count = 0
     workspace_links = 0
+    user_gids: list[str] = []
 
     logger.info("Starting user sync for workspace %s", workspace_gid)
 
@@ -75,14 +87,47 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             database.upsert_user(connection, user, sync_time)
             user_count += 1
             workspace_links += len(user.get("workspaces") or [])
+            gid = user.get("gid")
+            if gid:
+                user_gids.append(gid)
 
             if user_count == 1 or user_count % PROGRESS_INTERVAL == 0:
                 logger.info("Processed %s user(s)...", user_count)
 
         connection.commit()
 
+        # Second pass: capture each user's "My Tasks" (user task list) GID. This
+        # is one extra API call per user, so fan it out across --workers; DB
+        # writes stay on this thread since SQLite connections are not shareable.
+        logger.info(
+            "Fetching My Tasks lists for %s user(s) with %s worker(s)...",
+            len(user_gids),
+            args.workers,
+        )
+
+        def _fetch(gid: str) -> tuple[str, Optional[str]]:
+            return gid, fetch_user_task_list(client, gid, workspace_gid)
+
+        utl_captured = 0
+        utl_skipped = 0
+        workers = max(1, args.workers)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for gid, utl_gid in executor.map(_fetch, user_gids):
+                database.update_user_task_list_gid(connection, gid, utl_gid, sync_time)
+                if utl_gid:
+                    utl_captured += 1
+                else:
+                    utl_skipped += 1
+
+        connection.commit()
+
     logger.info("Synced %s users into %s.", user_count, DEFAULT_DB_PATH)
     logger.info("Captured %s user-workspace links.", workspace_links)
+    logger.info(
+        "Captured %s My Tasks list GID(s); %s skipped (inaccessible/missing).",
+        utl_captured,
+        utl_skipped,
+    )
 
 
 if __name__ == "__main__":
