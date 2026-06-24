@@ -440,6 +440,7 @@ Optional flags:
 - `--map-fields` interactively build the field map: for each managed column it shows the default field name and the field id it resolves to via `createmeta`, then prompts for a field id to use (press Enter to keep resolving by name). When finished it offers to save the map to a JSON file (default `field_map.json` in the current directory) so future runs can reuse it via `--field-map`.
 - `--workers <n>` concurrent workers for the task-creation pass (default `4`; epics are created sequentially first).
 - `--limit <n>` cap the number of issues created this run (epics counted first) for a cautious first pass; skips are not counted.
+- `--reset` delete the persisted Asana→Jira mappings for the in-scope rows before creating, so issues you removed in Jira get recreated. Honors `--team-gid`/`--pick-team` (resets just that team's Epic and project Tasks); without a team scope it resets every mapping. Combine with `--dry-run` first to preview what would be recreated.
 - `--team-gid <gid>` restrict the run to a single team — its Epic plus that team's project Tasks (the synthetic `No Team` epic is excluded). Mutually exclusive with `--pick-team`.
 - `--pick-team` launch the interactive picker to search teams by name and create issues only for the selected team.
 - `--dry-run` resolve fields and print the JSON payloads without creating issues.

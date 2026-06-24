@@ -45,6 +45,36 @@ class TeamProjectJiraMappingsTest(TestCase):
         loaded = self.database.load_team_project_jira_mappings(self.connection)
         self.assertEqual(loaded[("team", "team_a")], "MIG-9")
 
+    def test_delete_scoped_keys_removes_only_targeted_rows(self) -> None:
+        self.database.upsert_team_project_jira_mappings(
+            self.connection,
+            [
+                {"kind": "team", "asana_gid": "team_a", "jira_key": "MIG-1"},
+                {"kind": "project", "asana_gid": "proj_1", "jira_key": "MIG-2"},
+                {"kind": "team", "asana_gid": "team_b", "jira_key": "MIG-3"},
+            ],
+            self.sync_time,
+        )
+        deleted = self.database.delete_team_project_jira_mappings(
+            self.connection, [("team", "team_a"), ("project", "proj_1")]
+        )
+        self.assertEqual(deleted, 2)
+        loaded = self.database.load_team_project_jira_mappings(self.connection)
+        self.assertEqual(loaded, {("team", "team_b"): "MIG-3"})
+
+    def test_delete_all_clears_table(self) -> None:
+        self.database.upsert_team_project_jira_mappings(
+            self.connection,
+            [
+                {"kind": "team", "asana_gid": "team_a", "jira_key": "MIG-1"},
+                {"kind": "project", "asana_gid": "proj_1", "jira_key": "MIG-2"},
+            ],
+            self.sync_time,
+        )
+        deleted = self.database.delete_team_project_jira_mappings(self.connection)
+        self.assertEqual(deleted, 2)
+        self.assertEqual(self.database.load_team_project_jira_mappings(self.connection), {})
+
     def test_duplicate_jira_key_for_different_entity_raises(self) -> None:
         self.database.upsert_team_project_jira_mappings(
             self.connection, [{"kind": "team", "asana_gid": "team_a", "jira_key": "MIG-1"}], self.sync_time

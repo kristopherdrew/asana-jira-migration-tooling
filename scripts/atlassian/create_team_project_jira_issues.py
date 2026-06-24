@@ -70,6 +70,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Concurrent workers for task creation (default: {DEFAULT_WORKERS}).")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help=f"Directory for the run report CSV (default: {DEFAULT_OUTPUT_DIR}/).")
     parser.add_argument("--limit", type=int, help="Cap the number of issues created this run (epics counted first). Skips are not counted.")
+    parser.add_argument("--reset", action="store_true", help="Delete persisted Asana->Jira mappings for the in-scope rows before creating (use after deleting the issues in Jira so they get recreated). Honors --team-gid/--pick-team; without a team scope it resets every mapping.")
     parser.add_argument("--dry-run", action="store_true", help="Resolve fields and print the JSON payloads without creating issues.")
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt before creating issues.")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
@@ -331,6 +332,7 @@ def create_team_project_jira_issues(
     map_fields: bool = False,
     workers: int = DEFAULT_WORKERS,
     limit: Optional[int] = None,
+    reset: bool = False,
     dry_run: bool = False,
     assume_yes: bool = False,
     team_gid: Optional[str] = None,
@@ -364,6 +366,23 @@ def create_team_project_jira_issues(
                 selected_team_gid,
                 len(task_rows),
             )
+
+        if reset:
+            if selected_team_gid:
+                reset_keys = [
+                    (row["_kind"], row["_asana_gid"]) for row in epic_rows + task_rows
+                ]
+                deleted = database.delete_team_project_jira_mappings(connection, reset_keys)
+                logger.info(
+                    "Reset %s existing mapping(s) for team '%s' (%s).",
+                    deleted,
+                    epic_rows[0].get("Summary", ""),
+                    selected_team_gid,
+                )
+            else:
+                deleted = database.delete_team_project_jira_mappings(connection)
+                logger.info("Reset %s existing mapping(s) (all teams).", deleted)
+            existing = database.load_team_project_jira_mappings(connection)
 
         if client is None:
             client = JiraClient(
@@ -560,6 +579,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             map_fields=args.map_fields,
             workers=max(args.workers, 1),
             limit=args.limit,
+            reset=args.reset,
             dry_run=args.dry_run,
             assume_yes=args.yes,
             team_gid=args.team_gid,
