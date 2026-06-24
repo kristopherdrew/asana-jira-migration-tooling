@@ -2075,6 +2075,32 @@ class Database:
             if row["kind"] and row["jira_key"]
         }
 
+    def delete_team_project_jira_mappings(
+        self,
+        connection: sqlite3.Connection,
+        keys: Optional[Iterable[Tuple[str, str]]] = None,
+    ) -> int:
+        """Delete team/project -> Jira mappings so re-runs recreate the issues.
+
+        ``keys`` is an iterable of ``(kind, asana_gid)`` pairs to remove (e.g. when
+        scoping a reset to a single team's epic and project tasks). Pass ``None`` to
+        delete every mapping. Returns the number of rows deleted.
+        """
+        if keys is None:
+            cursor = connection.execute("DELETE FROM team_project_jira_mappings")
+            connection.commit()
+            return cursor.rowcount
+
+        deleted = 0
+        for kind, asana_gid in keys:
+            cursor = connection.execute(
+                "DELETE FROM team_project_jira_mappings WHERE kind = ? AND asana_gid = ?",
+                ((kind or "").strip(), (asana_gid or "").strip()),
+            )
+            deleted += cursor.rowcount
+        connection.commit()
+        return deleted
+
     def replace_task_comments(
         self,
         connection: sqlite3.Connection,
