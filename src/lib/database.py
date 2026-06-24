@@ -235,6 +235,7 @@ CREATE TABLE IF NOT EXISTS users (
     resource_type TEXT,
     email TEXT,
     is_active INTEGER,
+    user_task_list_gid TEXT,
     synced_at TEXT NOT NULL
 );
 """
@@ -583,6 +584,7 @@ class Database:
         self._ensure_column(connection, "projects", "is_personal_project", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "task_comments", "is_deleted", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "task_attachments", "is_deleted", "INTEGER DEFAULT 0")
+        self._ensure_column(connection, "users", "user_task_list_gid", "TEXT")
         self._ensure_column(connection, "user_atlassian_accounts", "atlassian_email", "TEXT")
         self._ensure_column(connection, "user_atlassian_accounts", "atlassian_status", "TEXT")
         self._ensure_column(connection, "team_members", "is_admin", "INTEGER")
@@ -832,6 +834,23 @@ class Database:
             user.get("gid"),
             user.get("workspaces") or [],
             synced_at,
+        )
+
+    def update_user_task_list_gid(
+        self,
+        connection: sqlite3.Connection,
+        user_gid: str,
+        user_task_list_gid: Optional[str],
+        synced_at: datetime,
+    ) -> None:
+        """Persist the user's My Tasks (user task list) GID captured via a follow-up API call."""
+        connection.execute(
+            """
+            UPDATE users
+            SET user_task_list_gid = ?, synced_at = ?
+            WHERE gid = ?
+            """,
+            (user_task_list_gid, synced_at.isoformat(), user_gid),
         )
 
     def _replace_user_workspaces(
