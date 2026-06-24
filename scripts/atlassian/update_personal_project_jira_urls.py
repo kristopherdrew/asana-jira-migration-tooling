@@ -10,8 +10,11 @@ that corrected value onto the existing Jira issues in place (``PUT /rest/api/3/i
 preserving their comments, attachments, and history — no delete/recreate.
 
 Only personal-project Task issues that already have an Asana->Jira mapping are
-touched, and only when the row resolves to a real My Tasks link; rows that would
-fall back to a profile URL or blank are skipped and flagged for manual review.
+touched. A row that resolves to a real My Tasks link is ``updated``; a row where no
+proper link can be generated is ``cleared`` (the dead synthetic URL is wiped rather
+than left in place). With ``--clear-first`` the run is split into two passes — clear
+the field on every in-scope issue, then set the new value on the ones that have a
+link — so no stale value can survive even if the set pass misses an issue.
 """
 
 from __future__ import annotations
@@ -75,6 +78,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Concurrent workers for the update pass (default: {DEFAULT_WORKERS}).")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help=f"Directory for the run report CSV (default: {DEFAULT_OUTPUT_DIR}/).")
     parser.add_argument("--limit", type=int, help="Cap the number of issues updated this run.")
+    parser.add_argument("--clear-first", action="store_true", help="Clear the field on every in-scope issue first, then set the new values, so no stale value survives if the set pass misses an issue.")
     parser.add_argument("--dry-run", action="store_true", help="Resolve the field and print the JSON payloads without updating issues.")
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt before updating issues.")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
@@ -112,6 +116,52 @@ def write_report(rows: List[Dict[str, str]], output_path: Path) -> Path:
     return output_path
 
 
+def _run_batch(
+    client: JiraClient,
+    items: List[Tuple[str, Dict[str, object]]],
+    workers: int,
+    log_label: str,
+) -> Dict[str, Optional[str]]:
+    """PUT each ``(jira_key, payload)`` item, returning ``jira_key -> error or None``.
+
+    Runs concurrently across ``workers`` and requeues rate-limited items for a few
+    more rounds (matching the create script's behavior)."""
+    outcomes: Dict[str, Optional[str]] = {}
+
+    def worker(item: Tuple[str, Dict[str, object]]) -> Tuple[Tuple[str, Dict[str, object]], Optional[str], bool]:
+        jira_key, payload = item
+        try:
+            client.update_issue(jira_key, payload)
+            return item, None, False
+        except JiraApiError as exc:
+            return item, str(exc), _is_rate_limited(exc)
+
+    queue = list(items)
+    round_no = 0
+    while queue:
+        requeue: List[Tuple[str, Dict[str, object]]] = []
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+            future_map = {executor.submit(worker, item): item for item in queue}
+            for future in as_completed(future_map):
+                item, error, rate_limited = future.result()
+                jira_key = item[0]
+                if rate_limited and round_no < MAX_RATE_LIMIT_ROUNDS:
+                    requeue.append(item)
+                    logger.warning("Rate limited (%s) %s; requeued (round %s).", log_label, jira_key, round_no + 1)
+                    continue
+                outcomes[jira_key] = error
+                if error:
+                    logger.error("Failed to %s %s: %s", log_label, jira_key, error)
+                else:
+                    logger.info("%s %s", log_label, jira_key)
+        if not requeue:
+            break
+        round_no += 1
+        time.sleep(RATE_LIMIT_REQUEUE_DELAY * round_no)
+        queue = requeue
+    return outcomes
+
+
 def update_personal_project_jira_urls(
     database_path: str,
     jira_base_url: str,
@@ -123,6 +173,7 @@ def update_personal_project_jira_urls(
     field_map_path: Optional[str] = None,
     workers: int = DEFAULT_WORKERS,
     limit: Optional[int] = None,
+    clear_first: bool = False,
     dry_run: bool = False,
     assume_yes: bool = False,
     client: Optional[JiraClient] = None,
@@ -166,9 +217,10 @@ def update_personal_project_jira_urls(
         # Decide what to do with each personal row before touching Jira. Rows that
         # resolve to a real My Tasks link are `updated`; rows where no proper link
         # could be generated are `cleared` (the dead synthetic URL is wiped rather
-        # than left in place).
+        # than left in place). The same clear payload is reused for every issue.
+        clear_payload: Dict[str, object] = {"fields": {field_id: _clear_value(schema)}}
         results: List[Dict[str, str]] = []
-        pending: List[Tuple[str, str, str, str, Dict[str, object]]] = []  # (asana_gid, jira_key, url, action, payload)
+        pending: List[Dict[str, object]] = []  # {asana_gid, jira_key, url, action, set_payload}
         for row in personal_rows:
             asana_gid = row["_asana_gid"]
             url = (row.get(TARGET_COLUMN) or "").strip()
@@ -178,69 +230,79 @@ def update_personal_project_jira_urls(
                 continue
             if _is_my_tasks_url(url):
                 action = "updated"
-                value: object = format_custom_value(schema, url)
+                set_payload: Optional[Dict[str, object]] = {"fields": {field_id: format_custom_value(schema, url)}}
             else:
                 action = "cleared"
-                value = _clear_value(schema)
-            payload = {"fields": {field_id: value}}
-            pending.append((asana_gid, jira_key, url, action, payload))
+                set_payload = None
+            pending.append({"asana_gid": asana_gid, "jira_key": jira_key, "url": url, "action": action, "set_payload": set_payload})
 
         if limit is not None and len(pending) > limit:
-            for asana_gid, jira_key, url, _action, _payload in pending[limit:]:
-                results.append(_result(asana_gid, jira_key, url, "skipped-limit", ""))
+            for p in pending[limit:]:
+                results.append(_result(p["asana_gid"], p["jira_key"], p["url"], "skipped-limit", ""))
             pending = pending[:limit]
 
         logger.info(
-            "%s issue(s) pending update; %s skipped (unmapped/fallback/limit).",
+            "%s issue(s) pending (%s); %s skipped (unmapped/limit).",
             len(pending),
+            "clear-first then set" if clear_first else "single pass",
             len(results),
         )
 
         if dry_run:
-            for asana_gid, jira_key, url, action, payload in pending:
-                logger.info("[dry-run] %s (%s) payload:\n%s", jira_key, action, json.dumps(payload, indent=2))
-                results.append(_result(asana_gid, jira_key, url, f"dry-run-{action}", ""))
+            for p in pending:
+                if clear_first:
+                    logger.info("[dry-run] %s clear payload:\n%s", p["jira_key"], json.dumps(clear_payload, indent=2))
+                payload = p["set_payload"] if p["action"] == "updated" else clear_payload
+                logger.info("[dry-run] %s (%s) payload:\n%s", p["jira_key"], p["action"], json.dumps(payload, indent=2))
+                results.append(_result(p["asana_gid"], p["jira_key"], p["url"], f"dry-run-{p['action']}", "clear-first" if clear_first else ""))
         elif pending:
             if not assume_yes:
+                action_desc = "clear then update" if clear_first else "update"
                 answer = input(
-                    f"About to update Project (Asana) on {len(pending)} issue(s) in {jira_project_key}. Continue? [y/N] "
+                    f"About to {action_desc} Project (Asana) on {len(pending)} issue(s) in {jira_project_key}. Continue? [y/N] "
                 ).strip().lower()
                 if answer not in {"y", "yes"}:
                     raise SystemExit("Aborted by user.")
 
-            def worker(item: Tuple[str, str, str, str, Dict[str, object]]) -> Dict[str, object]:
-                asana_gid, jira_key, url, action, payload = item
-                try:
-                    client.update_issue(jira_key, payload)
-                    return {"item": item, "error": None, "rate_limited": False}
-                except JiraApiError as exc:
-                    return {"item": item, "error": str(exc), "rate_limited": _is_rate_limited(exc)}
-
-            # Rate-limited updates are requeued and retried in later rounds.
-            queue = list(pending)
-            update_round = 0
-            while queue:
-                requeue: List[Tuple[str, str, str, str, Dict[str, object]]] = []
-                with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-                    future_map = {executor.submit(worker, item): item for item in queue}
-                    for future in as_completed(future_map):
-                        res = future.result()
-                        asana_gid, jira_key, url, action, _payload = res["item"]
-                        if res["rate_limited"] and update_round < MAX_RATE_LIMIT_ROUNDS:
-                            requeue.append(res["item"])
-                            logger.warning("Rate limited updating %s; requeued (round %s).", jira_key, update_round + 1)
-                            continue
-                        if res["error"]:
-                            results.append(_result(asana_gid, jira_key, url, "error", res["error"]))
-                            logger.error("Failed to update %s: %s", jira_key, res["error"])
-                            continue
-                        results.append(_result(asana_gid, jira_key, url, action, ""))
-                        logger.info("%s %s -> %s", action.capitalize(), jira_key, url or "(cleared)")
-                if not requeue:
-                    break
-                update_round += 1
-                time.sleep(RATE_LIMIT_REQUEUE_DELAY * update_round)
-                queue = requeue
+            if clear_first:
+                # Pass 1 — clear the field on every in-scope issue so no stale value
+                # can survive. Pass 2 — set the new link on the ones that have one.
+                clear_outcomes = _run_batch(
+                    client, [(p["jira_key"], clear_payload) for p in pending], workers, "cleared"
+                )
+                set_outcomes = _run_batch(
+                    client,
+                    [(p["jira_key"], p["set_payload"]) for p in pending if p["action"] == "updated"],
+                    workers,
+                    "updated",
+                )
+                for p in pending:
+                    key = p["jira_key"]
+                    if p["action"] == "updated":
+                        error = set_outcomes.get(key)
+                        if error:
+                            results.append(_result(p["asana_gid"], key, p["url"], "error", f"set failed (field left cleared): {error}"))
+                        else:
+                            results.append(_result(p["asana_gid"], key, p["url"], "updated", ""))
+                    else:
+                        error = clear_outcomes.get(key)
+                        if error:
+                            results.append(_result(p["asana_gid"], key, p["url"], "error", error))
+                        else:
+                            results.append(_result(p["asana_gid"], key, p["url"], "cleared", ""))
+            else:
+                outcomes = _run_batch(
+                    client,
+                    [(p["jira_key"], p["set_payload"] if p["action"] == "updated" else clear_payload) for p in pending],
+                    workers,
+                    "update",
+                )
+                for p in pending:
+                    error = outcomes.get(p["jira_key"])
+                    if error:
+                        results.append(_result(p["asana_gid"], p["jira_key"], p["url"], "error", error))
+                    else:
+                        results.append(_result(p["asana_gid"], p["jira_key"], p["url"], p["action"], ""))
 
     report_path = write_report(results, output_dir / "personal_project_url_update_report.csv")
     return report_path
@@ -265,6 +327,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             field_map_path=args.field_map,
             workers=max(args.workers, 1),
             limit=args.limit,
+            clear_first=args.clear_first,
             dry_run=args.dry_run,
             assume_yes=args.yes,
         )

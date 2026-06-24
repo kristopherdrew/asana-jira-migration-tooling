@@ -469,6 +469,7 @@ Optional flags:
 - `--task-issue-type <name>` issue type the project issues use (default `Task`).
 - `--field-map <path>` JSON overriding the column→Jira field map (default `Project URL`→`Project (Asana)`).
 - `--workers <n>` concurrent update workers (default 4); `--limit <n>` caps updates this run.
+- `--clear-first` run in two passes — clear the field on every in-scope issue, then set the new values — so no stale value survives even if the set pass misses an issue.
 - `--dry-run` print the PUT payloads without updating; `--yes` skip the confirmation prompt.
 - `--database <path>`, `--workspace-gid <gid>`, `--output-dir <path>`, `--log-level <LEVEL>` as elsewhere.
 

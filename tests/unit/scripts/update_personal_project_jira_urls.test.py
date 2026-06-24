@@ -192,3 +192,28 @@ class UpdatePersonalProjectJiraUrlsTest(TestCase):
         self.assertEqual(len(client.updates), 1)
         self.assertEqual(len([r for r in report if r["status"] == "updated"]), 1)
         self.assertEqual(len([r for r in report if r["status"] == "skipped-limit"]), 1)
+
+    def test_clear_first_clears_then_sets(self) -> None:
+        self._seed_personal_project(user_gid="u7", utl_gid="utl_7", mapped_key="MIG-55")
+        client = FakeJiraClient()
+
+        report = _read_report(self._run(client, clear_first=True))
+
+        # Two PUTs to the same issue: clear (null) first, then the My Tasks link.
+        self.assertEqual(len(client.updates), 2)
+        self.assertEqual(client.updates[0], ("MIG-55", {"fields": {"customfield_10002": None}}))
+        self.assertEqual(
+            client.updates[1],
+            ("MIG-55", {"fields": {"customfield_10002": "https://app.asana.com/0/utl_7/list"}}),
+        )
+        self.assertEqual([r["status"] for r in report], ["updated"])
+
+    def test_clear_first_only_clears_when_no_link(self) -> None:
+        self._seed_personal_project(user_gid="u8", utl_gid=None, mapped_key="MIG-56")
+        client = FakeJiraClient()
+
+        report = _read_report(self._run(client, clear_first=True))
+
+        # No link to set, so only the clear PUT happens.
+        self.assertEqual(client.updates, [("MIG-56", {"fields": {"customfield_10002": None}})])
+        self.assertEqual([r["status"] for r in report], ["cleared"])
