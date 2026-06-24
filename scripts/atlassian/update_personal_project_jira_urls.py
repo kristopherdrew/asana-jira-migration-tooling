@@ -85,6 +85,14 @@ def _is_my_tasks_url(url: str) -> bool:
     return url.startswith(MY_TASKS_URL_PREFIX) and url.endswith(MY_TASKS_URL_SUFFIX)
 
 
+def _clear_value(schema: Dict[str, object]) -> object:
+    """Return the value that clears a Jira field of this schema type.
+
+    Array fields clear with ``[]``; everything else (the string/url custom field
+    ``Project (Asana)`` uses) clears with ``null``."""
+    return [] if str(schema.get("type")) == "array" else None
+
+
 def _result(asana_gid: str, jira_key: str, project_url: str, status: str, message: str) -> Dict[str, str]:
     return {
         "asana_gid": asana_gid,
@@ -155,9 +163,12 @@ def update_personal_project_jira_urls(
         field_id = str(defn.get("fieldId"))
         schema = defn.get("schema") or {}
 
-        # Decide what to do with each personal row before touching Jira.
+        # Decide what to do with each personal row before touching Jira. Rows that
+        # resolve to a real My Tasks link are `updated`; rows where no proper link
+        # could be generated are `cleared` (the dead synthetic URL is wiped rather
+        # than left in place).
         results: List[Dict[str, str]] = []
-        pending: List[Tuple[str, str, str, Dict[str, object]]] = []  # (asana_gid, jira_key, url, payload)
+        pending: List[Tuple[str, str, str, str, Dict[str, object]]] = []  # (asana_gid, jira_key, url, action, payload)
         for row in personal_rows:
             asana_gid = row["_asana_gid"]
             url = (row.get(TARGET_COLUMN) or "").strip()
@@ -165,16 +176,17 @@ def update_personal_project_jira_urls(
             if not jira_key:
                 results.append(_result(asana_gid, "", url, "skipped-unmapped", "no Jira issue mapped"))
                 continue
-            if not _is_my_tasks_url(url):
-                results.append(
-                    _result(asana_gid, jira_key, url, "skipped-fallback", "no My Tasks link (profile/blank)")
-                )
-                continue
-            payload = {"fields": {field_id: format_custom_value(schema, url)}}
-            pending.append((asana_gid, jira_key, url, payload))
+            if _is_my_tasks_url(url):
+                action = "updated"
+                value: object = format_custom_value(schema, url)
+            else:
+                action = "cleared"
+                value = _clear_value(schema)
+            payload = {"fields": {field_id: value}}
+            pending.append((asana_gid, jira_key, url, action, payload))
 
         if limit is not None and len(pending) > limit:
-            for asana_gid, jira_key, url, _payload in pending[limit:]:
+            for asana_gid, jira_key, url, _action, _payload in pending[limit:]:
                 results.append(_result(asana_gid, jira_key, url, "skipped-limit", ""))
             pending = pending[:limit]
 
@@ -185,9 +197,9 @@ def update_personal_project_jira_urls(
         )
 
         if dry_run:
-            for asana_gid, jira_key, url, payload in pending:
-                logger.info("[dry-run] %s update payload:\n%s", jira_key, json.dumps(payload, indent=2))
-                results.append(_result(asana_gid, jira_key, url, "dry-run", ""))
+            for asana_gid, jira_key, url, action, payload in pending:
+                logger.info("[dry-run] %s (%s) payload:\n%s", jira_key, action, json.dumps(payload, indent=2))
+                results.append(_result(asana_gid, jira_key, url, f"dry-run-{action}", ""))
         elif pending:
             if not assume_yes:
                 answer = input(
@@ -196,8 +208,8 @@ def update_personal_project_jira_urls(
                 if answer not in {"y", "yes"}:
                     raise SystemExit("Aborted by user.")
 
-            def worker(item: Tuple[str, str, str, Dict[str, object]]) -> Dict[str, object]:
-                asana_gid, jira_key, url, payload = item
+            def worker(item: Tuple[str, str, str, str, Dict[str, object]]) -> Dict[str, object]:
+                asana_gid, jira_key, url, action, payload = item
                 try:
                     client.update_issue(jira_key, payload)
                     return {"item": item, "error": None, "rate_limited": False}
@@ -208,12 +220,12 @@ def update_personal_project_jira_urls(
             queue = list(pending)
             update_round = 0
             while queue:
-                requeue: List[Tuple[str, str, str, Dict[str, object]]] = []
+                requeue: List[Tuple[str, str, str, str, Dict[str, object]]] = []
                 with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
                     future_map = {executor.submit(worker, item): item for item in queue}
                     for future in as_completed(future_map):
                         res = future.result()
-                        asana_gid, jira_key, url, _payload = res["item"]
+                        asana_gid, jira_key, url, action, _payload = res["item"]
                         if res["rate_limited"] and update_round < MAX_RATE_LIMIT_ROUNDS:
                             requeue.append(res["item"])
                             logger.warning("Rate limited updating %s; requeued (round %s).", jira_key, update_round + 1)
@@ -222,8 +234,8 @@ def update_personal_project_jira_urls(
                             results.append(_result(asana_gid, jira_key, url, "error", res["error"]))
                             logger.error("Failed to update %s: %s", jira_key, res["error"])
                             continue
-                        results.append(_result(asana_gid, jira_key, url, "updated", ""))
-                        logger.info("Updated %s -> %s", jira_key, url)
+                        results.append(_result(asana_gid, jira_key, url, action, ""))
+                        logger.info("%s %s -> %s", action.capitalize(), jira_key, url or "(cleared)")
                 if not requeue:
                     break
                 update_round += 1

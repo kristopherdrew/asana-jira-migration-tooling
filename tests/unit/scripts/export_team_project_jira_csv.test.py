@@ -645,7 +645,7 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         # synthetic `personal_<gid>` project URL.
         self.assertEqual(personal_task["Project URL"], "https://app.asana.com/0/utl_alpha/list")
 
-    def test_personal_project_url_falls_back_to_profile_without_my_tasks_gid(self) -> None:
+    def test_personal_project_url_blank_without_my_tasks_gid(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
         self.database.upsert_user(
@@ -702,9 +702,9 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         personal_task = next(
             row for row in rows if row["Issue Type"] == "Task" and row["Summary"] == "Beta Owner"
         )
-        self.assertEqual(
-            personal_task["Project URL"], "https://app.asana.com/1/ws_1/profile/owner_beta"
-        )
+        # No My Tasks gid -> the field is left blank rather than emitting the dead
+        # synthetic project URL (or a profile-URL fallback).
+        self.assertEqual(personal_task["Project URL"], "")
 
     def test_prefers_active_admin_then_task_creator_when_top_owner_is_inactive(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)

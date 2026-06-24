@@ -28,7 +28,6 @@ from src.lib.asana_urls import (
     build_project_url,
     build_team_url,
     build_user_task_list_url,
-    build_user_url,
     infer_workspace_gid,
 )
 from src.lib.database import Database
@@ -664,11 +663,12 @@ def build_team_project_rows(
         if is_personal:
             # Personal projects use a synthetic `personal_<user_gid>` project gid
             # that has no real Asana project behind it, so a project deep link
-            # would 404. Point at the owner's "My Tasks" list instead, falling
-            # back to their profile (or blank) when the list gid is unknown.
+            # would 404. Point at the owner's "My Tasks" list instead, or leave
+            # blank when the list gid is unknown — the dead synthetic project URL
+            # must never be emitted.
             project_url = build_user_task_list_url(
                 _clean_text(row["owner_user_task_list_gid"])
-            ) or build_user_url(resolved_workspace_gid, _clean_text(row["owner_gid"]))
+            )
         else:
             project_url = build_project_url(resolved_workspace_gid, row["gid"])
         instructions = PERSONAL_TASK_INSTRUCTIONS if is_personal else TASK_INSTRUCTIONS

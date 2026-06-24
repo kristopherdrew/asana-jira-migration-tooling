@@ -147,17 +147,21 @@ class UpdatePersonalProjectJiraUrlsTest(TestCase):
         self.assertEqual(updated[0]["jira_key"], "MIG-50")
         self.assertEqual(updated[0]["project_url"], "https://app.asana.com/0/utl_1/list")
 
-    def test_skips_fallback_rows_without_my_tasks_gid(self) -> None:
-        # No UTL gid -> export emits the profile-URL fallback, which we must not write.
+    def test_clears_field_when_no_my_tasks_gid(self) -> None:
+        # No UTL gid -> no proper link can be generated, so the dead synthetic URL
+        # must be cleared (PUT null) rather than left in place.
         self._seed_personal_project(user_gid="u2", utl_gid=None, mapped_key="MIG-51")
         client = FakeJiraClient()
 
         report = _read_report(self._run(client))
 
-        self.assertEqual(client.updates, [])
-        skipped = [r for r in report if r["status"] == "skipped-fallback"]
-        self.assertEqual(len(skipped), 1)
-        self.assertEqual(skipped[0]["jira_key"], "MIG-51")
+        self.assertEqual(len(client.updates), 1)
+        jira_key, payload = client.updates[0]
+        self.assertEqual(jira_key, "MIG-51")
+        self.assertEqual(payload, {"fields": {"customfield_10002": None}})
+        cleared = [r for r in report if r["status"] == "cleared"]
+        self.assertEqual(len(cleared), 1)
+        self.assertEqual(cleared[0]["jira_key"], "MIG-51")
 
     def test_skips_unmapped_personal_projects(self) -> None:
         self._seed_personal_project(user_gid="u3", utl_gid="utl_3", mapped_key=None)
@@ -176,7 +180,7 @@ class UpdatePersonalProjectJiraUrlsTest(TestCase):
         report = _read_report(self._run(client, dry_run=True))
 
         self.assertEqual(client.updates, [])
-        self.assertEqual([r["status"] for r in report], ["dry-run"])
+        self.assertEqual([r["status"] for r in report], ["dry-run-updated"])
 
     def test_limit_caps_updates(self) -> None:
         self._seed_personal_project(user_gid="u5", utl_gid="utl_5", mapped_key="MIG-53")
