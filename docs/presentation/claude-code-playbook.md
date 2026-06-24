@@ -9,6 +9,11 @@ presenting; this document is for **reading and doing**. It walks a newcomer from
 zero to running a project safely, using a real example: a toolkit that migrates
 an organization's data from **Asana** to **Jira**.
 
+> **Want to go much deeper?** Each of the nine sections below is also expanded
+> into its own in-depth, standalone document in the
+> [`playbook/`](playbook/README.md) deep-dive series — any one of them could be
+> its own presentation.
+
 > **Who this is for.** You don't need to be a software engineer. If you're
 > comfortable following instructions and willing to copy-paste a few commands,
 > you can follow along. Where a technical word appears for the first time, it's
