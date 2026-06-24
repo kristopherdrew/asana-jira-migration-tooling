@@ -447,7 +447,11 @@ Optional flags:
 - `--yes` skip the confirmation prompt.
 - `--database <path>`, `--workspace-gid <gid>`, `--output-dir <path>`, `--log-level <LEVEL>` as elsewhere.
 
-A run report CSV (`team_project_jira_create_<timestamp>.csv`) records each entry's `kind`, `asana_gid`, `summary`, resulting `jira_key`, and `status` (`created`, `skipped-existing`, `skipped-limit`, `dry-run`, or `error`).
+**Resilience (always on, no flags):**
+- **Unassignable assignee fallback** — if Jira rejects an issue with a `400` because the (active) owner can't be assigned issues in the target project (missing "Assignable User" permission, or a customer/app account), the issue is retried once with the assignee removed so it is still created (unassigned). These show up in the run report as `created` with the message `assignee dropped (user not assignable)`.
+- **Rate-limit (429) handling** — the shared Jira client retries 429s with `Retry-After`/jittered backoff. If a creation is still rate limited after that, it is requeued to the end of the run and retried up to a few more rounds (with an escalating delay) before being recorded as `error`. Errored items stay unmapped, so a later re-run picks them up automatically.
+
+A run report CSV (`team_project_jira_create_<timestamp>.csv`) records each entry's `kind`, `asana_gid`, `summary`, resulting `jira_key`, `status` (`created`, `skipped-existing`, `skipped-limit`, `dry-run`, or `error`), and a `message` (e.g. the assignee-dropped note or the error detail).
 
 ### Import Jira Task Keys
 Persists Jira issue keys (after a Jira import) back to SQLite so future exports know which tasks already exist in Jira. Expects Jira export headers `Issue key` and `External issue ID` by default; override column names with `--jira-column` and/or `--task-column` if your export labels them differently (e.g., `Issue Key`, `Custom field (Asana Task ID)`). BOMs and surrounding whitespace in headers are ignored.
