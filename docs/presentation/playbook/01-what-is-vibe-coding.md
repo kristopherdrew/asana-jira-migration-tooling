@@ -2,7 +2,7 @@
 
 *A plain-language deep dive into what vibe coding actually is, where it goes wrong, and how to do the disciplined version — using a real, high-stakes tool as the worked example.*
 
-> **Part 1 of 9 in the Vibe Coding, Safely series.**
+> Part 1 of 9 in the Vibe Coding, Safely series
 > This document expands Section 1 of the [parent playbook](../claude-code-playbook.md) into a standalone, beginner-to-advanced guide.
 
 ---
