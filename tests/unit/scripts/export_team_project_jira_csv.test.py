@@ -549,6 +549,7 @@ class ExportTeamProjectJiraCsvTest(TestCase):
             },
             sync_time,
         )
+        self.database.update_user_task_list_gid(self.connection, "owner_alpha", "utl_alpha", sync_time)
         # A standard team project and a personal task tracker (no team, personal flag set).
         self.database.upsert_project(
             self.connection,
@@ -633,11 +634,77 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         standard_task = by_summary["Alpha Project"]
         self.assertEqual(project_type_by_summary["Alpha Project"], "team_project")
         self.assertEqual(standard_task["Instructions"], TASK_INSTRUCTIONS)
+        # Real projects keep the standard project deep link.
+        self.assertEqual(standard_task["Project URL"], "https://app.asana.com/1/ws_1/project/proj_a1")
 
         personal_task = by_summary["Alpha Owner"]
         self.assertEqual(project_type_by_summary["Alpha Owner"], "personal_project")
         self.assertEqual(personal_task["Instructions"], PERSONAL_TASK_INSTRUCTIONS)
         self.assertNotEqual(PERSONAL_TASK_INSTRUCTIONS, TASK_INSTRUCTIONS)
+        # Personal projects link to the owner's "My Tasks" list, not the dead
+        # synthetic `personal_<gid>` project URL.
+        self.assertEqual(personal_task["Project URL"], "https://app.asana.com/0/utl_alpha/list")
+
+    def test_personal_project_url_falls_back_to_profile_without_my_tasks_gid(self) -> None:
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "owner_beta",
+                "name": "Beta Owner",
+                "resource_type": "user",
+                "email": "beta@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        # No update_user_task_list_gid call: the owner's My Tasks gid is unknown.
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "personal_owner_beta",
+                "name": "Beta Owner",
+                "resource_subtype": "personal_project_placeholder",
+                "archived": False,
+                "owner": {"gid": "owner_beta", "name": "Beta Owner"},
+                "team": {"gid": None, "name": "Beta Owner"},
+                "privacy_setting": "private",
+                "created_at": "2025-01-14T09:00:00Z",
+                "completed": False,
+                "is_personal_project": True,
+                "num_tasks": 1,
+                "num_incomplete_tasks": 1,
+                "num_completed_tasks": 0,
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_pb",
+                "name": "Beta Personal Task",
+                "created_at": "2025-02-02T09:00:00Z",
+                "modified_at": "2025-03-06T09:00:00Z",
+                "completed_at": None,
+                "memberships": [{"project": {"gid": "personal_owner_beta", "name": "Beta Owner"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.connection.commit()
+
+        output_path = export_team_project_jira_csv(str(self.db_path), self.workspace / "exports", filename="report.csv")
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        personal_task = next(
+            row for row in rows if row["Issue Type"] == "Task" and row["Summary"] == "Beta Owner"
+        )
+        self.assertEqual(
+            personal_task["Project URL"], "https://app.asana.com/1/ws_1/profile/owner_beta"
+        )
 
     def test_prefers_active_admin_then_task_creator_when_top_owner_is_inactive(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)

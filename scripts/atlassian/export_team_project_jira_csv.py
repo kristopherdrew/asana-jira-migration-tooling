@@ -24,7 +24,13 @@ from src.lib.adf import (
     render_blocks_adf,
     render_blocks_text,
 )
-from src.lib.asana_urls import build_project_url, build_team_url, infer_workspace_gid
+from src.lib.asana_urls import (
+    build_project_url,
+    build_team_url,
+    build_user_task_list_url,
+    build_user_url,
+    infer_workspace_gid,
+)
 from src.lib.database import Database
 from src.lib.date_formatting import format_report_date, parse_iso_datetime
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -473,6 +479,7 @@ def build_team_project_rows(
                 atc.last_task_updated_at,
                 u.email AS owner_email,
                 u.name AS owner_display_name,
+                u.user_task_list_gid AS owner_user_task_list_gid,
                 ua.atlassian_account_id AS owner_atlassian_id,
                 ua.atlassian_email AS owner_atlassian_email,
                 ua.atlassian_status AS owner_atlassian_status,
@@ -653,8 +660,17 @@ def build_team_project_rows(
         parent_id = epic_task_ids.get(team_gid, no_team_task_id or "")
         task_id = str(task_id_counter)
         task_id_counter += 1
-        project_url = build_project_url(resolved_workspace_gid, row["gid"])
         is_personal = bool(row["is_personal_project"])
+        if is_personal:
+            # Personal projects use a synthetic `personal_<user_gid>` project gid
+            # that has no real Asana project behind it, so a project deep link
+            # would 404. Point at the owner's "My Tasks" list instead, falling
+            # back to their profile (or blank) when the list gid is unknown.
+            project_url = build_user_task_list_url(
+                _clean_text(row["owner_user_task_list_gid"])
+            ) or build_user_url(resolved_workspace_gid, _clean_text(row["owner_gid"]))
+        else:
+            project_url = build_project_url(resolved_workspace_gid, row["gid"])
         instructions = PERSONAL_TASK_INSTRUCTIONS if is_personal else TASK_INSTRUCTIONS
         instructions_adf = (
             PERSONAL_TASK_INSTRUCTIONS_ADF if is_personal else TASK_INSTRUCTIONS_ADF
