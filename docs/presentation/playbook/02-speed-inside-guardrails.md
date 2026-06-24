@@ -2,7 +2,7 @@
 
 *Why AI speed and engineering discipline aren't enemies — and how five interlocking guardrails let you move fast without breaking a live system.*
 
-> Part 2 of 9 in the *Vibe Coding, Safely* series.
+> Part 2 of 9 in the Vibe Coding, Safely series
 
 ---
 
