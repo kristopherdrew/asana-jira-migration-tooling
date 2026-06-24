@@ -129,6 +129,14 @@ class JiraClient:
         Returns the parsed response (``{"id", "key", "self"}``)."""
         return self._request_json("POST", "/rest/api/3/issue", payload=payload)
 
+    def update_issue(self, jira_key: str, payload: Dict[str, object]) -> None:
+        """Edit an existing issue via ``PUT /rest/api/3/issue/{key}``.
+
+        ``payload`` is the standard edit body, e.g. ``{"fields": {...}}``. The
+        endpoint returns ``204 No Content`` on success, so nothing is parsed."""
+        encoded_key = parse.quote(jira_key, safe="")
+        self._request_json("PUT", f"/rest/api/3/issue/{encoded_key}", payload=payload)
+
     def get_createmeta_issue_types(self, project_key: str) -> List[Dict[str, object]]:
         """Return the creatable issue types for a project.
 
