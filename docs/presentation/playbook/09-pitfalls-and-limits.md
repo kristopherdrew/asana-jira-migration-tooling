@@ -740,5 +740,3 @@ Other parts in the series:
 · [06 — The daily loop](06-the-daily-loop.md)
 · [07 — Deciding what NOT to build](07-deciding-what-not-to-build.md)
 · [Series index](README.md)
-</content>
-</invoke>
