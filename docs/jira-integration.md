@@ -98,11 +98,14 @@ Builds a single Jira import CSV for the team-to-project hierarchy. The file is o
 ```bash
 python3 -m scripts.export_team_project_jira_csv
 ```
+By default, projects with **zero synced tasks** are skipped (no Project→Task row is emitted for them), so the export only covers projects that have task data. Pass `--include-empty-projects` to emit a Project→Task row for every project regardless of task count; empty projects render `Task Count (Asana) = 0` (and team-less empty projects join the `No Team` Epic).
+
 Optional flags:
 - `--database <path>` to point at a different SQLite file (default `data/asana.sqlite`).
 - `--output-dir <path>` to change where the CSV is written (default `exports/`).
 - `--filename <name>` to override the auto-generated `team_project_jira_import_<timestamp>.csv` filename.
 - `--workspace-gid <gid>` to force the workspace used when building project URLs.
+- `--include-empty-projects` create a Project→Task row for projects with zero synced tasks (default: skip empty projects).
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 ### Create Team/Project Jira Issues (Direct API)
@@ -128,6 +131,7 @@ Optional flags:
 - `--reset` delete the persisted Asana→Jira mappings for the in-scope rows before creating, so issues you removed in Jira get recreated. Honors `--team-gid`/`--pick-team` (resets just that team's Epic and project Tasks); without a team scope it resets every mapping. Combine with `--dry-run` first to preview what would be recreated.
 - `--team-gid <gid>` restrict the run to a single team — its Epic plus that team's project Tasks (the synthetic `No Team` epic is excluded). Mutually exclusive with `--pick-team`.
 - `--pick-team` launch the interactive picker to search teams by name and create issues only for the selected team.
+- `--include-empty-projects` create an issue for projects with zero synced tasks too (default: skip empty projects, matching the CSV exporter).
 - `--dry-run` resolve fields and print the JSON payloads without creating issues.
 - `--yes` skip the confirmation prompt.
 - `--database <path>`, `--workspace-gid <gid>`, `--output-dir <path>`, `--log-level <LEVEL>` as elsewhere.

@@ -84,6 +84,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--reset", action="store_true", help="Delete persisted Asana->Jira mappings for the in-scope rows before creating (use after deleting the issues in Jira so they get recreated). Honors --team-gid/--pick-team; without a team scope it resets every mapping.")
     parser.add_argument("--dry-run", action="store_true", help="Resolve fields and print the JSON payloads without creating issues.")
     parser.add_argument("--yes", action="store_true", help="Skip the confirmation prompt before creating issues.")
+    parser.add_argument("--include-empty-projects", action="store_true", help="Create a Jira issue for projects that have zero synced tasks (default: skip empty projects).")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(argv)
 
@@ -393,6 +394,7 @@ def create_team_project_jira_issues(
     assume_yes: bool = False,
     team_gid: Optional[str] = None,
     pick_team: bool = False,
+    include_empty_projects: bool = False,
     client: Optional[JiraClient] = None,
 ) -> Path:
     credentials = load_credentials()
@@ -402,7 +404,9 @@ def create_team_project_jira_issues(
     database = Database(db_path=database_path)
     with database.connect() as connection:
         database.initialize(connection)
-        epic_rows, task_rows = build_team_project_rows(connection, workspace_gid)
+        epic_rows, task_rows = build_team_project_rows(
+            connection, workspace_gid, include_empty_projects=include_empty_projects
+        )
         existing = database.load_team_project_jira_mappings(connection)
 
         selected_team_gid = team_gid
@@ -678,6 +682,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             assume_yes=args.yes,
             team_gid=args.team_gid,
             pick_team=args.pick_team,
+            include_empty_projects=args.include_empty_projects,
         )
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(str(exc)) from exc
