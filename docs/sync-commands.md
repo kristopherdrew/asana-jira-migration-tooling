@@ -151,6 +151,19 @@ Optional flags:
 
 Each project run re-fetches its status updates and comments, dedups mirrors, backfills missing authors, soft-deletes rows that are no longer present, and replaces stored rows. Re-runs are idempotent.
 
+### Inspect Project Status Data (Diagnostic)
+Read-only probe (no DB writes) for understanding what a single project's status-update/story endpoints actually return before changing storage. For the given `--project-gid` it calls a set of candidate Asana endpoints — `GET /status_updates?parent=<gid>`, per-update detail `GET /status_updates/<su_gid>`, nested `GET /status_updates/<su_gid>/stories`, `GET /projects/<gid>/stories`, and the deprecated `GET /projects/<gid>/project_statuses` — wrapping each so one failure (e.g. a 404 route) doesn't abort the rest. It prints an endpoint → HTTP-status → record-count summary and dumps the raw JSON to `exports/project_status_probe_<gid>_<timestamp>.json`.
+```bash
+python3 -m scripts.inspect_project_status_data --project-gid <gid>
+```
+Required flags:
+- `--project-gid <gid>`.
+
+Optional flags:
+- `--output-dir <path>` for the JSON dump (default `exports`).
+- `--detail-limit <n>` max status updates to fetch full detail / nested stories for (default 5).
+- `--log-level <LEVEL>`.
+
 ### Sync Personal Tasks
 Pulls every task assigned to the selected user that does **not** belong to any project (true “My Tasks” items) and stores them with `tasks.is_personal = 1`. Each personal task is linked to a synthetic project named after the assignee (e.g., `personal_<user_gid>`) and that pseudo-project is flagged via `projects.is_personal_project = 1`.
 ```bash
