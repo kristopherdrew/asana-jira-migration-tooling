@@ -132,6 +132,8 @@ Optional flags:
 - `--team-gid <gid>` restrict the run to a single team — its Epic plus that team's project Tasks (the synthetic `No Team` epic is excluded). Mutually exclusive with `--pick-team`.
 - `--pick-team` launch the interactive picker to search teams by name and create issues only for the selected team.
 - `--include-empty-projects` create an issue for projects with zero synced tasks too (default: skip empty projects, matching the CSV exporter).
+
+Also available in the Interactive CLI **Atlassian** menu ("Create team/project Jira issues (direct API)"), which prompts for the base URL, project key, optional team scope, the include-empty-projects option, and a dry-run toggle.
 - `--dry-run` resolve fields and print the JSON payloads without creating issues.
 - `--yes` skip the confirmation prompt.
 - `--database <path>`, `--workspace-gid <gid>`, `--output-dir <path>`, `--log-level <LEVEL>` as elsewhere.
