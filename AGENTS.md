@@ -38,6 +38,9 @@ Index of the export / Atlassian / diagnostic scripts (see the linked doc for ful
 - `scripts/atlassian/update_personal_project_jira_urls.py` — one-time in-place repair of the `Project (Asana)` field on personal-project Jira issues so dead synthetic URLs become working My Tasks links. → [jira-integration](docs/jira-integration.md)
 - `scripts/get_project_status_updates.py` — captures project-level status updates + comments into the unified `project_updates` table (kind-tagged, mirror dedup); also in the Interactive CLI Tasks menu. → [sync-commands](docs/sync-commands.md)
 - `scripts/inspect_project_status_data.py` — read-only diagnostic probe of a project's status-update / story endpoints; prints a summary and dumps raw JSON to `exports/`. → [sync-commands](docs/sync-commands.md)
+- `scripts/describe_db.py` — read-only DB introspection: per-table context/provenance (from `src/lib/table_metadata.py`) + live structure (columns, FKs, indexes, row counts, latest `synced_at`); `--table <name>` adds sample rows; `--markdown` regenerates the data dictionary. → [data-model](docs/data-model.md), [db-queries](docs/db-queries.md)
+
+The SQLite schema is documented in [docs/data-model.md](docs/data-model.md) (per-table purpose, source API/CSV, writer method, write semantics, columns) with investigative SQL in [docs/db-queries.md](docs/db-queries.md). The data dictionary is generated — `src/lib/table_metadata.py` is the single source of truth for table context, and a drift-guard test asserts every created table/view has an entry. Regenerate the doc after schema changes: `python3 -m scripts.describe_db --markdown > docs/data-model.md`.
 
 ## Interactive CLI
 - `scripts/interactive_cli.py` is a thin orchestrator over the standalone script `main()`s — it never reimplements business logic, it builds an `argv` list and calls the script's `main(argv)` via `run_script`. Every script stays independently runnable; the CLI is just a guided front end.
