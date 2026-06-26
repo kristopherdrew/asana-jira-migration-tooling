@@ -63,6 +63,50 @@ class IncrementalArgsBuilderTest(TestCase):
             ["--log-level", "WARNING", "--days-back", "3", "--team", "--project-breakdown", "no"],
         )
 
+    def test_create_team_project_jira_issues_include_empty_with_team(self) -> None:
+        with patch(
+            "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_a"
+        ), patch(
+            "builtins.input",
+            side_effect=["https://x.atlassian.net", "MIG", "y", "n"],
+        ):
+            args = interactive_cli.args_create_team_project_jira_issues("INFO")
+        self.assertEqual(
+            args,
+            [
+                "--log-level",
+                "INFO",
+                "--jira-base-url",
+                "https://x.atlassian.net",
+                "--jira-project-key",
+                "MIG",
+                "--team-gid",
+                "team_a",
+                "--include-empty-projects",
+            ],
+        )
+
+    def test_create_team_project_jira_issues_defaults_skip_empty_and_dry_run(self) -> None:
+        with patch(
+            "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value=""
+        ), patch(
+            "builtins.input",
+            side_effect=["https://x.atlassian.net", "MIG", "n", "y"],
+        ):
+            args = interactive_cli.args_create_team_project_jira_issues("INFO")
+        self.assertEqual(
+            args,
+            [
+                "--log-level",
+                "INFO",
+                "--jira-base-url",
+                "https://x.atlassian.net",
+                "--jira-project-key",
+                "MIG",
+                "--dry-run",
+            ],
+        )
+
     def test_team_gids_scope_selected(self) -> None:
         with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(
             "builtins.input",

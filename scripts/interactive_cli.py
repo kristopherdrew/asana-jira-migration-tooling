@@ -45,6 +45,7 @@ from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
     add_service_user_to_teams,
     add_service_user_to_projects,
+    create_team_project_jira_issues,
     export_project_to_jira_csv,
     export_team_project_jira_csv,
     import_jira_task_keys,
@@ -965,6 +966,28 @@ def args_sync_attachments(log_level: str) -> List[str]:
     return args
 
 
+def args_create_team_project_jira_issues(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    jira_base = prompt("Jira base URL (e.g. https://example.atlassian.net)", default="")
+    if not jira_base:
+        raise SystemExit("Jira base URL is required.")
+    jira_project_key = prompt("Target Jira project key (e.g. MIG)", default="")
+    if not jira_project_key:
+        raise SystemExit("Jira project key is required.")
+    args.extend(["--jira-base-url", jira_base, "--jira-project-key", jira_project_key])
+    team_gid = _prompt_team_gid_from_lookup(
+        "team/project Jira creation",
+        "Team GID to restrict creation to (blank = all teams)",
+    )
+    if team_gid:
+        args.extend(["--team-gid", team_gid])
+    if confirm("Include projects with 0 tasks?", default=False):
+        args.append("--include-empty-projects")
+    if confirm("Dry run (resolve fields and print payloads, create nothing)?", default=True):
+        args.append("--dry-run")
+    return args
+
+
 def run_group(title: str, menu: Dict[str, MenuItem]) -> None:
     while True:
         print_menu(title, menu)
@@ -1044,6 +1067,11 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
         "6": MenuItem("6", "Clear export IDs", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level))),
         "7": MenuItem("7", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, ["--clear-jira-project-map"])),
         "8": MenuItem("8", "Sync Jira attachments", lambda: run_sync_attachments(log_level)),
+        "9": MenuItem(
+            "9",
+            "Create team/project Jira issues (direct API)",
+            lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level)),
+        ),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
