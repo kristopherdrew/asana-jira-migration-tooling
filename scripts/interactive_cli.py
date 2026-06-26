@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts import (  # noqa: E402
     get_custom_fields,
     get_projects,
+    get_portfolios,
     get_project_status_updates,
     get_task_extras,
     get_tasks,
@@ -552,6 +553,21 @@ def args_get_project_status_updates(log_level: str) -> List[str]:
     return args
 
 
+def args_portfolios(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    if confirm("Limit to a single portfolio owner? (default: all users)", default=False):
+        owner_gid = _prompt_user_gid_from_lookup(
+            "portfolio owner",
+            "Owner gid",
+        )
+        if owner_gid:
+            args.extend(["--owner-gid", owner_gid])
+    workers = prompt("Workers (default 5)", default="5")
+    if workers:
+        args.extend(["--workers", workers])
+    return args
+
+
 def args_personal_tasks(log_level: str, delta: bool = False) -> List[str]:
     args = build_common_args(log_level)
     assignee = _prompt_user_gid_from_lookup(
@@ -815,7 +831,10 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         run_script(export_team_report.main, args)
 
     def run_team_project_jira_export() -> None:
-        run_script(export_team_project_jira_csv.main, args_report_defaults(log_level))
+        args = args_report_defaults(log_level)
+        if confirm("Include projects with 0 tasks?", default=False):
+            args.append("--include-empty-projects")
+        run_script(export_team_project_jira_csv.main, args)
 
     return {
         "1": MenuItem(
@@ -1004,8 +1023,9 @@ def build_tasks_menu(log_level: str) -> Dict[str, MenuItem]:
         "1": MenuItem("1", "Sync tasks", lambda: run_task_sync_flow(log_level)),
         "2": MenuItem("2", "Sync task extras (comments/attachments)", lambda: run_script(get_task_extras.main, args_get_task_extras(log_level))),
         "3": MenuItem("3", "Sync project status updates (project-level updates/comments)", lambda: run_script(get_project_status_updates.main, args_get_project_status_updates(log_level))),
-        "4": MenuItem("4", "Sync personal tasks (full)", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
-        "5": MenuItem("5", "Incremental updates (recently modified tasks incl. personal)", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
+        "4": MenuItem("4", "Sync portfolios (all users, incl. items/memberships/updates)", lambda: run_script(get_portfolios.main, args_portfolios(log_level))),
+        "5": MenuItem("5", "Sync personal tasks (full)", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
+        "6": MenuItem("6", "Incremental updates (recently modified tasks incl. personal)", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

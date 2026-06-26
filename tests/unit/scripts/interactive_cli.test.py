@@ -192,6 +192,7 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.get_custom_fields.main)
         self.assertEqual(mock_run_script.call_args_list[4].args[1], ["--log-level", "WARNING"])
 
+    @patch("scripts.interactive_cli.confirm", return_value=False)
     @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli._fuzzy_teams", return_value=[{"gid": "team_1", "name": "Team One"}])
     @patch("scripts.interactive_cli._open_sqlite")
@@ -202,6 +203,7 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_open_sqlite,
         mock_fuzzy_teams,
         mock_run_script,
+        mock_confirm,
     ) -> None:
         mock_open_sqlite.return_value = MagicMock()
         menu = interactive_cli.build_reports_menu("DEBUG")

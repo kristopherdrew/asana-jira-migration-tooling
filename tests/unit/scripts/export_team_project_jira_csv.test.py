@@ -533,6 +533,72 @@ class ExportTeamProjectJiraCsvTest(TestCase):
 
         self.assertNotIn("Unexported Project", [row["Summary"] for row in rows])
 
+    def _seed_full_and_empty_projects(self) -> None:
+        """Seed one team with a task-bearing project (proj_full) and an empty
+        project (proj_empty, no synced tasks). Used by the include-empty tests."""
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        self.database.upsert_team(self.connection, {"gid": "team_a", "name": "Alpha Team"}, sync_time)
+        for gid in ("proj_full", "proj_empty"):
+            self.database.upsert_project(
+                self.connection,
+                {
+                    "gid": gid,
+                    "name": "Full Project" if gid == "proj_full" else "Empty Project",
+                    "archived": False,
+                    "team": {"gid": "team_a", "name": "Alpha Team"},
+                    "privacy_setting": "private",
+                    "created_at": "2025-01-10T09:00:00Z",
+                    "completed": False,
+                    "is_personal_project": False,
+                    "num_tasks": 1 if gid == "proj_full" else 0,
+                    "num_incomplete_tasks": 1 if gid == "proj_full" else 0,
+                    "num_completed_tasks": 0,
+                },
+                sync_time,
+            )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_full",
+                "name": "Task Full",
+                "created_at": "2025-02-01T09:00:00Z",
+                "modified_at": "2025-03-05T09:00:00Z",
+                "completed_at": None,
+                "memberships": [{"project": {"gid": "proj_full", "name": "Full Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.connection.commit()
+
+    def _export_summaries(self, *, include_empty_projects: bool) -> dict[str, dict[str, str]]:
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename=f"report_{include_empty_projects}.csv",
+            include_empty_projects=include_empty_projects,
+        )
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            raw_rows = list(csv.reader(handle))
+        header = raw_rows[0]
+        rows = [dict(zip(header, values)) for values in raw_rows[1:]]
+        return {row["Summary"]: row for row in rows}
+
+    def test_empty_projects_skipped_by_default(self) -> None:
+        self._seed_full_and_empty_projects()
+        rows_by_summary = self._export_summaries(include_empty_projects=False)
+        self.assertIn("Full Project", rows_by_summary)
+        self.assertNotIn("Empty Project", rows_by_summary)
+
+    def test_include_empty_projects_emits_zero_task_row(self) -> None:
+        self._seed_full_and_empty_projects()
+        rows_by_summary = self._export_summaries(include_empty_projects=True)
+        self.assertIn("Full Project", rows_by_summary)
+        self.assertIn("Empty Project", rows_by_summary)
+        empty_row = rows_by_summary["Empty Project"]
+        self.assertEqual(empty_row["Issue Type"], "Task")
+        self.assertEqual(empty_row["Task Count (Asana)"], "0")
+
     def test_personal_project_task_uses_personal_instructions(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
 

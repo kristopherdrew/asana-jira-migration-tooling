@@ -441,6 +441,29 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
             sync_time,
         )
 
+    def _seed_empty_project(self) -> None:
+        """Add a project to team_a that has no synced tasks (an empty project)."""
+        sync_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_empty",
+                "name": "Empty Project",
+                "archived": False,
+                "owner": {"gid": "owner_a", "name": "Olly"},
+                "team": {"gid": "team_a", "name": "Alpha Team"},
+                "privacy_setting": "private",
+                "created_at": "2025-01-14T09:00:00Z",
+                "completed": False,
+                "completed_at": None,
+                "is_personal_project": False,
+                "num_tasks": 0,
+                "num_incomplete_tasks": 0,
+                "num_completed_tasks": 0,
+            },
+            sync_time,
+        )
+
     def _seed_inactive_owner_project(self) -> None:
         """A project whose owner is a deactivated Atlassian user, with a task created
         by an active Atlassian user, so the effective owner falls back to the creator."""
@@ -543,6 +566,28 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
         mappings = self.database.load_team_project_jira_mappings(self.connection)
         self.assertEqual(mappings[("team", "team_a")], "MIG-1")
         self.assertEqual(mappings[("project", "proj_1")], "MIG-2")
+
+    def test_empty_project_skipped_by_default(self) -> None:
+        self._seed_empty_project()
+        client = FakeJiraClient()
+        self._run(client)
+        # Epic + proj_1 task only; the empty project is skipped.
+        self.assertEqual(len(client.created), 2)
+        mappings = self.database.load_team_project_jira_mappings(self.connection)
+        self.assertNotIn(("project", "proj_empty"), mappings)
+
+    def test_include_empty_projects_creates_empty_project_issue(self) -> None:
+        self._seed_empty_project()
+        client = FakeJiraClient()
+        self._run(client, include_empty_projects=True)
+        # Epic + proj_1 task + the empty project task.
+        self.assertEqual(len(client.created), 3)
+        mappings = self.database.load_team_project_jira_mappings(self.connection)
+        self.assertIn(("project", "proj_empty"), mappings)
+        empty_payload = next(
+            p for p in client.created if p["fields"].get("summary") == "Empty Project"
+        )
+        self.assertEqual(empty_payload["fields"]["customfield_10011"], 0)
 
     def test_task_assignee_falls_back_to_active_task_creator(self) -> None:
         self._seed_inactive_owner_project()

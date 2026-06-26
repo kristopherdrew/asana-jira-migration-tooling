@@ -221,6 +221,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Optional Asana workspace GID used to build project URLs.",
     )
     parser.add_argument(
+        "--include-empty-projects",
+        action="store_true",
+        help="Create a Jira Task for projects that have zero synced tasks (default: skip empty projects).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
@@ -397,6 +402,7 @@ def _row_owner_email_from_project(row: dict) -> str:
 def build_team_project_rows(
     connection,
     workspace_gid: Optional[str] = None,
+    include_empty_projects: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """Build the Team→Epic and Project→Task rows shared by the CSV exporter and
     the direct Jira issue creator.
@@ -405,7 +411,12 @@ def build_team_project_rows(
     internal ``_kind``/``_asana_gid`` (and, for tasks, ``_parent_kind``/
     ``_parent_asana_gid``) metadata keys used to resolve real Jira parent keys when
     creating issues via the API. The CSV writer ignores the underscore-prefixed
-    keys."""
+    keys.
+
+    By default, projects with zero synced tasks (``actual_task_count`` is NULL)
+    are skipped. Pass ``include_empty_projects=True`` to emit a Project→Task row
+    for every project regardless of task count (empty projects render a task
+    count of ``0``)."""
     resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
     project_rows = connection.execute(
         """
@@ -514,7 +525,7 @@ def build_team_project_rows(
         if team_gid:
             team_groups[team_gid].append(row)
         else:
-            if row["actual_task_count"] is not None:
+            if include_empty_projects or row["actual_task_count"] is not None:
                 no_team_projects.append(row)
 
     team_aggregates: dict[str, dict[str, object]] = {}
@@ -604,10 +615,10 @@ def build_team_project_rows(
     if no_team_projects:
         no_team_task_id = str(task_id_counter)
         task_id_counter += 1
-        # The No-Team bucket only contains projects with synced task data (filtered
-        # above), so every entry has a non-None actual_task_count.
+        # When include_empty_projects is set the bucket can contain projects with a
+        # NULL actual_task_count, so coalesce to 0 before summing.
         no_team_project_count = len(no_team_projects)
-        no_team_task_total = sum(int(project["actual_task_count"]) for project in no_team_projects)
+        no_team_task_total = sum(int(project["actual_task_count"] or 0) for project in no_team_projects)
         epic_rows.append(
             {
                 "Issue Type": "Epic",
@@ -648,7 +659,11 @@ def build_team_project_rows(
         return project_row_sort_key.get(team_gid, no_team_order)
 
     for row in sorted(
-        [project_row for project_row in project_rows if project_row["actual_task_count"] is not None],
+        [
+            project_row
+            for project_row in project_rows
+            if include_empty_projects or project_row["actual_task_count"] is not None
+        ],
         key=lambda row: (
             _project_parent_sort_value(row),
             (row["name"] or "").casefold(),
@@ -701,7 +716,7 @@ def build_team_project_rows(
                 "Project Type": "personal_project" if is_personal else "team_project",
                 "Project Status": "Archived" if bool(row["archived"]) else "Active",
                 "Project Count (Asana)": "",
-                "Task Count (Asana)": str(int(row["actual_task_count"])),
+                "Task Count (Asana)": str(int(row["actual_task_count"] or 0)),
                 "Labels": _label_for_last_active(row["last_task_updated_at"]),
                 "Instructions": instructions,
                 "Description": render_blocks_text(description_blocks),
@@ -750,6 +765,7 @@ def export_team_project_jira_csv(
     output_dir: Path,
     filename: Optional[str] = None,
     workspace_gid: Optional[str] = None,
+    include_empty_projects: bool = False,
 ) -> Path:
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
@@ -764,7 +780,9 @@ def export_team_project_jira_csv(
 
     with database.connect() as connection:
         database.initialize(connection)
-        epic_rows, task_rows = build_team_project_rows(connection, workspace_gid)
+        epic_rows, task_rows = build_team_project_rows(
+            connection, workspace_gid, include_empty_projects=include_empty_projects
+        )
 
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -789,6 +807,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         output_dir=Path(args.output_dir),
         filename=args.filename,
         workspace_gid=args.workspace_gid,
+        include_empty_projects=args.include_empty_projects,
     )
     logger.info("Jira team/project import export completed: %s", output_path)
 
