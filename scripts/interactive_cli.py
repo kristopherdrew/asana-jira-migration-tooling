@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from scripts import (  # noqa: E402
     get_custom_fields,
     get_projects,
+    get_project_status_updates,
     get_task_extras,
     get_tasks,
     get_teams,
@@ -516,6 +517,41 @@ def args_get_task_extras(log_level: str) -> List[str]:
     return args
 
 
+def args_get_project_status_updates(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    print("\nSelect project status-update scope:")
+    print("[1] Single project GID")
+    print("[2] Team interactive picker")
+    print("[3] All teams")
+    print("[4] Multiple project GIDs (comma-separated)")
+    choice = input("Choice (default 1): ").strip() or "1"
+    if choice == "1":
+        project_gid = _prompt_project_gid_from_lookup(
+            "project status updates",
+            "Project GID for status updates",
+        )
+        if not project_gid:
+            raise SystemExit("Project GID is required.")
+        args.extend(["--project-gid", project_gid])
+    elif choice == "2":
+        args.append("--team")
+    elif choice == "3":
+        args.append("--all-teams")
+        excluded = prompt("Exclude team GIDs (comma-separated, optional)", default="")
+        if excluded:
+            args.extend(["--exclude-team-gids", excluded])
+    else:
+        gids = prompt("Project GIDs (comma-separated)", default="")
+        if not gids:
+            raise SystemExit("At least one project GID is required for option 4.")
+        args.extend(["--project-gids", gids])
+
+    workers = prompt("Workers (default 5)", default="5")
+    if workers:
+        args.extend(["--workers", workers])
+    return args
+
+
 def args_personal_tasks(log_level: str, delta: bool = False) -> List[str]:
     args = build_common_args(log_level)
     assignee = _prompt_user_gid_from_lookup(
@@ -967,8 +1003,9 @@ def build_tasks_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Sync tasks", lambda: run_task_sync_flow(log_level)),
         "2": MenuItem("2", "Sync task extras (comments/attachments)", lambda: run_script(get_task_extras.main, args_get_task_extras(log_level))),
-        "3": MenuItem("3", "Sync personal tasks (full)", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
-        "4": MenuItem("4", "Incremental updates (recently modified tasks incl. personal)", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
+        "3": MenuItem("3", "Sync project status updates (project-level updates/comments)", lambda: run_script(get_project_status_updates.main, args_get_project_status_updates(log_level))),
+        "4": MenuItem("4", "Sync personal tasks (full)", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
+        "5": MenuItem("5", "Incremental updates (recently modified tasks incl. personal)", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

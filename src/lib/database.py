@@ -325,6 +325,26 @@ CREATE TABLE IF NOT EXISTS project_custom_field_settings (
 );
 """
 
+PROJECT_UPDATES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS project_updates (
+    gid TEXT PRIMARY KEY,
+    project_gid TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT,
+    status_type TEXT,
+    text TEXT,
+    html_text TEXT,
+    created_at TEXT,
+    created_by_gid TEXT,
+    modified_at TEXT,
+    resource_subtype TEXT,
+    is_edited INTEGER,
+    is_deleted INTEGER DEFAULT 0,
+    synced_at TEXT NOT NULL,
+    FOREIGN KEY (project_gid) REFERENCES projects(gid)
+);
+"""
+
 VIEW_PROJECT_CUSTOM_FIELD_CONFIGURATIONS = """
 CREATE VIEW view_project_custom_field_configurations AS
 WITH field_value_counts AS (
@@ -567,6 +587,7 @@ class Database:
         connection.executescript(PROJECT_SCHEMA)
         connection.executescript(PROJECT_CUSTOM_FIELDS_SCHEMA)
         connection.executescript(PROJECT_CUSTOM_FIELD_SETTINGS_SCHEMA)
+        connection.executescript(PROJECT_UPDATES_SCHEMA)
         connection.executescript(TEAM_MEMBERS_SCHEMA)
         connection.executescript(USER_WORKSPACES_SCHEMA)
         connection.executescript(USER_ATLASSIAN_ACCOUNTS_SCHEMA)
@@ -1813,6 +1834,7 @@ class Database:
         self._ensure_index(connection, "idx_task_followers_task_gid", "task_followers", "task_gid")
         self._ensure_index(connection, "idx_task_comments_task_gid", "task_comments", "task_gid")
         self._ensure_index(connection, "idx_task_attachments_task_gid", "task_attachments", "task_gid")
+        self._ensure_index(connection, "idx_project_updates_project_gid", "project_updates", "project_gid")
         self._ensure_index(connection, "idx_task_tags_task_gid", "task_tags", "task_gid")
         self._ensure_index(
             connection,
@@ -2194,6 +2216,104 @@ class Database:
         newly_deleted = len(existing_gids - new_gids)
         return {
             "analyzed": len(comments),
+            "created": created,
+            "updated": updated,
+            "deleted": newly_deleted,
+        }
+
+    def replace_project_updates(
+        self,
+        connection: sqlite3.Connection,
+        project_gid: Optional[str],
+        updates: Iterable[Dict[str, Any]],
+        synced_at: datetime,
+    ) -> Dict[str, int]:
+        """Replace the stored status updates / comments for a project.
+
+        ``updates`` are pre-normalized rows (see
+        ``src.tasks.project_extras.merge_project_updates``) carrying ``gid``,
+        ``kind`` and the remaining ``project_updates`` columns. Existing rows for
+        the project are soft-deleted, then incoming rows are upserted by ``gid``.
+        """
+        if not project_gid:
+            return {"analyzed": 0, "created": 0, "updated": 0, "deleted": 0}
+
+        updates = list(updates)
+        existing_rows = connection.execute(
+            "SELECT gid FROM project_updates WHERE project_gid = ?",
+            (project_gid,),
+        ).fetchall()
+        existing_gids = {row["gid"] for row in existing_rows}
+        connection.execute(
+            "UPDATE project_updates SET is_deleted = 1 WHERE project_gid = ?",
+            (project_gid,),
+        )
+        rows = []
+        created = 0
+        updated = 0
+        new_gids: Set[str] = set()
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            update_gid = update.get("gid")
+            if not update_gid:
+                continue
+            if update_gid in existing_gids:
+                updated += 1
+            else:
+                created += 1
+            new_gids.add(update_gid)
+            rows.append(
+                {
+                    "gid": update_gid,
+                    "project_gid": project_gid,
+                    "kind": update.get("kind"),
+                    "title": update.get("title"),
+                    "status_type": update.get("status_type"),
+                    "text": update.get("text"),
+                    "html_text": update.get("html_text"),
+                    "created_at": update.get("created_at"),
+                    "created_by_gid": update.get("created_by_gid"),
+                    "modified_at": update.get("modified_at"),
+                    "resource_subtype": update.get("resource_subtype"),
+                    "is_edited": _bool_to_int(update.get("is_edited")),
+                    "is_deleted": 0,
+                    "synced_at": synced_at.isoformat(),
+                }
+            )
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO project_updates (
+                    gid, project_gid, kind, title, status_type, text, html_text,
+                    created_at, created_by_gid, modified_at, resource_subtype,
+                    is_edited, is_deleted, synced_at
+                )
+                VALUES (
+                    :gid, :project_gid, :kind, :title, :status_type, :text, :html_text,
+                    :created_at, :created_by_gid, :modified_at, :resource_subtype,
+                    :is_edited, :is_deleted, :synced_at
+                )
+                ON CONFLICT(gid) DO UPDATE SET
+                    project_gid=excluded.project_gid,
+                    kind=excluded.kind,
+                    title=excluded.title,
+                    status_type=excluded.status_type,
+                    text=excluded.text,
+                    html_text=excluded.html_text,
+                    created_at=excluded.created_at,
+                    created_by_gid=excluded.created_by_gid,
+                    modified_at=excluded.modified_at,
+                    resource_subtype=excluded.resource_subtype,
+                    is_edited=excluded.is_edited,
+                    is_deleted=excluded.is_deleted,
+                    synced_at=excluded.synced_at
+                """,
+                rows,
+            )
+        newly_deleted = len(existing_gids - new_gids)
+        return {
+            "analyzed": len(updates),
             "created": created,
             "updated": updated,
             "deleted": newly_deleted,

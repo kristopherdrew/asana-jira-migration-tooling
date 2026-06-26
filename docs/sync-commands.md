@@ -135,6 +135,22 @@ Optional flags (mirror `get_tasks.py`):
 
 Each project run re-fetches every task’s comments/attachments, backfills missing authors, replaces stored rows, and logs progress every ~25 tasks.
 
+### Sync Project Status Updates
+Captures the narrative content that lives on a project itself—status updates and project comments—and stores it in the unified `project_updates` table. This covers projects that hold status updates/comments but have **no tasks** (otherwise invisible to the migration). Two Asana sources are merged: structured status updates (`GET /status_updates?parent=<project_gid>`) and human-authored project comments (`comment_added` stories from `GET /projects/<project_gid>/stories`). Each row is tagged with `kind` (`status_update` or `comment`); status updates keep their `title`, `status_type`, and `html_text`. Asana auto-generates a `comment_added` story mirroring each status update, so any comment whose `(created_by, created_at)` matches a status update is dropped in favor of the richer status-update row. System stories (owner changes, custom-field edits, etc.) are excluded, and rows are stored chronologically.
+```bash
+python3 -m scripts.get_project_status_updates --project-gid <gid>
+```
+Required flags:
+- One of `--project-gid`, `--project-gids`, `--team`, `--team-gids`, or `--all-teams`.
+
+Optional flags:
+- `--project-gid <gid>` / `--project-gids <gid1,gid2>` for one or more specific projects.
+- `--team` for the interactive picker, or `--team-gids <gid1,gid2>` / `--all-teams` (+ `--exclude-team-gids <gid>`) for batches.
+- `--workers <n>` to tune per-project fetch concurrency (default 5).
+- `--workspace-gid <gid>` (logging only) and `--log-level <LEVEL>`.
+
+Each project run re-fetches its status updates and comments, dedups mirrors, backfills missing authors, soft-deletes rows that are no longer present, and replaces stored rows. Re-runs are idempotent.
+
 ### Sync Personal Tasks
 Pulls every task assigned to the selected user that does **not** belong to any project (true “My Tasks” items) and stores them with `tasks.is_personal = 1`. Each personal task is linked to a synthetic project named after the assignee (e.g., `personal_<user_gid>`) and that pseudo-project is flagged via `projects.is_personal_project = 1`.
 ```bash
