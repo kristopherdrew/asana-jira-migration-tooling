@@ -30,6 +30,7 @@ This is a quick index; full purpose/inputs/outputs/flags for every script live i
 Index of the export / Atlassian / diagnostic scripts (see the linked doc for full detail):
 - `scripts/export_users.py` — exports the `users` table + workspace memberships to CSV, with per-user task activity counts, Atlassian id/status, and `last_active_date`. → [reports](docs/reports.md)
 - `scripts/export_custom_field_usage_report.py` — one row per (project, custom field) actually populated on a task, to scope which fields to migrate. → [reports](docs/reports.md)
+- `scripts/export_portfolio_report.py` — portfolio migration-scoping export: a per-portfolio summary (Atlassian-aware owner/creator, item/member/custom-field rollups, status snapshot, hierarchy: is_top_level/nesting_depth/parents) plus a portfolio→items companion CSV (`--summary-only` skips it). → [reports](docs/reports.md)
 - `scripts/update_atlassian_user_map.py` — populates `user_atlassian_accounts` (Asana GID → Atlassian id/status) from a mapping CSV or a raw Atlassian user export (matched by email). → [jira-integration](docs/jira-integration.md)
 - `scripts/search_jira_external_ids.py` — harvests an external-ID field from Jira (`POST /rest/api/3/search/jql`) and upserts Jira→Asana mappings into SQLite. → [jira-integration](docs/jira-integration.md)
 - `scripts/export_project_to_jira_csv.py` — per-task Jira import CSV for a project (comments, custom fields, paired user/Atlassian columns) plus a `_field_counts.csv` companion; `--stats-only` prints stats. → [jira-integration](docs/jira-integration.md)

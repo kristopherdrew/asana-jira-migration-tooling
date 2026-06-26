@@ -17,6 +17,12 @@ def build_project_url(workspace_gid: Optional[str], project_gid: Optional[str]) 
     return f"https://app.asana.com/1/{workspace_gid}/project/{project_gid}"
 
 
+def build_portfolio_url(workspace_gid: Optional[str], portfolio_gid: Optional[str]) -> str:
+    if not workspace_gid or not portfolio_gid:
+        return ""
+    return f"https://app.asana.com/1/{workspace_gid}/portfolio/{portfolio_gid}"
+
+
 def build_user_url(workspace_gid: Optional[str], user_gid: Optional[str]) -> str:
     if not workspace_gid or not user_gid:
         return ""

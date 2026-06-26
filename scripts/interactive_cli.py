@@ -40,6 +40,7 @@ from scripts import (  # noqa: E402
     export_project_details_report,
     export_team_memberships,
     export_custom_field_usage_report,
+    export_portfolio_report,
 )
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
@@ -837,6 +838,12 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             args.append("--include-empty-projects")
         run_script(export_team_project_jira_csv.main, args)
 
+    def run_portfolio_report() -> None:
+        args = args_report_defaults(log_level)
+        if not confirm("Include the portfolio→items companion CSV?", default=True):
+            args.append("--summary-only")
+        run_script(export_portfolio_report.main, args)
+
     return {
         "1": MenuItem(
             "1",
@@ -867,6 +874,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "6",
             "Export team/project Jira CSV",
             run_team_project_jira_export,
+        ),
+        "7": MenuItem(
+            "7",
+            "Export portfolio report (summary + items)",
+            run_portfolio_report,
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
