@@ -68,6 +68,25 @@ Optional flags:
 
 In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
 
+### Portfolio Report
+Exports portfolios from SQLite for migration scoping. Writes two CSVs: a **summary** (`portfolio_details_<timestamp>.csv`, one row per portfolio) and an **items companion** (`portfolio_details_<timestamp>_items.csv`, one row per portfolio item) — pass `--summary-only` to skip the companion.
+
+The summary carries `portfolio_gid`/`portfolio_name`/`portfolio_url`, `color`, `public`, the owner and creator each resolved to `*_name`/`*_email`/`*_atlassian_status` (from the `users` and `user_atlassian_accounts` tables; blank without a mapping), dates (`created_at`, `start_on`, `due_on`, `last_status_update_at`) as `YYYY-MM-DD`, the latest status snapshot (`current_status_type`, `current_status_title`) plus `status_update_count`, and content rollups from `portfolio_items` joined to `projects`: `num_items`, `num_projects`, `num_active_projects`, `num_archived_projects`, `num_projects_not_synced` (item projects absent from the local snapshot), and `num_nested_portfolios`. It also includes `num_members`, `num_custom_field_settings` with a `;`-joined `custom_fields` name list, and hierarchy placement: `is_top_level`, `nesting_depth` (0 = top-level; computed cycle-safe from the nesting graph), and a `;`-joined `parent_portfolio_names`. `synced_at` is the final column.
+
+The items companion carries `portfolio_gid`/`portfolio_name`/`portfolio_url`, `position`, `item_type` (`project`|`portfolio`), `item_gid`/`item_name`/`item_url`, and—for project items—`project_team_name`, `project_archived`, and `project_num_tasks`. `in_scope` is `true` when the item was captured in the local snapshot (its gid exists in `projects` or `portfolios`) and `false` otherwise (e.g. archived/other-workspace projects not synced). Run `get_portfolios` first to populate the portfolio tables.
+```bash
+python3 -m scripts.export_portfolio_report --database data/asana.sqlite
+```
+Required flags:
+- (none; uses `data/asana.sqlite` by default).
+
+Optional flags:
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated summary filename (the companion derives `<stem>_items.csv` from it).
+- `--summary-only` to write only the per-portfolio summary and skip the items companion.
+- `--workspace-gid <gid>` to force the workspace used when building portfolio/project URLs.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
 ### Team Memberships Report
 Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, admin flags, direct Asana team/user URLs, and sync dates in one place. If the user snapshot is missing, the report still keeps the membership row and falls back to `unknown_user <gid>`.
 ```bash
