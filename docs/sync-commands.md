@@ -31,6 +31,20 @@ Optional flags:
 - `--page-size <n>` to adjust the Asana pagination size (default 100).
 - `--archived-scope <active|archived|all>` to decide which lifecycle state(s) to sync.
 
+### Sync Portfolios
+Captures Asana portfolios and everything attached to them. Because Asana cannot list portfolios workspace-wide (`GET /portfolios` requires an `owner`), the script iterates over every user in the `users` table (run `get_users` first) and lists the portfolios each one owns. For every discovered portfolio it stores the record (`portfolios`), its member projects and nested portfolios (`portfolio_items`), portfolio-scoped custom field settings (`portfolio_custom_field_settings`), memberships (`portfolio_memberships`), and full status-update history (`portfolio_updates`). Items whose `resource_type` is `portfolio` are recursed into and fetched even when no listed user owns them, with a cycle/dedup guard so each portfolio is captured once.
+```bash
+python3 -m scripts.get_portfolios
+```
+Required flags:
+- (none; uses `ASANA_WORKSPACE_GID` from the resolved credentials).
+
+Optional flags:
+- `--workspace-gid <gid>` to override the workspace ID from the resolved credentials.
+- `--owner-gid <gid>` to limit discovery to a single portfolio owner instead of every user.
+- `--page-size <n>` to adjust the Asana pagination size (default 100).
+- `--workers <n>` to set the number of concurrent fetch workers (default 5). DB writes always happen on the main thread.
+
 ### Sync Custom Fields
 Fetches every custom field definition available in the workspace—including enum option catalogs, formatting metadata, and any project-local (non-global) fields discovered via project settings—and stores it in `data/asana.sqlite`. Ownership data (creator, owner) is intentionally excluded.
 ```bash

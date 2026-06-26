@@ -39,6 +39,7 @@ GROUP_ORDER: List[str] = [
     "Custom fields & tags",
     "Task sub-resources",
     "Project sub-resources",
+    "Portfolio sub-resources",
     "Membership & identity",
     "Jira / Atlassian mapping",
     "Sync bookkeeping",
@@ -87,6 +88,15 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         ["scripts/get_tasks.py", "scripts/get_personal_tasks.py", "scripts/get_incremental_updates.py"],
         "upsert_task",
         "Upsert by gid (PK); also writes task_projects / task_custom_fields / task_custom_field_multi_enum / task_relationships / task_followers / task_tags / tags.",
+    ),
+    "portfolios": _m(
+        "portfolios",
+        "Core entities",
+        "Portfolio definitions (groupings of projects/nested portfolios), owner, dates, and latest status snapshot.",
+        "GET /portfolios?workspace={gid}&owner={user_gid} (per owner); GET /portfolios/{gid} (nested recursion)",
+        ["scripts/get_portfolios.py"],
+        "upsert_portfolio",
+        "Upsert by gid (PK); also writes portfolio_custom_field_settings when settings are supplied.",
     ),
     # ---------------- Custom fields & tags ----------------
     "custom_fields": _m(
@@ -225,6 +235,43 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         ["scripts/get_project_status_updates.py", "scripts/get_incremental_updates.py"],
         "replace_project_updates",
         "Soft-delete per project_gid then upsert by gid (PK); is_deleted flag.",
+    ),
+    # ---------------- Portfolio sub-resources ----------------
+    "portfolio_items": _m(
+        "portfolio_items",
+        "Portfolio sub-resources",
+        "Junction: the projects and nested portfolios contained in each portfolio, in display order.",
+        "GET /portfolios/{gid}/items",
+        ["scripts/get_portfolios.py"],
+        "replace_portfolio_items",
+        "Full-replace per portfolio_gid. PK (portfolio_gid, item_gid); resource_type is project|portfolio.",
+    ),
+    "portfolio_custom_field_settings": _m(
+        "portfolio_custom_field_settings",
+        "Portfolio sub-resources",
+        "Per-portfolio custom field configuration (importance, global-to-workspace).",
+        "GET /portfolios/{gid}/custom_field_settings",
+        ["scripts/get_portfolios.py"],
+        "_replace_portfolio_custom_field_settings (via upsert_portfolio)",
+        "Full-replace per portfolio_gid. PK (portfolio_gid, custom_field_gid).",
+    ),
+    "portfolio_memberships": _m(
+        "portfolio_memberships",
+        "Portfolio sub-resources",
+        "Users with access to each portfolio (distinct from owner) and their access level.",
+        "GET /portfolio_memberships?portfolio={gid}",
+        ["scripts/get_portfolios.py"],
+        "replace_portfolio_memberships",
+        "Full-replace per portfolio_gid. PK (portfolio_gid, user_gid). FK→portfolios, FK→users.",
+    ),
+    "portfolio_updates": _m(
+        "portfolio_updates",
+        "Portfolio sub-resources",
+        "Portfolio-level status updates (kind-tagged status_update).",
+        "GET /status_updates?parent={gid}, normalized by merge_project_updates",
+        ["scripts/get_portfolios.py"],
+        "replace_portfolio_updates",
+        "Soft-delete per portfolio_gid then upsert by gid (PK); is_deleted flag.",
     ),
     # ---------------- Membership & identity ----------------
     "team_members": _m(

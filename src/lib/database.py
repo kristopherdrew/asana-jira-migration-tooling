@@ -345,6 +345,87 @@ CREATE TABLE IF NOT EXISTS project_updates (
 );
 """
 
+PORTFOLIOS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS portfolios (
+    gid TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    color TEXT,
+    permalink_url TEXT,
+    public INTEGER,
+    owner_gid TEXT,
+    owner_name TEXT,
+    created_by_gid TEXT,
+    created_by_name TEXT,
+    created_at TEXT,
+    start_on TEXT,
+    due_on TEXT,
+    workspace_gid TEXT,
+    current_status_type TEXT,
+    current_status_title TEXT,
+    synced_at TEXT NOT NULL
+);
+"""
+
+PORTFOLIO_ITEMS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS portfolio_items (
+    portfolio_gid TEXT NOT NULL,
+    item_gid TEXT NOT NULL,
+    resource_type TEXT,
+    item_name TEXT,
+    position INTEGER,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (portfolio_gid, item_gid),
+    FOREIGN KEY (portfolio_gid) REFERENCES portfolios(gid)
+);
+"""
+
+PORTFOLIO_CUSTOM_FIELD_SETTINGS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS portfolio_custom_field_settings (
+    portfolio_gid TEXT NOT NULL,
+    custom_field_gid TEXT NOT NULL,
+    custom_field_name TEXT,
+    custom_field_type TEXT,
+    is_important INTEGER,
+    is_global_to_workspace INTEGER,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (portfolio_gid, custom_field_gid),
+    FOREIGN KEY (portfolio_gid) REFERENCES portfolios(gid)
+);
+"""
+
+PORTFOLIO_MEMBERSHIPS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS portfolio_memberships (
+    portfolio_gid TEXT NOT NULL,
+    user_gid TEXT NOT NULL,
+    user_name TEXT,
+    access_level TEXT,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (portfolio_gid, user_gid),
+    FOREIGN KEY (portfolio_gid) REFERENCES portfolios(gid),
+    FOREIGN KEY (user_gid) REFERENCES users(gid)
+);
+"""
+
+PORTFOLIO_UPDATES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS portfolio_updates (
+    gid TEXT PRIMARY KEY,
+    portfolio_gid TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT,
+    status_type TEXT,
+    text TEXT,
+    html_text TEXT,
+    created_at TEXT,
+    created_by_gid TEXT,
+    modified_at TEXT,
+    resource_subtype TEXT,
+    is_edited INTEGER,
+    is_deleted INTEGER DEFAULT 0,
+    synced_at TEXT NOT NULL,
+    FOREIGN KEY (portfolio_gid) REFERENCES portfolios(gid)
+);
+"""
+
 VIEW_PROJECT_CUSTOM_FIELD_CONFIGURATIONS = """
 CREATE VIEW view_project_custom_field_configurations AS
 WITH field_value_counts AS (
@@ -588,6 +669,11 @@ class Database:
         connection.executescript(PROJECT_CUSTOM_FIELDS_SCHEMA)
         connection.executescript(PROJECT_CUSTOM_FIELD_SETTINGS_SCHEMA)
         connection.executescript(PROJECT_UPDATES_SCHEMA)
+        connection.executescript(PORTFOLIOS_SCHEMA)
+        connection.executescript(PORTFOLIO_ITEMS_SCHEMA)
+        connection.executescript(PORTFOLIO_CUSTOM_FIELD_SETTINGS_SCHEMA)
+        connection.executescript(PORTFOLIO_MEMBERSHIPS_SCHEMA)
+        connection.executescript(PORTFOLIO_UPDATES_SCHEMA)
         connection.executescript(TEAM_MEMBERS_SCHEMA)
         connection.executescript(USER_WORKSPACES_SCHEMA)
         connection.executescript(USER_ATLASSIAN_ACCOUNTS_SCHEMA)
@@ -823,6 +909,300 @@ class Database:
                 """,
             rows,
         )
+
+    def upsert_portfolio(self, connection: sqlite3.Connection, portfolio: Dict[str, Any], synced_at: datetime) -> None:
+        owner = portfolio.get("owner") or {}
+        created_by = portfolio.get("created_by") or {}
+        current_status = portfolio.get("current_status_update") or {}
+        payload = {
+            "gid": portfolio.get("gid"),
+            "name": portfolio.get("name"),
+            "color": portfolio.get("color"),
+            "permalink_url": portfolio.get("permalink_url"),
+            "public": _bool_to_int(portfolio.get("public")),
+            "owner_gid": owner.get("gid"),
+            "owner_name": owner.get("name"),
+            "created_by_gid": created_by.get("gid"),
+            "created_by_name": created_by.get("name"),
+            "created_at": portfolio.get("created_at"),
+            "start_on": portfolio.get("start_on"),
+            "due_on": portfolio.get("due_on"),
+            "workspace_gid": (portfolio.get("workspace") or {}).get("gid"),
+            "current_status_type": current_status.get("status_type"),
+            "current_status_title": current_status.get("title"),
+            "synced_at": synced_at.isoformat(),
+        }
+        connection.execute(
+            """
+            INSERT INTO portfolios (
+                gid, name, color, permalink_url, public,
+                owner_gid, owner_name, created_by_gid, created_by_name,
+                created_at, start_on, due_on, workspace_gid,
+                current_status_type, current_status_title, synced_at
+            )
+            VALUES (
+                :gid, :name, :color, :permalink_url, :public,
+                :owner_gid, :owner_name, :created_by_gid, :created_by_name,
+                :created_at, :start_on, :due_on, :workspace_gid,
+                :current_status_type, :current_status_title, :synced_at
+            )
+            ON CONFLICT(gid) DO UPDATE SET
+                name=excluded.name,
+                color=excluded.color,
+                permalink_url=excluded.permalink_url,
+                public=excluded.public,
+                owner_gid=excluded.owner_gid,
+                owner_name=excluded.owner_name,
+                created_by_gid=excluded.created_by_gid,
+                created_by_name=excluded.created_by_name,
+                created_at=excluded.created_at,
+                start_on=excluded.start_on,
+                due_on=excluded.due_on,
+                workspace_gid=excluded.workspace_gid,
+                current_status_type=excluded.current_status_type,
+                current_status_title=excluded.current_status_title,
+                synced_at=excluded.synced_at
+            """,
+            payload,
+        )
+
+        if "custom_field_settings" in portfolio:
+            self._replace_portfolio_custom_field_settings(
+                connection,
+                portfolio.get("gid"),
+                portfolio.get("custom_field_settings") or [],
+                synced_at,
+            )
+
+    def replace_portfolio_items(
+        self,
+        connection: sqlite3.Connection,
+        portfolio_gid: Optional[str],
+        items: Iterable[Dict[str, Any]],
+        synced_at: datetime,
+    ) -> int:
+        if not portfolio_gid:
+            return 0
+        connection.execute("DELETE FROM portfolio_items WHERE portfolio_gid = ?", (portfolio_gid,))
+        rows = []
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            item_gid = item.get("gid")
+            if not item_gid:
+                continue
+            rows.append(
+                {
+                    "portfolio_gid": portfolio_gid,
+                    "item_gid": item_gid,
+                    "resource_type": item.get("resource_type"),
+                    "item_name": item.get("name"),
+                    "position": index,
+                    "synced_at": synced_at.isoformat(),
+                }
+            )
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO portfolio_items (
+                    portfolio_gid, item_gid, resource_type, item_name, position, synced_at
+                )
+                VALUES (
+                    :portfolio_gid, :item_gid, :resource_type, :item_name, :position, :synced_at
+                )
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def _replace_portfolio_custom_field_settings(
+        self,
+        connection: sqlite3.Connection,
+        portfolio_gid: Optional[str],
+        settings: Iterable[Dict[str, Any]],
+        synced_at: datetime,
+    ) -> int:
+        if not portfolio_gid:
+            return 0
+        connection.execute(
+            "DELETE FROM portfolio_custom_field_settings WHERE portfolio_gid = ?",
+            (portfolio_gid,),
+        )
+        rows = []
+        for setting in settings:
+            if not isinstance(setting, dict):
+                continue
+            custom_field = setting.get("custom_field") or {}
+            custom_field_gid = custom_field.get("gid")
+            if not custom_field_gid:
+                continue
+            rows.append(
+                {
+                    "portfolio_gid": portfolio_gid,
+                    "custom_field_gid": custom_field_gid,
+                    "custom_field_name": custom_field.get("name"),
+                    "custom_field_type": custom_field.get("type"),
+                    "is_important": _bool_to_int(setting.get("is_important")),
+                    "is_global_to_workspace": _bool_to_int(custom_field.get("is_global_to_workspace")),
+                    "synced_at": synced_at.isoformat(),
+                }
+            )
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO portfolio_custom_field_settings (
+                    portfolio_gid, custom_field_gid, custom_field_name,
+                    custom_field_type, is_important, is_global_to_workspace, synced_at
+                )
+                VALUES (
+                    :portfolio_gid, :custom_field_gid, :custom_field_name,
+                    :custom_field_type, :is_important, :is_global_to_workspace, :synced_at
+                )
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def replace_portfolio_memberships(
+        self,
+        connection: sqlite3.Connection,
+        portfolio_gid: Optional[str],
+        memberships: Iterable[Dict[str, Any]],
+        synced_at: datetime,
+    ) -> int:
+        if not portfolio_gid:
+            return 0
+        connection.execute("DELETE FROM portfolio_memberships WHERE portfolio_gid = ?", (portfolio_gid,))
+        rows = []
+        seen: Set[str] = set()
+        for membership in memberships:
+            if not isinstance(membership, dict):
+                continue
+            user = membership.get("user") or {}
+            user_gid = user.get("gid")
+            if not user_gid or user_gid in seen:
+                continue
+            seen.add(user_gid)
+            rows.append(
+                {
+                    "portfolio_gid": portfolio_gid,
+                    "user_gid": user_gid,
+                    "user_name": user.get("name"),
+                    "access_level": membership.get("access_level"),
+                    "synced_at": synced_at.isoformat(),
+                }
+            )
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO portfolio_memberships (
+                    portfolio_gid, user_gid, user_name, access_level, synced_at
+                )
+                VALUES (
+                    :portfolio_gid, :user_gid, :user_name, :access_level, :synced_at
+                )
+                """,
+                rows,
+            )
+        return len(rows)
+
+    def replace_portfolio_updates(
+        self,
+        connection: sqlite3.Connection,
+        portfolio_gid: Optional[str],
+        updates: Iterable[Dict[str, Any]],
+        synced_at: datetime,
+    ) -> Dict[str, int]:
+        """Replace the stored status updates for a portfolio.
+
+        ``updates`` are pre-normalized rows (see
+        ``src.tasks.project_extras.merge_project_updates``) carrying ``gid``,
+        ``kind`` and the remaining ``portfolio_updates`` columns. Existing rows for
+        the portfolio are soft-deleted, then incoming rows are upserted by ``gid``.
+        """
+        if not portfolio_gid:
+            return {"analyzed": 0, "created": 0, "updated": 0, "deleted": 0}
+
+        updates = list(updates)
+        existing_rows = connection.execute(
+            "SELECT gid FROM portfolio_updates WHERE portfolio_gid = ?",
+            (portfolio_gid,),
+        ).fetchall()
+        existing_gids = {row["gid"] for row in existing_rows}
+        connection.execute(
+            "UPDATE portfolio_updates SET is_deleted = 1 WHERE portfolio_gid = ?",
+            (portfolio_gid,),
+        )
+        rows = []
+        created = 0
+        updated = 0
+        new_gids: Set[str] = set()
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            update_gid = update.get("gid")
+            if not update_gid:
+                continue
+            if update_gid in existing_gids:
+                updated += 1
+            else:
+                created += 1
+            new_gids.add(update_gid)
+            rows.append(
+                {
+                    "gid": update_gid,
+                    "portfolio_gid": portfolio_gid,
+                    "kind": update.get("kind"),
+                    "title": update.get("title"),
+                    "status_type": update.get("status_type"),
+                    "text": update.get("text"),
+                    "html_text": update.get("html_text"),
+                    "created_at": update.get("created_at"),
+                    "created_by_gid": update.get("created_by_gid"),
+                    "modified_at": update.get("modified_at"),
+                    "resource_subtype": update.get("resource_subtype"),
+                    "is_edited": _bool_to_int(update.get("is_edited")),
+                    "is_deleted": 0,
+                    "synced_at": synced_at.isoformat(),
+                }
+            )
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO portfolio_updates (
+                    gid, portfolio_gid, kind, title, status_type, text, html_text,
+                    created_at, created_by_gid, modified_at, resource_subtype,
+                    is_edited, is_deleted, synced_at
+                )
+                VALUES (
+                    :gid, :portfolio_gid, :kind, :title, :status_type, :text, :html_text,
+                    :created_at, :created_by_gid, :modified_at, :resource_subtype,
+                    :is_edited, :is_deleted, :synced_at
+                )
+                ON CONFLICT(gid) DO UPDATE SET
+                    portfolio_gid=excluded.portfolio_gid,
+                    kind=excluded.kind,
+                    title=excluded.title,
+                    status_type=excluded.status_type,
+                    text=excluded.text,
+                    html_text=excluded.html_text,
+                    created_at=excluded.created_at,
+                    created_by_gid=excluded.created_by_gid,
+                    modified_at=excluded.modified_at,
+                    resource_subtype=excluded.resource_subtype,
+                    is_edited=excluded.is_edited,
+                    is_deleted=excluded.is_deleted,
+                    synced_at=excluded.synced_at
+                """,
+                rows,
+            )
+        newly_deleted = len(existing_gids - new_gids)
+        return {
+            "analyzed": len(updates),
+            "created": created,
+            "updated": updated,
+            "deleted": newly_deleted,
+        }
 
     def upsert_user(self, connection: sqlite3.Connection, user: Dict[str, Any], synced_at: datetime) -> None:
         payload = {
@@ -1835,6 +2215,15 @@ class Database:
         self._ensure_index(connection, "idx_task_comments_task_gid", "task_comments", "task_gid")
         self._ensure_index(connection, "idx_task_attachments_task_gid", "task_attachments", "task_gid")
         self._ensure_index(connection, "idx_project_updates_project_gid", "project_updates", "project_gid")
+        self._ensure_index(connection, "idx_portfolio_items_portfolio_gid", "portfolio_items", "portfolio_gid")
+        self._ensure_index(connection, "idx_portfolio_items_item_gid", "portfolio_items", "item_gid")
+        self._ensure_index(
+            connection,
+            "idx_portfolio_memberships_portfolio_gid",
+            "portfolio_memberships",
+            "portfolio_gid",
+        )
+        self._ensure_index(connection, "idx_portfolio_updates_portfolio_gid", "portfolio_updates", "portfolio_gid")
         self._ensure_index(connection, "idx_task_tags_task_gid", "task_tags", "task_gid")
         self._ensure_index(
             connection,

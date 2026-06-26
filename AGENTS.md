@@ -23,7 +23,7 @@
 
 ## CLI Script Catalog
 This is a quick index; full purpose/inputs/outputs/flags for every script live in the `docs/` references.
-- **Core Asana sync** scripts (`get_teams`, `get_users`, `get_projects`, `get_custom_fields`, `get_tasks`, `get_task_extras`, `get_personal_tasks`, `get_personal_tasks_delta`, `get_incremental_updates`, `get_project_status_updates`) → [docs/sync-commands.md](docs/sync-commands.md).
+- **Core Asana sync** scripts (`get_teams`, `get_users`, `get_projects`, `get_portfolios`, `get_custom_fields`, `get_tasks`, `get_task_extras`, `get_personal_tasks`, `get_personal_tasks_delta`, `get_incremental_updates`, `get_project_status_updates`) → [docs/sync-commands.md](docs/sync-commands.md).
 - **CSV reports** → [docs/reports.md](docs/reports.md).
 - **Jira / Atlassian** scripts → [docs/jira-integration.md](docs/jira-integration.md).
 
@@ -37,6 +37,7 @@ Index of the export / Atlassian / diagnostic scripts (see the linked doc for ful
 - `scripts/create_team_project_jira_issues.py` — direct-API alternative to the above CSV: creates Epics/Tasks via the Jira REST API (createmeta field resolution, persisted mappings, always-on assignee fallback + 429 requeue). → [jira-integration](docs/jira-integration.md)
 - `scripts/atlassian/update_personal_project_jira_urls.py` — one-time in-place repair of the `Project (Asana)` field on personal-project Jira issues so dead synthetic URLs become working My Tasks links. → [jira-integration](docs/jira-integration.md)
 - `scripts/get_project_status_updates.py` — captures project-level status updates + comments into the unified `project_updates` table (kind-tagged, mirror dedup); also in the Interactive CLI Tasks menu. → [sync-commands](docs/sync-commands.md)
+- `scripts/get_portfolios.py` — iterates every user as a portfolio owner (`GET /portfolios` needs an owner), capturing each portfolio plus its items/memberships/custom-field-settings/status-updates and fully recursing into nested portfolios (dedup + cycle guard); `--workers`, `--owner-gid`. Also in the Interactive CLI Tasks menu. → [sync-commands](docs/sync-commands.md)
 - `scripts/inspect_project_status_data.py` — read-only diagnostic probe of a project's status-update / story endpoints; prints a summary and dumps raw JSON to `exports/`. → [sync-commands](docs/sync-commands.md)
 - `scripts/describe_db.py` — read-only DB introspection: per-table context/provenance (from `src/lib/table_metadata.py`) + live structure (columns, FKs, indexes, row counts, latest `synced_at`); `--table <name>` adds sample rows; `--markdown` regenerates the data dictionary. → [data-model](docs/data-model.md), [db-queries](docs/db-queries.md)
 

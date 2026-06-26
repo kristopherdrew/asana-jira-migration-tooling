@@ -126,6 +126,34 @@ Core task records (and subtasks); hierarchy_depth and is_personal flags support 
 | `hierarchy_depth` | INTEGER |  |
 | `synced_at` | TEXT |  |
 
+#### `portfolios`
+
+Portfolio definitions (groupings of projects/nested portfolios), owner, dates, and latest status snapshot.
+
+- **Source:** GET /portfolios?workspace={gid}&owner={user_gid} (per owner); GET /portfolios/{gid} (nested recursion)
+- **Populated by:** `scripts/get_portfolios.py`
+- **Written by:** `upsert_portfolio`
+- **Write semantics:** Upsert by gid (PK); also writes portfolio_custom_field_settings when settings are supplied.
+
+| Column | Type | PK |
+|---|---|---|
+| `gid` | TEXT | ✓ |
+| `name` | TEXT |  |
+| `color` | TEXT |  |
+| `permalink_url` | TEXT |  |
+| `public` | INTEGER |  |
+| `owner_gid` | TEXT |  |
+| `owner_name` | TEXT |  |
+| `created_by_gid` | TEXT |  |
+| `created_by_name` | TEXT |  |
+| `created_at` | TEXT |  |
+| `start_on` | TEXT |  |
+| `due_on` | TEXT |  |
+| `workspace_gid` | TEXT |  |
+| `current_status_type` | TEXT |  |
+| `current_status_title` | TEXT |  |
+| `synced_at` | TEXT |  |
+
 ## Custom fields & tags
 
 #### `custom_fields`
@@ -430,6 +458,92 @@ Project-level status updates and comments (covers task-less projects), kind-tagg
 |---|---|---|
 | `gid` | TEXT | ✓ |
 | `project_gid` | TEXT |  |
+| `kind` | TEXT |  |
+| `title` | TEXT |  |
+| `status_type` | TEXT |  |
+| `text` | TEXT |  |
+| `html_text` | TEXT |  |
+| `created_at` | TEXT |  |
+| `created_by_gid` | TEXT |  |
+| `modified_at` | TEXT |  |
+| `resource_subtype` | TEXT |  |
+| `is_edited` | INTEGER |  |
+| `is_deleted` | INTEGER |  |
+| `synced_at` | TEXT |  |
+
+## Portfolio sub-resources
+
+#### `portfolio_items`
+
+Junction: the projects and nested portfolios contained in each portfolio, in display order.
+
+- **Source:** GET /portfolios/{gid}/items
+- **Populated by:** `scripts/get_portfolios.py`
+- **Written by:** `replace_portfolio_items`
+- **Write semantics:** Full-replace per portfolio_gid. PK (portfolio_gid, item_gid); resource_type is project|portfolio.
+- **Foreign keys:** portfolio_gid → portfolios(gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `portfolio_gid` | TEXT | ✓ |
+| `item_gid` | TEXT | ✓ |
+| `resource_type` | TEXT |  |
+| `item_name` | TEXT |  |
+| `position` | INTEGER |  |
+| `synced_at` | TEXT |  |
+
+#### `portfolio_custom_field_settings`
+
+Per-portfolio custom field configuration (importance, global-to-workspace).
+
+- **Source:** GET /portfolios/{gid}/custom_field_settings
+- **Populated by:** `scripts/get_portfolios.py`
+- **Written by:** `_replace_portfolio_custom_field_settings (via upsert_portfolio)`
+- **Write semantics:** Full-replace per portfolio_gid. PK (portfolio_gid, custom_field_gid).
+- **Foreign keys:** portfolio_gid → portfolios(gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `portfolio_gid` | TEXT | ✓ |
+| `custom_field_gid` | TEXT | ✓ |
+| `custom_field_name` | TEXT |  |
+| `custom_field_type` | TEXT |  |
+| `is_important` | INTEGER |  |
+| `is_global_to_workspace` | INTEGER |  |
+| `synced_at` | TEXT |  |
+
+#### `portfolio_memberships`
+
+Users with access to each portfolio (distinct from owner) and their access level.
+
+- **Source:** GET /portfolio_memberships?portfolio={gid}
+- **Populated by:** `scripts/get_portfolios.py`
+- **Written by:** `replace_portfolio_memberships`
+- **Write semantics:** Full-replace per portfolio_gid. PK (portfolio_gid, user_gid). FK→portfolios, FK→users.
+- **Foreign keys:** user_gid → users(gid); portfolio_gid → portfolios(gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `portfolio_gid` | TEXT | ✓ |
+| `user_gid` | TEXT | ✓ |
+| `user_name` | TEXT |  |
+| `access_level` | TEXT |  |
+| `synced_at` | TEXT |  |
+
+#### `portfolio_updates`
+
+Portfolio-level status updates (kind-tagged status_update).
+
+- **Source:** GET /status_updates?parent={gid}, normalized by merge_project_updates
+- **Populated by:** `scripts/get_portfolios.py`
+- **Written by:** `replace_portfolio_updates`
+- **Write semantics:** Soft-delete per portfolio_gid then upsert by gid (PK); is_deleted flag.
+- **Foreign keys:** portfolio_gid → portfolios(gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `gid` | TEXT | ✓ |
+| `portfolio_gid` | TEXT |  |
 | `kind` | TEXT |  |
 | `title` | TEXT |  |
 | `status_type` | TEXT |  |
