@@ -55,9 +55,15 @@ Thumbs.db
 
 credentials.json
 
-# Local env-file pointer (machine-specific)
+# Local env-file pointer (legacy, machine-specific)
 
 .asana_jira_env_path
+
+# Per-profile config (non-secret config; tokens live in the macOS Keychain)
+# and the active-profile marker — both machine-specific.
+
+profiles/
+.asana_jira_active
 
 # Allow the example file
 

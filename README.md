@@ -5,16 +5,23 @@ Python-only automation scripts for exporting entities from the Asana API into a 
 ## Requirements
 - Python 3.11 or later (use `python3` on macOS/Linux).
 - Asana personal access token with read access to the target workspace.
-- Credentials should live in an env-style file under your home directory, not in the project root. Supported keys are `CLIENT_NAME` (display name for the profile), `ASANA_TOKEN`, `ASANA_WORKSPACE_GID`, `SKIP_SSL_VERIFICATION`, `ATLASSIAN_USERNAME`, `ATLASSIAN_TOKEN`, `JIRA_BASE_URL` (production Jira site), and `JIRA_SANDBOX_BASE_URL` (sandbox Jira site). Jira scripts read the base URL from these two keys and default to the **sandbox**; pass `--prod` to target production.
-- **Profiles:** each credentials file is a "profile" for one client. The interactive CLI names a new profile's file after the client (`~/.asana_jira_env_<slug>`) and records the human-readable `CLIENT_NAME` inside it. The CLI header shows the active profile and whether the session is targeting **Sandbox** or **Production**, and the **Profile & Environment** menu lets you switch profiles or toggle the environment (the toggle drives every Jira command for the session — no per-command prompt).
-- **Per-profile database:** each profile syncs into its own SQLite file — `data/asana_<slug>.sqlite` for named profiles, and the legacy `data/asana.sqlite` for the default profile — so switching clients never mixes data. The interactive CLI points every command it runs at the active profile's database via the `ASANA_JIRA_DB_PATH` environment variable; running a script standalone honors `ASANA_JIRA_DB_PATH` too (or pass `--database <path>` on the scripts that accept it). After switching profiles, re-sync if that profile's database is empty.
-- **Token storage:** on macOS the two secret tokens (`ASANA_TOKEN`, `ATLASSIAN_TOKEN`) are stored in the **Keychain** (service `asana-jira-migration`, account `"<env-file-name>:<VAR>"`) and kept out of the plaintext env file, which retains only the non-secret config. Read precedence is process env var → Keychain → env file. On non-macOS systems (or without the `security` binary) the tokens transparently fall back to the env file. The interactive **Credentials** menu offers a one-time "Migrate tokens from env file to macOS Keychain" step (also prompted automatically when it sees plaintext tokens), and lets you re-enter them at any time.
-- For multi-client setups, keep one env file per client under your home directory and add a git-ignored `.asana_jira_env_path` file in the project root that points to the correct one for that copy of the repo. The resolution order is: process environment variables, env file named by `.asana_jira_env_path`, then default `~/.asana_jira_env`. Keychain entries are namespaced by the env file's name, so each client's tokens stay separate.
+- Credentials live in project-local, git-ignored profile files under `profiles/`. The easiest way to create one is the interactive CLI (it prompts for everything and validates the tokens). Supported keys are `CLIENT_NAME` (display name for the profile), `ASANA_TOKEN`, `ASANA_WORKSPACE_GID`, `SKIP_SSL_VERIFICATION`, `ATLASSIAN_USERNAME`, `ATLASSIAN_TOKEN`, `JIRA_BASE_URL` (production Jira site), and `JIRA_SANDBOX_BASE_URL` (sandbox Jira site). Jira scripts read the base URL from these two keys and default to the **sandbox**; pass `--prod` to target production.
+- **Profiles:** each profile file is the config for one client, stored at `profiles/<slug>.env` (`profiles/default.env` for the default profile), with the human-readable `CLIENT_NAME` recorded inside it. The active profile is named by a one-line `.asana_jira_active` marker at the project root. The CLI header shows the active profile and whether the session is targeting **Sandbox** or **Production**, and the **Profile & Environment** menu lets you switch profiles or toggle the environment (the toggle drives every Jira command for the session — no per-command prompt).
+- **Per-profile database:** each profile syncs into its own SQLite file — `data/asana_<slug>.sqlite` for named profiles, and `data/asana.sqlite` for the default profile — so switching clients never mixes data. The interactive CLI points every command it runs at the active profile's database via the `ASANA_JIRA_DB_PATH` environment variable; running a script standalone honors `ASANA_JIRA_DB_PATH` too (or pass `--database <path>` on the scripts that accept it). After switching profiles, re-sync if that profile's database is empty.
+- **Token storage:** on macOS the two secret tokens (`ASANA_TOKEN`, `ATLASSIAN_TOKEN`) are stored in the **Keychain** (service `asana-jira-migration`, account `"<slug>:<VAR>"`, with `default` standing in for the default profile) and kept out of the plaintext profile file, which retains only the non-secret config. Read precedence is process env var → Keychain → profile file. On non-macOS systems (or without the `security` binary) the tokens transparently fall back to the profile file. The interactive **Credentials** menu offers a one-time "Migrate tokens from env file to macOS Keychain" step (also prompted automatically when it sees plaintext tokens), and lets you re-enter them at any time.
+- **Resolution order** for the active config file is: `ASANA_JIRA_ENV_FILE` env override → the profile named by `.asana_jira_active` → `profiles/default.env` → the legacy `.asana_jira_env_path` pointer → `~/.asana_jira_env`. Keychain entries are namespaced by profile slug, so each client's tokens stay separate.
+- **Migration from the old home-directory layout:** earlier versions kept these files in your home directory (`~/.asana_jira_env*`) selected by a `.asana_jira_env_path` pointer. On first launch the interactive CLI automatically copies any such files into `profiles/`, re-keys their Keychain entries, and leaves the originals in place (remove them once you've confirmed everything works). Standalone scripts keep reading the home files until that one-time migration runs.
 
 ### Initial Setup
-Create a client-specific env file:
+The simplest path is to launch the interactive CLI and let it create your first profile:
 ```bash
-cat > ~/.asana_jira_env_client_a <<'EOF'
+python3 -m scripts.interactive_cli
+```
+It prompts for a client name, the Asana token + workspace GID, the SSL flag, and the optional Atlassian/Jira values, validates the tokens, then writes `profiles/<slug>.env` and the `.asana_jira_active` marker for you (storing the tokens in the Keychain on macOS).
+
+To create a profile by hand instead, write the file directly (tokens included here only when you are not using the macOS Keychain):
+```bash
+cat > profiles/client_a.env <<'EOF'
 export CLIENT_NAME="Client A"
 export ASANA_TOKEN="your_asana_token"
 export ASANA_WORKSPACE_GID="your_workspace_gid"
@@ -24,12 +31,8 @@ export ATLASSIAN_TOKEN="your_jira_api_token"
 export JIRA_BASE_URL="https://your-prod.atlassian.net"
 export JIRA_SANDBOX_BASE_URL="https://your-sandbox.atlassian.net"
 EOF
-chmod 600 ~/.asana_jira_env_client_a
-```
-
-Point this project copy at that file:
-```bash
-echo "~/.asana_jira_env_client_a" > .asana_jira_env_path
+chmod 600 profiles/client_a.env
+echo "client_a" > .asana_jira_active
 ```
 
 Leave `SKIP_SSL_VERIFICATION` set to `false` for normal use. Only set it to `true` as a temporary local troubleshooting workaround for a broken trust store or certificate validation issue, then return it to `false` once the environment is fixed. Rotate tokens immediately if they are ever committed or shared.
@@ -61,10 +64,10 @@ Menu highlights:
 - Category 2 (Tasks): tasks, task extras, personal tasks (full), incremental updates.
 - Category 3 (Atlassian): export/import Jira keys, clear mappings, update Atlassian user map, sync attachments.
 - Category 4 (Reports): project details, team summary, users, team memberships, custom field usage.
-- Category 5 (Credentials): create/update the referenced env file or switch the project to a different one.
+- Category 5 (Credentials): view/update the active profile's config key-by-key, or migrate plaintext tokens into the macOS Keychain.
 - Category 6 (Profile & Environment): switch the active client profile, create a new profile, or toggle the Jira target between Sandbox and Production. The active profile and environment are shown in the header above the menu, and the Sandbox/Production choice applies to every Jira command for the session.
 
-On first launch, if the interactive CLI cannot resolve a credentials file from the environment or `.asana_jira_env_path`, it shows a welcome dialogue explaining what's required, asks for a **client name** (used to name the profile's env file `~/.asana_jira_env_<slug>` and stored as `CLIENT_NAME`), then walks through the Asana token, workspace GID, SSL verification flag, optional Atlassian credentials, and the optional production/sandbox Jira base URLs before writing the env file and project pointer for you. The **Credentials** menu also lets you view/update an existing file key-by-key (the two tokens are shown masked). Before anything is written, the entered tokens are validated live — Asana via `GET /users/me` and Atlassian via `GET /rest/api/3/myself` (against the production Jira URL when set, otherwise the sandbox). A failed check reports the error so you can correct the username/token; you can re-enter, or choose to save anyway (e.g. when offline).
+On first launch the CLI relocates any legacy `~/.asana_jira_env*` files into `profiles/` (re-keying their Keychain entries; originals left in place). If it still cannot resolve a profile, it shows a welcome dialogue explaining what's required, asks for a **client name** (used to name the profile file `profiles/<slug>.env` and stored as `CLIENT_NAME`), then walks through the Asana token, workspace GID, SSL verification flag, optional Atlassian credentials, and the optional production/sandbox Jira base URLs before writing the profile file and `.asana_jira_active` marker for you. The **Credentials** menu also lets you view/update an existing file key-by-key (the two tokens are shown masked). Before anything is written, the entered tokens are validated live — Asana via `GET /users/me` and Atlassian via `GET /rest/api/3/myself` (against the production Jira URL when set, otherwise the sandbox). A failed check reports the error so you can correct the username/token; you can re-enter, or choose to save anyway (e.g. when offline).
 
 When you run the Initialization flow, the projects step prompts for archived scope so you can choose active, archived, or all projects during the first data pull. The flow now adds the service user immediately after the user sync so any team-scoped metadata later in the run can see that membership. If any team update fails, the script writes `exports/service_user_team_add_failures_<timestamp>.csv` with the team GIDs and error messages.
 
@@ -86,10 +89,11 @@ Suggested post-migration cleanup:
 ```bash
 rm -rf exports
 rm -f data/asana.sqlite
-rm -f .asana_jira_env_path
+rm -rf profiles
+rm -f .asana_jira_active
 ```
 
-If access is no longer needed, also remove or rotate the client-specific env file stored under your home directory.
+If access is no longer needed, also remove or rotate the profile files under `profiles/` (and any legacy `~/.asana_jira_env*` files left in your home directory), and clear the matching Keychain entries.
 
 ## Testing
 Run the full unit test suite:
@@ -113,7 +117,7 @@ source .venv/bin/activate
 This keeps any future dependency pins scoped to the project, prevents global packages from shadowing modules, and lets you remove the environment cleanly by deleting `.venv`.
 
 ## Operations Runbook
-- **Credentials**: keep client-specific env files under your home directory, point each repo copy at the right one with `.asana_jira_env_path`, and rotate personal access tokens immediately if they are ever committed or shared.
+- **Credentials**: keep client profiles in the project's git-ignored `profiles/` directory, select the active one with the `.asana_jira_active` marker (the **Profile & Environment** menu manages both), and rotate personal access tokens immediately if they are ever committed or shared.
 - **Logging**: every script accepts `--log-level` (`DEBUG`, `INFO`, `WARNING`, `ERROR`). Use `DEBUG` to trace API pagination or rate-limit retries; default `INFO` is suitable for unattended runs.
 - **Sync recovery**: rerun the relevant script with the same scope. Upserts are idempotent, and incremental sync summaries confirm whether rows were analyzed, updated, or re-created.
 - **SQLite maintenance**: new indexes on task linkage tables keep large syncs responsive. Vacuum occasionally (`sqlite3 data/asana.sqlite 'VACUUM;'`) after pruning old data.

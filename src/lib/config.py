@@ -15,8 +15,17 @@ DEFAULT_ENV_PATH = Path.home() / ".asana_jira_env"
 PROJECT_ENV_POINTER_FILENAME = ".asana_jira_env_path"
 
 # Named-profile credentials files follow ``~/.asana_jira_env_<slug>``; the
-# bare ``~/.asana_jira_env`` is the legacy/default profile.
+# bare ``~/.asana_jira_env`` is the legacy/default profile. These home-directory
+# files are still discovered for one-time migration and read as a fallback.
 NAMED_PROFILE_PREFIX = ".asana_jira_env_"
+
+# Project-local profile storage (the current scheme). Non-secret config lives in
+# ``<project>/profiles/<slug>.env`` (``default.env`` for the default profile) and
+# the active profile is named by ``<project>/.asana_jira_active``.
+PROFILES_DIRNAME = "profiles"
+ACTIVE_MARKER_FILENAME = ".asana_jira_active"
+DEFAULT_PROFILE_FILENAME = "default.env"
+PROFILE_FILE_SUFFIX = ".env"
 
 ENV_VAR_NAMES = {
     "client_name": "CLIENT_NAME",
@@ -145,16 +154,93 @@ def _resolve_project_root(path: Path) -> Path:
     return expanded
 
 
+def project_profiles_dir(reference_path: str | Path = ".") -> Path:
+    """Return the project-local ``profiles/`` directory for a reference path."""
+    return _resolve_project_root(Path(reference_path)) / PROFILES_DIRNAME
+
+
+def project_profile_path(slug: str, reference_path: str | Path = ".") -> Path:
+    """Return the ``profiles/<slug>.env`` path (``default.env`` for the default profile)."""
+    name = DEFAULT_PROFILE_FILENAME if not slug else f"{slug}{PROFILE_FILE_SUFFIX}"
+    return project_profiles_dir(reference_path) / name
+
+
+def _active_marker_path(reference_path: str | Path = ".") -> Path:
+    return _resolve_project_root(Path(reference_path)) / ACTIVE_MARKER_FILENAME
+
+
+def has_active_marker(reference_path: str | Path = ".") -> bool:
+    """Return True when the project has an active-profile marker file."""
+    return _active_marker_path(reference_path).exists()
+
+
+def read_active_slug(reference_path: str | Path = ".") -> str:
+    """Read the active profile slug ('' for the default profile).
+
+    Tolerant of a missing/blank marker file; ``default`` (or empty) maps to ''.
+    """
+    path = _active_marker_path(reference_path)
+    if not path.exists():
+        return ""
+    raw = ""
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                raw = _strip_wrapping_quotes(stripped).strip()
+                break
+    except OSError:
+        return ""
+    if raw in ("", "default", keychain.SLUG_DEFAULT):
+        return ""
+    return slugify(raw)
+
+
+def write_active_slug(slug: str, reference_path: str | Path = ".") -> Path:
+    """Write the active profile marker (``default`` for the default profile)."""
+    path = _active_marker_path(reference_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"{slug or 'default'}\n", encoding="utf-8")
+    return path
+
+
+def _legacy_home_path_for_slug(slug: str) -> Path:
+    """Return the home-directory credentials file for a slug (pre-migration fallback)."""
+    if not slug:
+        return DEFAULT_ENV_PATH
+    return DEFAULT_ENV_PATH.with_name(f"{NAMED_PROFILE_PREFIX}{slug}")
+
+
 def _resolve_env_path(reference_path: Path) -> Path:
     override = os.environ.get("ASANA_JIRA_ENV_FILE", "").strip()
     if override:
         return Path(override).expanduser()
 
-    project_pointer = _resolve_project_root(reference_path) / PROJECT_ENV_POINTER_FILENAME
-    project_override = _resolve_project_env_pointer(project_pointer)
+    root = _resolve_project_root(reference_path)
+
+    # 1. Active-slug marker -> the project profile file for that slug.
+    if _active_marker_path(root).exists():
+        slug = read_active_slug(root)
+        candidate = project_profile_path(slug, root)
+        if candidate.exists():
+            return candidate
+        # Marker present but project file not created yet: fall back to the home
+        # file for that slug (keeps standalone scripts working pre-migration);
+        # otherwise return the intended path so callers get a clear target.
+        legacy = _legacy_home_path_for_slug(slug)
+        return legacy if legacy.exists() else candidate
+
+    # 2. No marker: the default project profile file, if it exists.
+    default_project = project_profile_path("", root)
+    if default_project.exists():
+        return default_project
+
+    # 3. Legacy project pointer (``.asana_jira_env_path``).
+    project_override = _resolve_project_env_pointer(root / PROJECT_ENV_POINTER_FILENAME)
     if project_override:
         return project_override
 
+    # 4. Home default.
     return DEFAULT_ENV_PATH
 
 
@@ -183,9 +269,15 @@ def _read_secret(field_name: str, env_file_data: Dict[str, str], env_path: Path)
     if os.environ.get(env_name):
         return os.environ[env_name]
     if keychain.is_available():
-        stored = keychain.get_secret(keychain.account_for(env_path, env_name))
+        slug = profile_slug(env_path)
+        stored = keychain.get_secret(keychain.account_for_slug(slug, env_name))
         if stored:
             return stored
+        # Fallback: read pre-migration entries keyed by the file basename, so
+        # un-migrated installs (and standalone scripts) still resolve secrets.
+        legacy = keychain.get_secret(keychain.legacy_account_for(env_path, env_name))
+        if legacy:
+            return legacy
     file_value = env_file_data.get(env_name)
     return file_value or None
 
@@ -200,9 +292,11 @@ def load_credentials(path: str | Path = ".") -> Credentials:
     workspace_gid = _read_value("workspace_gid", env_file_data)
     if token is None or workspace_gid is None:
         if not env_file_data:
+            root = _resolve_project_root(reference_path)
             raise FileNotFoundError(
                 f"No credentials found. Set environment variables, create {env_path}, "
-                f"or add {_resolve_project_root(reference_path) / PROJECT_ENV_POINTER_FILENAME}."
+                f"or run the interactive CLI to create a profile in {root / PROFILES_DIRNAME} "
+                f"(selected via {root / ACTIVE_MARKER_FILENAME})."
             )
         missing_keys = []
         if token is None:
@@ -252,8 +346,9 @@ def _store_secrets_in_keychain(env_path: Path, credentials: Credentials) -> None
         "ASANA_TOKEN": credentials.token,
         "ATLASSIAN_TOKEN": credentials.atlassian_token,
     }
+    slug = profile_slug(env_path)
     for env_name, value in secret_values.items():
-        account = keychain.account_for(env_path, env_name)
+        account = keychain.account_for_slug(slug, env_name)
         if value:
             keychain.set_secret(account, value)
         else:
@@ -319,11 +414,12 @@ def migrate_tokens_to_keychain(env_path: str | Path) -> List[str]:
     if not keychain.is_available() or not path.exists():
         return []
     data = _load_env_file(path)
+    slug = profile_slug(path)
     migrated: List[str] = []
     for env_name in SECRET_ENV_VARS:
         value = data.get(env_name)
         if value:
-            keychain.set_secret(keychain.account_for(path, env_name), value)
+            keychain.set_secret(keychain.account_for_slug(slug, env_name), value)
             migrated.append(env_name)
     if not migrated:
         return []
@@ -355,14 +451,18 @@ def write_project_env_pointer(reference_path: str | Path, env_path: str | Path) 
 def slugify(name: str) -> str:
     """Normalize a free-text client name into a filesystem/Keychain-safe slug.
 
-    The slug becomes both the credentials-file suffix (``.asana_jira_env_<slug>``)
-    and the per-profile database filename, so it is restricted to ``[a-z0-9_-]``.
-    Falls back to ``"client"`` when nothing usable remains.
+    The slug becomes the profile filename (``profiles/<slug>.env``), the per-profile
+    database filename, and the Keychain account namespace, so it is restricted to
+    ``[a-z0-9_-]``. Falls back to ``"client"`` when nothing usable remains. The
+    reserved value ``"default"`` is remapped to ``"default-client"`` so a named
+    profile can never collide with the default profile's file/account.
     """
     lowered = (name or "").strip().lower()
     collapsed = re.sub(r"\s+", "_", lowered)
     cleaned = re.sub(r"[^a-z0-9_-]", "", collapsed)
     cleaned = cleaned.strip("_-")
+    if cleaned == "default":
+        return "default-client"
     return cleaned or "client"
 
 
@@ -374,11 +474,22 @@ def named_profile_env_path(name: str) -> Path:
 def profile_slug(env_path: str | Path) -> str:
     """Return the profile slug derived from a credentials-file name.
 
-    The bare default file (``.asana_jira_env``) maps to ``""`` (the legacy/default
-    profile, which keeps the unsuffixed database). ``.asana_jira_env_<slug>`` maps to
-    ``<slug>``; any other basename falls back to a sanitized slug of the whole name.
+    Both the current project names and the legacy home names are understood, and
+    all map to the same slug (so the per-profile database stays stable across the
+    one-time migration):
+
+    - ``profiles/default.env`` / ``~/.asana_jira_env``         -> ``""`` (default profile)
+    - ``profiles/<slug>.env``  / ``~/.asana_jira_env_<slug>``  -> ``<slug>``
+
+    Any other basename falls back to a sanitized slug of the whole name.
     """
     basename = Path(env_path).name
+    # Current project profile files.
+    if basename == DEFAULT_PROFILE_FILENAME:
+        return ""
+    if basename.endswith(PROFILE_FILE_SUFFIX):
+        return slugify(basename[: -len(PROFILE_FILE_SUFFIX)])
+    # Legacy home-directory files.
     if basename == DEFAULT_ENV_PATH.name:
         return ""
     if basename.startswith(NAMED_PROFILE_PREFIX):
@@ -432,3 +543,62 @@ def list_credential_profiles() -> List[Tuple[Path, Optional[str]]]:
             continue
         profiles.append((candidate, read_profile_name(candidate)))
     return profiles
+
+
+def list_project_profiles(reference_path: str | Path = ".") -> List[Tuple[Path, Optional[str]]]:
+    """Discover project-local profiles in ``<project>/profiles/``.
+
+    Returns ``(path, client_name)`` for each ``profiles/*.env`` file, sorted by
+    path. Unparsable files are skipped.
+    """
+    profiles: List[Tuple[Path, Optional[str]]] = []
+    pdir = project_profiles_dir(reference_path)
+    if not pdir.is_dir():
+        return profiles
+    for candidate in sorted(pdir.glob(f"*{PROFILE_FILE_SUFFIX}")):
+        if not candidate.is_file():
+            continue
+        try:
+            _load_env_file(candidate)
+        except (OSError, ValueError):
+            continue
+        profiles.append((candidate, read_profile_name(candidate)))
+    return profiles
+
+
+def migrate_home_profiles_into_project(
+    reference_path: str | Path = ".",
+) -> List[Tuple[str, Path, Path]]:
+    """Copy any ``~/.asana_jira_env*`` home profiles into ``profiles/<slug>.env``.
+
+    For each discovered home profile this copies the file verbatim (preserving any
+    plaintext tokens on non-macOS) and, when the Keychain is available, re-keys its
+    secrets from the legacy basename account to the slug account. Existing project
+    files are skipped (idempotent) and home files are left intact.
+
+    Returns ``[(slug, home_path, project_path), ...]`` for the profiles migrated.
+    """
+    root = _resolve_project_root(Path(reference_path))
+    migrated: List[Tuple[str, Path, Path]] = []
+    keychain_available = keychain.is_available()
+    for home_path, _client_name in list_credential_profiles():
+        slug = profile_slug(home_path)
+        target = project_profile_path(slug, root)
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_text(home_path.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            target.chmod(0o600)
+        except OSError:
+            pass
+        if keychain_available:
+            for env_name in SECRET_ENV_VARS:
+                value = keychain.get_secret(keychain.legacy_account_for(home_path, env_name))
+                if value:
+                    keychain.set_secret(keychain.account_for_slug(slug, env_name), value)
+        migrated.append((slug, home_path, target))
+    return migrated

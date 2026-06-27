@@ -6,7 +6,13 @@ single service, namespaced per credentials file so multiple clients don't
 collide:
 
     service = "asana-jira-migration"
-    account = "<env-file-name>:<ENV_VAR>"   e.g. ".asana_jira_env_client_a:ASANA_TOKEN"
+    account = "<profile-slug>:<ENV_VAR>"   e.g. "client_a:ASANA_TOKEN" ("default" for the
+                                          default profile)
+
+Accounts are namespaced by the profile *slug* (see ``config.profile_slug``) so a
+profile's secrets survive the config file being relocated/renamed. The older
+basename-based scheme (``account_for`` / ``legacy_account_for``) is retained to
+read pre-migration entries.
 
 Stdlib-only (``subprocess`` + the system ``security`` binary). Every helper is a
 no-op/``None`` when Keychain isn't available (non-macOS or missing binary), so
@@ -28,6 +34,9 @@ from typing import Optional
 
 KEYCHAIN_SERVICE = "asana-jira-migration"
 
+# How an empty slug (the default profile) is represented in the account string.
+SLUG_DEFAULT = "default"
+
 # `security find-generic-password` exits 44 when the item does not exist.
 _ITEM_NOT_FOUND_EXIT = 44
 
@@ -37,9 +46,23 @@ def is_available() -> bool:
     return sys.platform == "darwin" and shutil.which("security") is not None
 
 
-def account_for(env_path, env_var_name: str) -> str:
-    """Namespace a Keychain account by the credentials file name + env var."""
+def account_for_slug(slug: str, env_var_name: str) -> str:
+    """Namespace a Keychain account by the profile slug + env var.
+
+    An empty slug (the default profile) maps to ``SLUG_DEFAULT``. The slug is
+    computed by the caller (``config.profile_slug``) to keep this module free of a
+    dependency on ``config``.
+    """
+    return f"{slug or SLUG_DEFAULT}:{env_var_name}"
+
+
+def legacy_account_for(env_path, env_var_name: str) -> str:
+    """Old basename-based account, kept to read pre-migration Keychain entries."""
     return f"{Path(env_path).name}:{env_var_name}"
+
+
+# Backwards-compatible alias for the original basename-based scheme.
+account_for = legacy_account_for
 
 
 def get_secret(account: str) -> Optional[str]:
