@@ -376,6 +376,7 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.get_custom_fields.main)
         self.assertEqual(mock_run_script.call_args_list[4].args[1], ["--log-level", "WARNING"])
 
+    @patch("builtins.input", return_value="1")
     @patch("scripts.interactive_cli.confirm", return_value=False)
     @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli._fuzzy_teams", return_value=[{"gid": "team_1", "name": "Team One"}])
@@ -388,6 +389,7 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_fuzzy_teams,
         mock_run_script,
         mock_confirm,
+        mock_input,
     ) -> None:
         mock_open_sqlite.return_value = MagicMock()
         menu = interactive_cli.build_reports_menu("DEBUG")
@@ -402,12 +404,12 @@ class IncrementalArgsBuilderTest(TestCase):
                 menu["6"].label,
             ],
             [
+                "Export initial metadata report (.xlsx)",
+                "Export field & section migration review (.xlsx)",
                 "Export project details report",
                 "Export users report",
                 "Export team memberships report",
                 "Export team report",
-                "Export custom field usage report",
-                "Export initial metadata report (.xlsx)",
             ],
         )
 
@@ -419,18 +421,18 @@ class IncrementalArgsBuilderTest(TestCase):
         menu["6"].handler()
 
         self.assertEqual(mock_run_script.call_count, 6)
-        self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_project_details_report.main)
-        self.assertIs(mock_run_script.call_args_list[1].args[0], interactive_cli.export_users.main)
-        self.assertIs(mock_run_script.call_args_list[2].args[0], interactive_cli.export_team_memberships.main)
-        self.assertIs(mock_run_script.call_args_list[3].args[0], interactive_cli.export_team_report.main)
-        self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.export_custom_field_usage_report.main)
-        self.assertIs(mock_run_script.call_args_list[5].args[0], interactive_cli.export_all_reports_xlsx.main)
-        self.assertEqual(mock_run_script.call_args_list[0].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
-        self.assertEqual(mock_run_script.call_args_list[1].args[1], ["--log-level", "DEBUG"])
+        self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_all_reports_xlsx.main)
+        self.assertIs(mock_run_script.call_args_list[1].args[0], interactive_cli.export_field_section_review_report.main)
+        self.assertIs(mock_run_script.call_args_list[2].args[0], interactive_cli.export_project_details_report.main)
+        self.assertIs(mock_run_script.call_args_list[3].args[0], interactive_cli.export_users.main)
+        self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.export_team_memberships.main)
+        self.assertIs(mock_run_script.call_args_list[5].args[0], interactive_cli.export_team_report.main)
+        self.assertEqual(mock_run_script.call_args_list[0].args[1], ["--log-level", "DEBUG"])
+        self.assertEqual(mock_run_script.call_args_list[1].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
         self.assertEqual(mock_run_script.call_args_list[2].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
-        self.assertEqual(mock_run_script.call_args_list[3].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
+        self.assertEqual(mock_run_script.call_args_list[3].args[1], ["--log-level", "DEBUG"])
         self.assertEqual(mock_run_script.call_args_list[4].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
-        self.assertEqual(mock_run_script.call_args_list[5].args[1], ["--log-level", "DEBUG"])
+        self.assertEqual(mock_run_script.call_args_list[5].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
 
     @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli._open_sqlite")
@@ -444,7 +446,7 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_open_sqlite.return_value = MagicMock()
         menu = interactive_cli.build_reports_menu("DEBUG")
 
-        menu["1"].handler()
+        menu["3"].handler()
 
         self.assertEqual(mock_run_script.call_count, 1)
         self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_project_details_report.main)
@@ -462,7 +464,7 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_open_sqlite.return_value = MagicMock()
         menu = interactive_cli.build_reports_menu("DEBUG")
 
-        menu["3"].handler()
+        menu["5"].handler()
 
         self.assertEqual(mock_run_script.call_count, 1)
         self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_team_memberships.main)
@@ -480,7 +482,7 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_open_sqlite.return_value = MagicMock()
         menu = interactive_cli.build_reports_menu("DEBUG")
 
-        menu["4"].handler()
+        menu["6"].handler()
 
         self.assertEqual(mock_run_script.call_count, 1)
         self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_team_report.main)
