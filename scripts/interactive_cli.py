@@ -60,11 +60,14 @@ from scripts.atlassian import (  # noqa: E402
 from src.lib.config import (  # noqa: E402
     Credentials,
     DEFAULT_ENV_PATH,
+    file_has_plaintext_tokens,
     load_credentials,
+    migrate_tokens_to_keychain,
     resolve_credentials_path,
     write_credentials_file,
     write_project_env_pointer,
 )
+from src.lib import keychain  # noqa: E402
 from src.lib.credential_check import check_credentials  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
 
@@ -355,11 +358,15 @@ def _edit_credential_field(field: str, env_name: str, kind: str, values: Dict[st
 def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
     """Show current credentials (tokens masked) and let the user update individual keys."""
     values: Dict[str, object] = {field: getattr(current, field) for field, _, _ in CREDENTIAL_FIELDS}
+    secret_backend = "Keychain" if keychain.is_available() else "env file"
     dirty = False
     while True:
-        print(f"\nCredentials in {env_path}:")
+        print(f"\nCredentials in {env_path} (tokens stored in: {secret_backend}):")
         for index, (field, env_name, kind) in enumerate(CREDENTIAL_FIELDS, start=1):
-            print(f"  [{index}] {env_name} = {_display_credential_value(kind, values[field])}")
+            display = _display_credential_value(kind, values[field])
+            if kind == "secret" and values[field]:
+                display = f"******** (set, {secret_backend})"
+            print(f"  [{index}] {env_name} = {display}")
         choice = input("Select a number to update, 's' to save, or 'q' to cancel: ").strip().lower()
         if choice == "q":
             print("No changes saved.")
@@ -389,6 +396,7 @@ def manage_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
     if not env_path.exists():
         print(f"\nNo credentials file found at {env_path}. Let's walk through creating one.")
         return bootstrap_credentials(reference_path)
+    offer_token_migration(env_path)
     try:
         current = load_credentials(reference_path)
     except (KeyError, ValueError) as exc:
@@ -397,6 +405,22 @@ def manage_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
             return bootstrap_credentials(reference_path)
         raise SystemExit("Credentials were not changed.")
     return edit_existing_credentials(env_path, current)
+
+
+def offer_token_migration(env_path: Path) -> bool:
+    """Prompt to move plaintext tokens from the env file into the macOS Keychain.
+
+    Returns True when a migration was performed. No-op when the Keychain is
+    unavailable or the file holds no tokens."""
+    if not keychain.is_available() or not file_has_plaintext_tokens(env_path):
+        return False
+    print(f"\n{env_path} still stores API token(s) in plaintext.")
+    if not prompt_bool("Move them into the macOS Keychain now? (recommended)", default=True):
+        return False
+    migrated = migrate_tokens_to_keychain(env_path)
+    if migrated:
+        print(f"Moved {', '.join(migrated)} into the Keychain and removed them from {env_path}.")
+    return bool(migrated)
 
 
 def bootstrap_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
@@ -435,10 +459,23 @@ def ensure_interactive_credentials(reference_path: Path = PROJECT_ROOT) -> None:
         bootstrap_credentials(reference_path)
 
 
+def run_token_migration(reference_path: Path = PROJECT_ROOT) -> None:
+    """Credentials-menu action: move plaintext tokens into the Keychain."""
+    env_path = resolve_credentials_path(reference_path)
+    if not keychain.is_available():
+        print("The macOS Keychain is not available on this system; tokens stay in the env file.")
+        return
+    if not env_path.exists() or not file_has_plaintext_tokens(env_path):
+        print(f"No plaintext tokens to migrate in {env_path}.")
+        return
+    offer_token_migration(env_path)
+
+
 def build_credentials_menu() -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "View / update credentials (creates the file if none exists)", lambda: manage_credentials(PROJECT_ROOT)),
         "2": MenuItem("2", "Change referenced credentials file", lambda: change_credentials_file_reference(PROJECT_ROOT)),
+        "3": MenuItem("3", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -969,12 +1006,6 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             args.extend(["--team-gid", team_gid])
         run_script(export_team_report.main, args)
 
-    def run_team_project_jira_export() -> None:
-        args = args_report_defaults(log_level)
-        if confirm("Include projects with 0 tasks?", default=False):
-            args.append("--include-empty-projects")
-        run_script(export_team_project_jira_csv.main, args)
-
     def run_portfolio_report() -> None:
         args = args_report_defaults(log_level)
         if not confirm("Include the portfolio→items companion CSV?", default=True):
@@ -983,18 +1014,25 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
     def run_field_section_review_report() -> None:
         args = args_report_defaults(log_level)
-        team_gid = _prompt_team_gid_from_lookup(
-            "field & section review",
-            "Team GID to scope the review (blank = all teams)",
-        )
-        if team_gid:
-            args.extend(["--team-gid", team_gid])
-        owner_gid = _prompt_user_gid_from_lookup(
-            "field & section review",
-            "Project-owner user GID to scope the review (blank = all owners)",
-        )
-        if owner_gid:
-            args.extend(["--owner-gid", owner_gid])
+        print("\nScope the field & section review:")
+        print("[1] Team-centric (one team's projects)")
+        print("[2] Owner-centric (one project owner's projects)")
+        print("[3] Whole workspace")
+        choice = input("Choice (default 1): ").strip() or "1"
+        if choice == "1":
+            team_gid = _prompt_team_gid_from_lookup(
+                "field & section review",
+                "Team GID to scope the review (blank = all teams)",
+            )
+            if team_gid:
+                args.extend(["--team-gid", team_gid])
+        elif choice == "2":
+            owner_gid = _prompt_user_gid_from_lookup(
+                "field & section review",
+                "Project-owner user GID to scope the review (blank = all owners)",
+            )
+            if owner_gid:
+                args.extend(["--owner-gid", owner_gid])
         run_script(export_field_section_review_report.main, args)
 
     return {
@@ -1025,8 +1063,8 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         ),
         "6": MenuItem(
             "6",
-            "Export team/project Jira CSV",
-            run_team_project_jira_export,
+            "Export initial metadata report (.xlsx)",
+            lambda: run_script(export_all_reports_xlsx.main, args_report_defaults(log_level)),
         ),
         "7": MenuItem(
             "7",
@@ -1037,11 +1075,6 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "8",
             "Export field & section migration review (.xlsx)",
             run_field_section_review_report,
-        ),
-        "9": MenuItem(
-            "9",
-            "Export ALL reports to one .xlsx workbook",
-            lambda: run_script(export_all_reports_xlsx.main, args_report_defaults(log_level)),
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
@@ -1243,26 +1276,33 @@ def build_tasks_menu(log_level: str) -> Dict[str, MenuItem]:
 
 
 def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
+    def run_team_project_jira_export() -> None:
+        args = args_report_defaults(log_level)
+        if confirm("Include projects with 0 tasks?", default=False):
+            args.append("--include-empty-projects")
+        run_script(export_team_project_jira_csv.main, args)
+
     return {
         "1": MenuItem("1", "Export project to Jira CSV", lambda: run_export_project_to_jira(log_level)),
-        "2": MenuItem("2", "Import Jira task keys", lambda: run_script(import_jira_task_keys.main, args_import_jira_keys(log_level))),
-        "3": MenuItem("3", "Clear Jira task keys", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level))),
-        "4": MenuItem(
-            "4",
+        "2": MenuItem("2", "Export team/project Jira CSV", run_team_project_jira_export),
+        "3": MenuItem("3", "Import Jira task keys", lambda: run_script(import_jira_task_keys.main, args_import_jira_keys(log_level))),
+        "4": MenuItem("4", "Clear Jira task keys", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level))),
+        "5": MenuItem(
+            "5",
             "Update Atlassian user map (template: Sample Data/atlassian_user_map_template.csv)",
             lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level)),
         ),
-        "5": MenuItem("5", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
-        "6": MenuItem("6", "Clear export IDs", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level))),
-        "7": MenuItem("7", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, ["--clear-jira-project-map"])),
-        "8": MenuItem("8", "Sync Jira attachments", lambda: run_sync_attachments(log_level)),
-        "9": MenuItem(
-            "9",
+        "6": MenuItem("6", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
+        "7": MenuItem("7", "Clear export IDs", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level))),
+        "8": MenuItem("8", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, ["--clear-jira-project-map"])),
+        "9": MenuItem("9", "Sync Jira attachments", lambda: run_sync_attachments(log_level)),
+        "10": MenuItem(
+            "10",
             "Create team/project Jira issues (direct API)",
             lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level)),
         ),
-        "10": MenuItem(
-            "10",
+        "11": MenuItem(
+            "11",
             "Pull 'Asana Migration Decision' from Jira (project-level)",
             lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level)),
         ),
@@ -1292,7 +1332,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         "1": MenuItem("1", "Initialization (metadata only)", lambda: run_group("Initialization", build_init_menu(args.log_level))),
         "2": MenuItem("2", "Tasks (full/extras/incremental)", lambda: run_group("Tasks", build_tasks_menu(args.log_level))),
         "3": MenuItem("3", "Atlassian (exports, mappings, attachments)", lambda: run_group("Atlassian", build_atlassian_menu(args.log_level))),
-        "4": MenuItem("4", "Reports (projects, users, memberships, team summary, Jira CSV)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
+        "4": MenuItem("4", "Reports (projects, users, memberships, team summary, portfolios)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
         "5": MenuItem("5", "Credentials (create or change env file)", lambda: run_group("Credentials", build_credentials_menu())),
         "q": MenuItem("q", "Quit", lambda: sys.exit(0)),
     }
