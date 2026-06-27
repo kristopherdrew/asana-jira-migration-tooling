@@ -883,7 +883,7 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         ),
         "8": MenuItem(
             "8",
-            "Export ALL reports to one .xlsx (requires openpyxl)",
+            "Export ALL reports to one .xlsx workbook",
             lambda: run_script(export_all_reports_xlsx.main, args_report_defaults(log_level)),
         ),
         "b": MenuItem("b", "Back", lambda: None),

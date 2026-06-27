@@ -7,10 +7,9 @@ points unchanged — then folds the resulting CSVs into one workbook with one ta
 per report (the Portfolio report contributes two: summary + items). The Team→Project
 Jira import CSV is intentionally excluded.
 
-This is the only script that depends on a third-party library: ``openpyxl`` (the
-Python stdlib has no native .xlsx writer). It is imported lazily so the module stays
-importable — and the rest of the toolchain stays stdlib-only — without it installed.
-Install with ``python3 -m pip install -r requirements.txt``.
+The workbook is written with :mod:`src.lib.xlsx_writer`, a small dependency-free
+OOXML writer, so this script — like the rest of the toolchain — needs only the
+Python standard library and runs anywhere Python does.
 """
 
 from __future__ import annotations
@@ -31,6 +30,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.config import load_credentials
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.xlsx_writer import write_workbook
 from scripts import (
     export_project_details_report,
     export_users,
@@ -44,7 +44,6 @@ from scripts import (
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
 DEFAULT_CONFIG_ROOT = "."
-MAX_COLUMN_WIDTH = 60
 SAFE_INT_DIGITS = 15  # Excel only keeps 15 significant digits; keep longer ids (gids) as text.
 logger = logging.getLogger(__name__)
 
@@ -96,11 +95,6 @@ def _coerce(value: str):
     return value
 
 
-def _safe_sheet_title(title: str) -> str:
-    cleaned = re.sub(r"[\[\]:*?/\\]", " ", title).strip()
-    return cleaned[:31] or "Sheet"
-
-
 def _read_csv(path: Path) -> List[List[str]]:
     if not path.exists():
         return []
@@ -122,63 +116,33 @@ def _run_reports(database: str, tmp_dir: Path, workspace_gid: Optional[str], log
     return sheets
 
 
-def _write_workbook(sheets: Sequence[Tuple[str, List[List[str]]]], output_path: Path, database: str) -> None:
-    try:
-        from openpyxl import Workbook
-        from openpyxl.styles import Font
-        from openpyxl.utils import get_column_letter
-    except ImportError as exc:  # pragma: no cover - exercised only without the dep
-        raise SystemExit(
-            "export_all_reports_xlsx requires openpyxl, which is not installed.\n"
-            "Install it with: python3 -m pip install -r requirements.txt"
-        ) from exc
-
-    workbook = Workbook()
-    workbook.remove(workbook.active)
-
-    # Overview tab first: what's inside and when it was generated.
-    overview = workbook.create_sheet(title="Overview")
+def _build_sheets(report_sheets: Sequence[Tuple[str, List[List[str]]]], database: str) -> List[Tuple[str, List[list]]]:
+    """Assemble the final sheet list (Overview first) with cell values coerced."""
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    overview.append(["Asana migration reports"])
-    overview.append(["Generated (UTC)", generated_at])
-    overview.append(["Source database", database])
-    overview.append([])
-    overview.append(["Tab", "Rows"])
-    overview["A1"].font = Font(bold=True, size=14)
-    overview["A5"].font = Font(bold=True)
-    overview["B5"].font = Font(bold=True)
+    overview_rows: List[list] = [
+        ["Asana migration reports", None],
+        ["Generated (UTC)", generated_at],
+        ["Source database", database],
+        [None, None],
+        ["Tab", "Rows"],
+    ]
 
-    for title, rows in sheets:
-        sheet = workbook.create_sheet(title=_safe_sheet_title(title))
+    body_sheets: List[Tuple[str, List[list]]] = []
+    for title, rows in report_sheets:
         data_row_count = max(len(rows) - 1, 0) if rows else 0
-        overview.append([title, data_row_count])
-
+        overview_rows.append([title, data_row_count])
         if not rows:
-            sheet.append(["(no data)"])
+            body_sheets.append((title, [["(no data)"]]))
             continue
+        header, *records = rows
+        coerced = [list(header)] + [[_coerce(value) for value in record] for record in records]
+        body_sheets.append((title, coerced))
 
-        header, *body = rows
-        sheet.append(list(header))
-        for cell in sheet[1]:
-            cell.font = Font(bold=True)
-        for record in body:
-            sheet.append([_coerce(value) for value in record])
-        sheet.freeze_panes = "A2"
+    return [("Overview", overview_rows)] + body_sheets
 
-        # Approximate column widths from header + a sample of rows.
-        widths = [len(str(value)) for value in header]
-        for record in body[:200]:
-            for idx, value in enumerate(record):
-                if idx < len(widths):
-                    widths[idx] = max(widths[idx], len(str(value)))
-        for idx, width in enumerate(widths, start=1):
-            sheet.column_dimensions[get_column_letter(idx)].width = min(width + 2, MAX_COLUMN_WIDTH)
 
-    for idx, width in enumerate((28, 22), start=1):
-        overview.column_dimensions[get_column_letter(idx)].width = width
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    workbook.save(output_path)
+def _write_workbook(report_sheets: Sequence[Tuple[str, List[List[str]]]], output_path: Path, database: str) -> None:
+    write_workbook(output_path, _build_sheets(report_sheets, database))
 
 
 def export_all_reports_xlsx(
