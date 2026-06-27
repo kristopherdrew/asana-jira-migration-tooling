@@ -6,6 +6,25 @@ All report date columns export as `YYYY-MM-DD` with zero-padded month and day va
 
 ← Back to [README](../README.md)
 
+### Combined Reports Workbook (.xlsx)
+Runs every report below **except** the Team→Project Jira CSV and combines them into a single multi-tab `.xlsx` workbook — handy for handing the whole migration inventory to stakeholders in one file. Tabs: an `Overview` index (generation time, source DB, per-tab row counts) followed by `Projects`, `Users`, `Team Memberships`, `Teams`, `Custom Field Usage`, `Portfolios`, and `Portfolio Items`. Each report is run into a temporary directory (reusing its own `main()`), so the data matches the standalone CSVs exactly. Headers are bold and frozen; numeric columns are typed as numbers, while long identifiers (Asana GIDs) are kept as text to avoid Excel's 15-digit precision loss. The reports run unfiltered (all teams).
+
+This is the only script with a third-party dependency, **`openpyxl`** (the stdlib has no native xlsx writer). Install it into the project virtual environment first:
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 -m scripts.export_all_reports_xlsx --database data/asana.sqlite
+```
+Required flags:
+- (none; uses `data/asana.sqlite` by default).
+
+Optional flags:
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated `all_reports_<timestamp>.xlsx` filename.
+- `--workspace-gid <gid>` to force the workspace used when building URLs in the reports.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
 ### Export Users
 Writes the `users` table (plus workspace memberships) to a CSV for quick auditing or downstream reporting. Includes GID, name, email, resource type, active flag, Atlassian account id, Atlassian status, per-user task activity counts (`tasks_created`, `tasks_completed`, `tasks_commented`), a `last_active_date`, a direct Asana user URL, last sync date, and a semicolon-separated list of workspaces. Atlassian id/status come from the `user_atlassian_accounts` table (keyed by Asana user GID) and are left blank for users without a mapping. The activity counts come from synced task data: `tasks_created` counts tasks where the user is `created_by`, `tasks_completed` counts tasks where the user is `completed_by`, and `tasks_commented` counts the distinct tasks on which the user authored at least one non-deleted comment (not the number of comments). `last_active_date` (formatted `YYYY-MM-DD`) is the most recent of the user's last task creation, last task completion, or last non-deleted comment. All counts default to `0` and `last_active_date` is blank until the task and comment syncs have populated `tasks` and `task_comments`.
 ```bash

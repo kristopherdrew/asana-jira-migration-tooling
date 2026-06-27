@@ -41,6 +41,7 @@ from scripts import (  # noqa: E402
     export_team_memberships,
     export_custom_field_usage_report,
     export_portfolio_report,
+    export_all_reports_xlsx,
 )
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
@@ -879,6 +880,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "7",
             "Export portfolio report (summary + items)",
             run_portfolio_report,
+        ),
+        "8": MenuItem(
+            "8",
+            "Export ALL reports to one .xlsx (requires openpyxl)",
+            lambda: run_script(export_all_reports_xlsx.main, args_report_defaults(log_level)),
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
