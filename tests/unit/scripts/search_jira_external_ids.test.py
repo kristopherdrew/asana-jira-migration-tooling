@@ -97,6 +97,23 @@ class SearchJiraExternalIdsTests(unittest.TestCase):
         self.assertEqual(search_mod.clamp_max_results(search_mod.JIRA_MAX_RESULTS_CAP + 5), search_mod.JIRA_MAX_RESULTS_CAP)
         self.assertEqual(search_mod.clamp_max_results(50), 50)
 
+    def test_list_fields_uses_singular_field_endpoint(self) -> None:
+        # Regression: Jira Cloud's "Get fields" endpoint is GET /rest/api/3/field
+        # (singular). The plural form 404s, which only surfaces on a live call.
+        client = search_mod.JiraSearchClient(base_url="https://example.atlassian.net", username="u", token="t")
+        captured = {}
+
+        def fake_request(method, path, headers=None, data=None, **kwargs):
+            captured["method"] = method
+            captured["path"] = path
+            return [{"id": "customfield_1", "name": "Asana Migration Decision"}]
+
+        client._request = fake_request  # type: ignore[method-assign]
+        fields = client.list_fields()
+        self.assertEqual(captured["method"], "GET")
+        self.assertEqual(captured["path"], "/rest/api/3/field")
+        self.assertEqual(fields[0]["id"], "customfield_1")
+
 
 if __name__ == "__main__":
     unittest.main()
