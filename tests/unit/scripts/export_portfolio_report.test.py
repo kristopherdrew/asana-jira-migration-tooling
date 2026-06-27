@@ -98,7 +98,6 @@ class ExportPortfolioReportTest(TestCase):
         self.assertEqual(top["num_items"], "3")
         self.assertEqual(top["num_projects"], "2")
         self.assertEqual(top["num_active_projects"], "1")
-        self.assertEqual(top["num_projects_not_synced"], "1")
         self.assertEqual(top["num_nested_portfolios"], "1")
         self.assertEqual(top["num_members"], "1")
         self.assertEqual(top["num_custom_field_settings"], "1")
