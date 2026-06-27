@@ -41,6 +41,7 @@ from scripts import (  # noqa: E402
     export_team_memberships,
     export_custom_field_usage_report,
     export_portfolio_report,
+    export_field_section_review_report,
     export_all_reports_xlsx,
 )
 from scripts.atlassian import (  # noqa: E402
@@ -846,6 +847,22 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             args.append("--summary-only")
         run_script(export_portfolio_report.main, args)
 
+    def run_field_section_review_report() -> None:
+        args = args_report_defaults(log_level)
+        team_gid = _prompt_team_gid_from_lookup(
+            "field & section review",
+            "Team GID to scope the review (blank = all teams)",
+        )
+        if team_gid:
+            args.extend(["--team-gid", team_gid])
+        owner_gid = _prompt_user_gid_from_lookup(
+            "field & section review",
+            "Project-owner user GID to scope the review (blank = all owners)",
+        )
+        if owner_gid:
+            args.extend(["--owner-gid", owner_gid])
+        run_script(export_field_section_review_report.main, args)
+
     return {
         "1": MenuItem(
             "1",
@@ -884,6 +901,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         ),
         "8": MenuItem(
             "8",
+            "Export field & section migration review (.xlsx)",
+            run_field_section_review_report,
+        ),
+        "9": MenuItem(
+            "9",
             "Export ALL reports to one .xlsx workbook",
             lambda: run_script(export_all_reports_xlsx.main, args_report_defaults(log_level)),
         ),
