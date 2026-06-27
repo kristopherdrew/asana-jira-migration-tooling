@@ -9,11 +9,8 @@ All report date columns export as `YYYY-MM-DD` with zero-padded month and day va
 ### Combined Reports Workbook (.xlsx)
 Runs every report below **except** the Team→Project Jira CSV and combines them into a single multi-tab `.xlsx` workbook — handy for handing the whole migration inventory to stakeholders in one file. Tabs: an `Overview` index (generation time, source DB, per-tab row counts) followed by `Projects`, `Users`, `Team Memberships`, `Teams`, `Custom Field Usage`, `Portfolios`, and `Portfolio Items`. Each report is run into a temporary directory (reusing its own `main()`), so the data matches the standalone CSVs exactly. Headers are bold and frozen; numeric columns are typed as numbers, while long identifiers (Asana GIDs) are kept as text to avoid Excel's 15-digit precision loss. The reports run unfiltered (all teams).
 
-This is the only script with a third-party dependency, **`openpyxl`** (the stdlib has no native xlsx writer). Install it into the project virtual environment first:
+The workbook is written by the dependency-free `src/lib/xlsx_writer.py` (which hand-writes OOXML via `zipfile`), so this report — like every other script here — needs only the Python standard library and runs anywhere Python does.
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -r requirements.txt
 python3 -m scripts.export_all_reports_xlsx --database data/asana.sqlite
 ```
 Required flags:
