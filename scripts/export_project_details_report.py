@@ -203,6 +203,7 @@ def export_project_details(
                 tatc.creator_email AS top_task_creator_email,
                 tatc.creator_atlassian_status AS top_task_creator_atlassian_status,
                 tatc.task_count AS top_task_creator_task_count,
+                pjd.decision AS jira_migration_decision,
                 p.synced_at
             FROM projects p
             LEFT JOIN teams t ON t.gid = p.team_gid
@@ -211,6 +212,7 @@ def export_project_details(
             LEFT JOIN top_active_task_creators tatc ON tatc.project_gid = p.gid
             LEFT JOIN users uo ON uo.gid = p.owner_gid
             LEFT JOIN user_atlassian_accounts uoa ON uoa.user_gid = p.owner_gid
+            LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid
             {team_filter}
             ORDER BY COALESCE(t.name, p.team_name) COLLATE NOCASE, p.name COLLATE NOCASE, p.gid
         """
@@ -257,6 +259,7 @@ def export_project_details(
         "top_task_creator_email",
         "top_task_creator_atlassian_status",
         "top_task_creator_task_count",
+        "jira_migration_decision",
         "synced_at",
         "task_counts_captured_at",
     ]
@@ -311,6 +314,7 @@ def export_project_details(
                     "top_task_creator_task_count": (
                         "" if row["top_task_creator_task_count"] is None else row["top_task_creator_task_count"]
                     ),
+                    "jira_migration_decision": _clean_text(row["jira_migration_decision"]),
                     "synced_at": format_report_date(row["synced_at"]),
                 }
             )

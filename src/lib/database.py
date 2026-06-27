@@ -634,6 +634,19 @@ CREATE TABLE IF NOT EXISTS team_project_jira_mappings (
 """
 
 
+PROJECT_JIRA_DECISIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS project_jira_decisions (
+    project_gid TEXT NOT NULL,
+    jira_key TEXT NOT NULL,
+    decision TEXT,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (project_gid),
+    UNIQUE (jira_key),
+    FOREIGN KEY (project_gid) REFERENCES projects(gid)
+);
+"""
+
+
 class Database:
     """Lightweight wrapper around sqlite3 for schema management and inserts."""
 
@@ -680,6 +693,7 @@ class Database:
         connection.executescript(PERSONAL_TASK_CURSORS_SCHEMA)
         connection.executescript(EXPORTED_TASKS_SCHEMA)
         connection.executescript(TEAM_PROJECT_JIRA_MAPPINGS_SCHEMA)
+        connection.executescript(PROJECT_JIRA_DECISIONS_SCHEMA)
         connection.commit()
         self._ensure_column(connection, "tasks", "hierarchy_depth", "INTEGER")
         self._ensure_column(connection, "tasks", "is_personal", "INTEGER DEFAULT 0")
@@ -2864,6 +2878,83 @@ class Database:
             )
         connection.commit()
         return {"written": len(entries)}
+
+    def upsert_project_jira_decisions(
+        self,
+        connection: sqlite3.Connection,
+        decisions: Iterable[Dict[str, str]],
+        synced_at: datetime,
+    ) -> Dict[str, int]:
+        """Persist Asana project -> Jira "Asana Migration Decision" values.
+
+        Each decision requires a ``project_gid`` and ``jira_key``; ``decision`` may
+        be empty. Rows are keyed by ``project_gid`` (latest write wins) and the
+        ``UNIQUE(jira_key)`` constraint guards against the same Jira issue mapping to
+        two projects — a conflicting key raises ``ValueError``.
+        """
+        entries: List[Dict[str, str]] = []
+        jira_keys: List[str] = []
+        seen_projects: Set[str] = set()
+        timestamp = synced_at.isoformat()
+        for decision in decisions:
+            project_gid = (decision.get("project_gid") or "").strip()
+            jira_key = (decision.get("jira_key") or "").strip()
+            if not project_gid or not jira_key:
+                continue
+            if project_gid in seen_projects:
+                continue
+            seen_projects.add(project_gid)
+            entries.append(
+                {
+                    "project_gid": project_gid,
+                    "jira_key": jira_key,
+                    "decision": (decision.get("decision") or "").strip() or None,
+                    "synced_at": timestamp,
+                }
+            )
+            jira_keys.append(jira_key)
+
+        if jira_keys:
+            placeholders = ",".join("?" for _ in jira_keys)
+            conflicts = connection.execute(
+                f"""
+                SELECT jira_key, project_gid
+                FROM project_jira_decisions
+                WHERE jira_key IN ({placeholders})
+                """,
+                tuple(jira_keys),
+            ).fetchall()
+            conflict_map = {row["jira_key"]: row["project_gid"] for row in conflicts}
+            for entry in entries:
+                existing_project = conflict_map.get(entry["jira_key"])
+                if existing_project and existing_project != entry["project_gid"]:
+                    raise ValueError(
+                        "Jira key '%s' already mapped to project %s"
+                        % (entry["jira_key"], existing_project)
+                    )
+
+        written = 0
+        # SQLite parameter limit is ~999; chunk to stay well below that (400 rows per batch).
+        for start in range(0, len(entries), 400):
+            batch = entries[start : start + 400]
+            connection.executemany(
+                """
+                INSERT INTO project_jira_decisions (
+                    project_gid, jira_key, decision, synced_at
+                )
+                VALUES (
+                    :project_gid, :jira_key, :decision, :synced_at
+                )
+                ON CONFLICT(project_gid) DO UPDATE SET
+                    jira_key=excluded.jira_key,
+                    decision=excluded.decision,
+                    synced_at=excluded.synced_at
+                """,
+                batch,
+            )
+            written += len(batch)
+        connection.commit()
+        return {"written": written}
 
     def _replace_project_custom_field_settings(
         self,

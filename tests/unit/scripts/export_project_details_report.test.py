@@ -121,6 +121,11 @@ class ExportProjectDetailsReportTest(TestCase):
             },
             sync_time,
         )
+        self.database.upsert_project_jira_decisions(
+            self.connection,
+            [{"project_gid": "proj_1", "jira_key": "MIG-1", "decision": "Migrate"}],
+            sync_time,
+        )
         self.connection.commit()
 
         output_path = export_project_details(
@@ -160,6 +165,8 @@ class ExportProjectDetailsReportTest(TestCase):
         self.assertEqual(project_one["top_task_creator_email"], "adam@example.com")
         self.assertEqual(project_one["top_task_creator_atlassian_status"], "active")
         self.assertEqual(project_one["top_task_creator_task_count"], "2")
+        # Jira migration decision joined in from project_jira_decisions.
+        self.assertEqual(project_one["jira_migration_decision"], "Migrate")
         # Dropped columns and final-column ordering.
         self.assertNotIn("resource_subtype", project_one)
         self.assertNotIn("owner_gid", project_one)
@@ -173,6 +180,8 @@ class ExportProjectDetailsReportTest(TestCase):
         self.assertEqual(project_two["actual_task_data_present"], "false")
         self.assertEqual(project_two["top_task_creator_name"], "")
         self.assertEqual(project_two["top_task_creator_task_count"], "")
+        # No decision pulled for proj_2, so the column is blank.
+        self.assertEqual(project_two["jira_migration_decision"], "")
 
     def test_top_task_creator_picks_active_atlassian_user(self) -> None:
         sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)

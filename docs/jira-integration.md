@@ -49,6 +49,37 @@ Optional flags:
 - `--dry-run` to print mappings without writing to SQLite.
 - `--log-level <LEVEL>` to adjust verbosity (default `INFO`).
 
+### Pull Asana Migration Decisions From Jira
+Read the **"Asana Migration Decision"** custom field back from the project-level Jira issues (the Task issues created by `create_team_project_jira_issues`) and store each value in the `project_jira_decisions` table, keyed by Asana project GID. The field id is resolved by name at runtime via `GET /rest/api/3/fields` (no hard-coded `customfield_<id>`), issues are paged with `POST /rest/api/3/search/jql` (deterministic `ORDER BY created ASC, issuekey ASC`), and each `jira_key` is mapped to its project through `team_project_jira_mappings` (`kind='project'`). The decision then appears as the `jira_migration_decision` column in the project details report (and the combined `.xlsx` Projects tab). Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials.
+
+`--jql` is optional: when omitted, the search is derived from the project-level Jira keys already stored in `team_project_jira_mappings`. The distinct project keys are pulled out of those issue keys (e.g. `MIG-12` → `MIG`) and combined into `project IN (<derived keys>) AND issuetype = "Task" AND "<field-name>" is not EMPTY`. So a fresh pull usually needs only the base URL.
+```bash
+# derive the JQL from stored keys (no --jql needed)
+python3 -m scripts.atlassian.get_jira_migration_decisions \\
+  --jira-base-url https://example.atlassian.net \\
+  --dry-run
+# write the values
+python3 -m scripts.atlassian.get_jira_migration_decisions \\
+  --jira-base-url https://example.atlassian.net
+# or scope explicitly
+python3 -m scripts.atlassian.get_jira_migration_decisions \\
+  --jira-base-url https://example.atlassian.net \\
+  --jql 'project = MIG AND issuetype = "Task"'
+```
+Required flags:
+- `--jira-base-url <url>` for the Jira Cloud instance.
+
+Optional flags:
+- `--jql <expression>` to pick the issue set explicitly (order is forced to `created ASC`). Omit to derive the default from stored project keys.
+- `--field-name <name>` display name of the decision field (default `Asana Migration Decision`; resolved case-insensitively and used in the derived JQL).
+- `--max-results <n>` page size per search call (default 500; clamped to Jira’s cap).
+- `--include-empty` to store mapped issues even when the decision field is blank (default skips blanks).
+- `--database <path>` SQLite file to update (default `data/asana.sqlite`).
+- `--dry-run` to print decisions without writing to SQLite.
+- `--log-level <LEVEL>` to adjust verbosity (default `INFO`).
+
+Issues whose `jira_key` has no project-level mapping are skipped and counted (run `create_team_project_jira_issues` first if they should map). If `--jql` is omitted and there are no project-level mappings yet, the run exits with guidance to create the issues first or pass `--jql`. One decision is stored per project (latest write wins); `UNIQUE(jira_key)` guards against a Jira issue mapping to two projects.
+
 ### Export Project Tasks To Jira CSV
 Transforms normalized SQLite data for a project into a Jira-compatible CSV (one row per task/subtask). Includes parent IDs, assignee name/email, due date, completion status/timestamp, task description, user comments, populated custom fields (multi-select values appear in sequential columns with the same name), and the current project snapshot counts from `projects` on every row (`project_num_tasks`, `project_num_incomplete_tasks`, `project_num_completed_tasks`, and `project_task_counts_captured_at`). If a task’s assignee is not an active Atlassian user, the export substitutes the active user who created the most tasks in that project for the assignee-facing columns. It also surfaces task-derived project activity columns (`project_last_task_created_at`, `project_last_task_resolved_at`, `project_last_task_updated_at`), which remain blank until task rows exist in SQLite.
 ```bash
