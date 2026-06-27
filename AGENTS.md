@@ -14,7 +14,7 @@
 - Use `python3` consistently in commands, scripts, and README examples unless you are referring to a language name or a literal code snippet.
 - On macOS, activate the virtual environment with `source .venv/bin/activate`.
 - Do not assume `python` exists or maps to the intended interpreter.
-- Only the Python standard library is allowed; document any exception in advance.
+- Only the Python standard library is allowed; document any exception in advance. **Documented exception:** `openpyxl` (pinned in `requirements.txt`) is required *only* by `scripts/export_all_reports_xlsx.py` to emit a multi-tab `.xlsx` workbook — the stdlib has no native xlsx writer. It is imported lazily, so every other script stays stdlib-only and runs without it; install it into the project `.venv` with `python3 -m pip install -r requirements.txt`.
 - Run `python3 -m unittest discover tests` for the full test suite; use `python3 -m trace --count --file trace.out -m unittest discover tests` to check coverage when needed.
 - Run the full test suite before committing non-trivial changes.
 - Scripts that perform concurrent API fetches should expose a `--workers` override (see `get_tasks.py`, `get_task_extras.py`, `get_project_status_updates.py`); single-request and export/diagnostic scripts (e.g. `get_projects.py`, `export_users.py`, `inspect_project_status_data.py`) do not need one. Every script must respect the resolved `skip_ssl_verification` setting from the shared credential loader.
@@ -31,6 +31,7 @@ Index of the export / Atlassian / diagnostic scripts (see the linked doc for ful
 - `scripts/export_users.py` — exports the `users` table + workspace memberships to CSV, with per-user task activity counts, Atlassian id/status, and `last_active_date`. → [reports](docs/reports.md)
 - `scripts/export_custom_field_usage_report.py` — one row per (project, custom field) actually populated on a task, to scope which fields to migrate. → [reports](docs/reports.md)
 - `scripts/export_portfolio_report.py` — portfolio migration-scoping export: a per-portfolio summary (Atlassian-aware owner/creator, item/member/custom-field rollups, status snapshot, hierarchy: is_top_level/nesting_depth/parents) plus a portfolio→items companion CSV (`--summary-only` skips it). → [reports](docs/reports.md)
+- `scripts/export_all_reports_xlsx.py` — runs every non-Jira report into a temp dir and combines them into one multi-tab `.xlsx` (Overview + Projects/Users/Team Memberships/Teams/Custom Field Usage/Portfolios/Portfolio Items). Requires `openpyxl` (the only third-party dependency; lazily imported). → [reports](docs/reports.md)
 - `scripts/update_atlassian_user_map.py` — populates `user_atlassian_accounts` (Asana GID → Atlassian id/status) from a mapping CSV or a raw Atlassian user export (matched by email). → [jira-integration](docs/jira-integration.md)
 - `scripts/search_jira_external_ids.py` — harvests an external-ID field from Jira (`POST /rest/api/3/search/jql`) and upserts Jira→Asana mappings into SQLite. → [jira-integration](docs/jira-integration.md)
 - `scripts/export_project_to_jira_csv.py` — per-task Jira import CSV for a project (comments, custom fields, paired user/Atlassian columns) plus a `_field_counts.csv` companion; `--stats-only` prints stats. → [jira-integration](docs/jira-integration.md)
