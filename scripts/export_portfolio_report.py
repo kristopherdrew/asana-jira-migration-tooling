@@ -137,11 +137,10 @@ SUMMARY_FIELDS = [
     "status_update_count",
     "last_status_update_at",
     "num_items",
+    "num_nested_portfolios",
     "num_projects",
     "num_active_projects",
     "num_archived_projects",
-    "num_projects_not_synced",
-    "num_nested_portfolios",
     "num_members",
     "num_custom_field_settings",
     "custom_fields",
@@ -167,8 +166,7 @@ def export_portfolio_details(
                 SUM(CASE WHEN pi.resource_type = 'portfolio' THEN 1 ELSE 0 END) AS num_nested_portfolios,
                 SUM(CASE WHEN pi.resource_type = 'project' AND pr.gid IS NOT NULL
                           AND (pr.archived IS NULL OR pr.archived = 0) THEN 1 ELSE 0 END) AS num_active_projects,
-                SUM(CASE WHEN pi.resource_type = 'project' AND pr.archived = 1 THEN 1 ELSE 0 END) AS num_archived_projects,
-                SUM(CASE WHEN pi.resource_type = 'project' AND pr.gid IS NULL THEN 1 ELSE 0 END) AS num_projects_not_synced
+                SUM(CASE WHEN pi.resource_type = 'project' AND pr.archived = 1 THEN 1 ELSE 0 END) AS num_archived_projects
             FROM portfolio_items pi
             LEFT JOIN projects pr ON pr.gid = pi.item_gid
             GROUP BY pi.portfolio_gid
@@ -216,11 +214,10 @@ def export_portfolio_details(
             p.current_status_title,
             p.synced_at,
             ir.num_items,
-            ir.num_projects,
             ir.num_nested_portfolios,
+            ir.num_projects,
             ir.num_active_projects,
             ir.num_archived_projects,
-            ir.num_projects_not_synced,
             mr.num_members,
             cr.num_custom_field_settings,
             cr.custom_fields,
@@ -268,11 +265,10 @@ def export_portfolio_details(
                     "status_update_count": _int_or_blank(row["status_update_count"]) or 0,
                     "last_status_update_at": format_report_date(row["last_status_update_at"]),
                     "num_items": _int_or_blank(row["num_items"]) or 0,
+                    "num_nested_portfolios": _int_or_blank(row["num_nested_portfolios"]) or 0,
                     "num_projects": _int_or_blank(row["num_projects"]) or 0,
                     "num_active_projects": _int_or_blank(row["num_active_projects"]) or 0,
                     "num_archived_projects": _int_or_blank(row["num_archived_projects"]) or 0,
-                    "num_projects_not_synced": _int_or_blank(row["num_projects_not_synced"]) or 0,
-                    "num_nested_portfolios": _int_or_blank(row["num_nested_portfolios"]) or 0,
                     "num_members": _int_or_blank(row["num_members"]) or 0,
                     "num_custom_field_settings": _int_or_blank(row["num_custom_field_settings"]) or 0,
                     "custom_fields": row["custom_fields"] or "",
