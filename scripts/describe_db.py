@@ -24,7 +24,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from src.lib.database import Database
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.table_metadata import GROUP_ORDER, TABLE_METADATA, TableMeta
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", default=DEFAULT_DB_PATH, help=f"SQLite file (default: {DEFAULT_DB_PATH}).")
+    parser.add_argument("--database", default=resolve_default_db_path(), help=f"SQLite file (default: {DEFAULT_DB_PATH}).")
     parser.add_argument("--table", help="Focus on a single table/view and print sample rows.")
     parser.add_argument("--samples", type=int, default=3, help="Sample rows to print with --table (default: 3).")
     parser.add_argument("--markdown", action="store_true", help="Emit the data dictionary as Markdown to stdout.")

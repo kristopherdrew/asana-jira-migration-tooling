@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,21 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
+
+# Lets the interactive CLI point every in-process script at a per-profile database
+# without threading a --database flag through each invocation. An explicit db_path
+# (e.g. --database) always wins over this env override.
+ASANA_JIRA_DB_PATH_ENV = "ASANA_JIRA_DB_PATH"
+
+
+def resolve_default_db_path(fallback: Optional[str] = None) -> str:
+    """Return the active default database path.
+
+    Precedence: the ``ASANA_JIRA_DB_PATH`` env override, then the caller-supplied
+    ``fallback`` (e.g. a script's own ``DEFAULT_DB_PATH`` constant, which tests may
+    monkeypatch), then the module-level ``DEFAULT_DB_PATH``.
+    """
+    return os.environ.get(ASANA_JIRA_DB_PATH_ENV) or fallback or DEFAULT_DB_PATH
 
 
 CUSTOM_FIELDS_SCHEMA = """
@@ -650,8 +666,8 @@ CREATE TABLE IF NOT EXISTS project_jira_decisions (
 class Database:
     """Lightweight wrapper around sqlite3 for schema management and inserts."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
-        self.db_path = Path(db_path)
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = Path(db_path if db_path is not None else resolve_default_db_path())
         if self.db_path.parent != Path("."):
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
 

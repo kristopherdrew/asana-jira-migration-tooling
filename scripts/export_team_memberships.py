@@ -16,7 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.config import load_credentials
-from src.lib.database import Database
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.date_formatting import format_report_date
 from src.lib.asana_urls import build_team_url, build_user_url, infer_workspace_gid
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -32,7 +32,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--database",
-        default=DEFAULT_DB_PATH,
+        default=resolve_default_db_path(),
         help="Path to the SQLite database (default: data/asana.sqlite).",
     )
     parser.add_argument(

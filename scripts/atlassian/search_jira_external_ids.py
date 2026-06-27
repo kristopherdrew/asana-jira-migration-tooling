@@ -21,7 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
-from src.lib.database import Database, DEFAULT_DB_PATH
+from src.lib.database import Database, DEFAULT_DB_PATH, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
@@ -356,7 +356,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--database",
-        default=DEFAULT_DB_PATH,
+        default=resolve_default_db_path(),
         help="Path to SQLite DB for writing mappings (default: data/asana.sqlite).",
     )
     parser.add_argument(

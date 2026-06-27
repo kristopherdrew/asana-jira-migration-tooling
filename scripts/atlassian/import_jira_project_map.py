@@ -16,7 +16,7 @@ import sys
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.database import Database  # noqa: E402
+from src.lib.database import Database, resolve_default_db_path  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
@@ -25,7 +25,7 @@ DEFAULT_DB_PATH = "data/asana.sqlite"
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--csv", required=True, help="Path to CSV with project_gid,project_name,project_key")
-    parser.add_argument("--database", default=DEFAULT_DB_PATH, help=f"Path to SQLite DB (default: {DEFAULT_DB_PATH}).")
+    parser.add_argument("--database", default=resolve_default_db_path(), help=f"Path to SQLite DB (default: {DEFAULT_DB_PATH}).")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(argv)
 

@@ -30,7 +30,7 @@ from src.lib.asana_urls import (
     build_user_task_list_url,
     infer_workspace_gid,
 )
-from src.lib.database import Database
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.date_formatting import format_report_date, parse_iso_datetime
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.team_analysis import build_team_analysis
@@ -204,7 +204,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--database",
-        default=DEFAULT_DB_PATH,
+        default=resolve_default_db_path(),
         help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).",
     )
     parser.add_argument(

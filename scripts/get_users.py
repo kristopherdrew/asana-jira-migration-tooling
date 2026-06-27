@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, Optional
 
 from src.lib.config import load_credentials
-from src.lib.database import Database, synced_at_timestamp
+from src.lib.database import Database, synced_at_timestamp, resolve_default_db_path
 from src.lib.http_client import AsanaHttpClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.tasks.users import fetch_user_task_list, fetch_workspace_users
@@ -67,7 +67,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=DEFAULT_DB_PATH)
+    database = Database(db_path=resolve_default_db_path(DEFAULT_DB_PATH))
     sync_time = synced_at_timestamp()
 
     user_count = 0

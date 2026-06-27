@@ -29,6 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.config import load_credentials
+from src.lib.database import resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.xlsx_writer import write_workbook
 from scripts import (
@@ -66,7 +67,7 @@ REPORT_SPECS = [
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", default=DEFAULT_DB_PATH, help="Path to the SQLite database (default: data/asana.sqlite).")
+    parser.add_argument("--database", default=resolve_default_db_path(), help="Path to the SQLite database (default: data/asana.sqlite).")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory to store the workbook (default: exports/).")
     parser.add_argument("--filename", help="Optional workbook filename. Defaults to all_reports_<timestamp>.xlsx.")
     parser.add_argument("--workspace-gid", help="Optional Asana workspace GID used to build URLs in the reports.")

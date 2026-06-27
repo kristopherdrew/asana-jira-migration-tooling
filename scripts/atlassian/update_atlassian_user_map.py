@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from src.lib.database import Database
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
@@ -46,7 +46,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--database",
-        default=DEFAULT_DB_PATH,
+        default=resolve_default_db_path(),
         help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).",
     )
     parser.add_argument(

@@ -6,10 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sqlite3
 import sys
 import shlex
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
@@ -61,12 +62,18 @@ from src.lib.config import (  # noqa: E402
     Credentials,
     DEFAULT_ENV_PATH,
     file_has_plaintext_tokens,
+    list_credential_profiles,
     load_credentials,
     migrate_tokens_to_keychain,
+    named_profile_env_path,
+    profile_slug,
+    read_profile_name,
+    read_profile_jira_urls,
     resolve_credentials_path,
     write_credentials_file,
     write_project_env_pointer,
 )
+from src.lib.database import ASANA_JIRA_DB_PATH_ENV  # noqa: E402
 from src.lib import keychain  # noqa: E402
 from src.lib.credential_check import check_credentials  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
@@ -81,6 +88,101 @@ class MenuItem:
     key: str
     label: str
     handler: Callable[[], None]
+
+
+@dataclass
+class CliSession:
+    """Mutable per-run state: which profile is active and the Jira environment.
+
+    The profile is also persisted to the project pointer file (the source of
+    truth invoked scripts read); this object drives the on-screen header, the
+    Sandbox/Production toggle, and the per-profile database path exported to
+    in-process scripts via ``ASANA_JIRA_DB_PATH``.
+    """
+
+    reference_path: Path
+    env_path: Path
+    client_name: Optional[str] = None
+    use_prod: bool = False
+    jira_base_url: Optional[str] = None
+    jira_sandbox_base_url: Optional[str] = None
+
+    @property
+    def db_path(self) -> Path:
+        return db_path_for_env(self.env_path)
+
+    @property
+    def profile_label(self) -> str:
+        return self.client_name or self.env_path.name
+
+    @property
+    def environment_label(self) -> str:
+        return "PRODUCTION" if self.use_prod else "SANDBOX"
+
+    @property
+    def environment_url(self) -> Optional[str]:
+        return self.jira_base_url if self.use_prod else self.jira_sandbox_base_url
+
+
+# Set once in main(); read by the args builders and DB helpers below.
+_session: Optional[CliSession] = None
+
+
+def db_path_for_env(env_path: Path) -> Path:
+    """Per-profile SQLite path: the default profile keeps data/asana.sqlite."""
+    slug = profile_slug(env_path)
+    name = "asana.sqlite" if not slug else f"asana_{slug}.sqlite"
+    return PROJECT_ROOT / "data" / name
+
+
+def _apply_session_env() -> None:
+    """Point in-process scripts at the active profile's database."""
+    if _session is not None:
+        os.environ[ASANA_JIRA_DB_PATH_ENV] = str(_session.db_path)
+
+
+def _set_session(reference_path: Path, env_path: Path, *, use_prod: Optional[bool] = None) -> CliSession:
+    """(Re)build the module session from an env file and refresh the DB env var."""
+    global _session
+    prod = use_prod if use_prod is not None else (_session.use_prod if _session else False)
+    base_url, sandbox_url = read_profile_jira_urls(env_path)
+    _session = CliSession(
+        reference_path=reference_path,
+        env_path=env_path,
+        client_name=read_profile_name(env_path),
+        use_prod=prod,
+        jira_base_url=base_url,
+        jira_sandbox_base_url=sandbox_url,
+    )
+    _apply_session_env()
+    return _session
+
+
+def offer_legacy_db_adoption() -> None:
+    """Offer to reuse a pre-profiles ``data/asana.sqlite`` for the active profile.
+
+    When a named profile has no database yet but the legacy default database exists,
+    adopting (renaming) it avoids a full re-sync after upgrading to per-profile DBs.
+    The default profile already uses ``data/asana.sqlite``, so it is never offered.
+    """
+    if _session is None:
+        return
+    legacy = PROJECT_ROOT / "data" / "asana.sqlite"
+    target = _session.db_path
+    if target == legacy or target.exists() or not legacy.exists():
+        return
+    size_mb = legacy.stat().st_size / (1024 * 1024)
+    print(
+        f"\nNo database exists yet for profile '{_session.profile_label}' "
+        f"({target.name}),\nbut a legacy {legacy} ({size_mb:.0f} MB) exists from before "
+        "per-profile databases."
+    )
+    if not prompt_bool(
+        "Adopt it for this profile (rename it — no re-sync needed)?", default=True
+    ):
+        return
+    legacy.rename(target)
+    print(f"Adopted {legacy.name} -> {target.name}; this profile's data is ready.")
 
 
 def prompt(text: str, default: Optional[str] = None) -> str:
@@ -105,6 +207,13 @@ def prompt_bool(text: str, default: bool = False) -> bool:
     if value == "":
         return default
     return value.startswith("y")
+
+
+def active_db_path() -> Path:
+    """The active profile's SQLite path (falls back to the default profile)."""
+    if _session is not None:
+        return _session.db_path
+    return PROJECT_ROOT / "data" / "asana.sqlite"
 
 
 def _open_sqlite(db_path: Path) -> sqlite3.Connection:
@@ -170,7 +279,7 @@ def _prompt_lookup_gid(
     lookup_fn: Callable[[str, sqlite3.Connection, int, int], Sequence[sqlite3.Row]],
     row_label_fn: Callable[[sqlite3.Row], str],
 ) -> str:
-    db_path = PROJECT_ROOT / "data" / "asana.sqlite"
+    db_path = active_db_path()
     conn: Optional[sqlite3.Connection] = None
     try:
         conn = _open_sqlite(db_path)
@@ -247,12 +356,14 @@ def confirm(text: str, default: bool = True) -> bool:
 
 
 def append_jira_env_flag(args: List[str]) -> None:
-    """Append --prod when the user opts into production; default is the sandbox URL.
+    """Append --prod when the session targets Production; default is the sandbox URL.
 
-    The base URL itself now comes from the credentials file (JIRA_BASE_URL /
-    JIRA_SANDBOX_BASE_URL), so the only choice here is which environment to target.
+    The Sandbox/Production choice is a session-level toggle (see the "Profile &
+    Environment" menu and the header), so Jira commands no longer prompt per-run.
+    The base URL itself comes from the credentials file (JIRA_BASE_URL /
+    JIRA_SANDBOX_BASE_URL).
     """
-    if confirm("Use PRODUCTION Jira? (default: sandbox)", default=False):
+    if _session is not None and _session.use_prod:
         args.append("--prod")
 
 
@@ -358,10 +469,13 @@ def _edit_credential_field(field: str, env_name: str, kind: str, values: Dict[st
 def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
     """Show current credentials (tokens masked) and let the user update individual keys."""
     values: Dict[str, object] = {field: getattr(current, field) for field, _, _ in CREDENTIAL_FIELDS}
+    # client_name is not edited here (it names the profile/file); preserve it on save.
+    values["client_name"] = current.client_name
     secret_backend = "Keychain" if keychain.is_available() else "env file"
+    profile_label = current.client_name or env_path.name
     dirty = False
     while True:
-        print(f"\nCredentials in {env_path} (tokens stored in: {secret_backend}):")
+        print(f"\nCredentials for profile '{profile_label}' in {env_path} (tokens stored in: {secret_backend}):")
         for index, (field, env_name, kind) in enumerate(CREDENTIAL_FIELDS, start=1):
             display = _display_credential_value(kind, values[field])
             if kind == "secret" and values[field]:
@@ -423,14 +537,51 @@ def offer_token_migration(env_path: Path) -> bool:
     return bool(migrated)
 
 
+def print_welcome() -> None:
+    """First-run dialogue explaining what's required before the toolkit can run."""
+    print(
+        "\n"
+        "============================================================\n"
+        " Welcome to the Asana -> Jira Migration Toolkit\n"
+        "============================================================\n"
+        "\n"
+        "No client profile is set up yet. A profile holds the credentials\n"
+        "for one Asana workspace (and, optionally, its Atlassian/Jira site).\n"
+        "\n"
+        "To get started you'll need:\n"
+        "  REQUIRED\n"
+        "   - ASANA_TOKEN          your Asana personal access token\n"
+        "   - ASANA_WORKSPACE_GID  the workspace to migrate\n"
+        "\n"
+        "  OPTIONAL (only for the Jira migration steps)\n"
+        "   - ATLASSIAN_USERNAME / ATLASSIAN_TOKEN  Atlassian API credentials\n"
+        "   - JIRA_BASE_URL / JIRA_SANDBOX_BASE_URL  your Jira sites\n"
+        "\n"
+        "On macOS the two tokens are stored securely in the Keychain; the\n"
+        "rest is saved to a per-profile env file (~/.asana_jira_env_<name>).\n"
+        "Each profile also gets its own database (data/asana_<name>.sqlite).\n"
+        "\n"
+        "Let's create your first profile.\n"
+    )
+
+
 def bootstrap_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
-    env_path = prompt_credentials_env_path(resolve_credentials_path(reference_path))
-    if env_path.exists() and not prompt_bool(f"{env_path} already exists. Overwrite it?", default=False):
+    """Create a new, client-named profile and make it the active one."""
+    name = prompt_required("Client / profile name")
+    env_path = named_profile_env_path(name)
+    if env_path.exists() and not prompt_bool(
+        f"A profile already exists at {env_path}. Overwrite it?", default=False
+    ):
         raise SystemExit("Credentials file was not updated.")
-    credentials = prompt_validated_credentials()
+    credentials = replace(prompt_validated_credentials(), client_name=name)
     write_credentials_file(env_path, credentials)
     write_project_env_pointer(reference_path, env_path)
-    print(f"Credentials saved to {env_path} and referenced from the project pointer.")
+    _set_session(reference_path, env_path)
+    print(
+        f"\nProfile '{name}' saved to {env_path} and set as the active profile.\n"
+        f"Its data will sync into {db_path_for_env(env_path)}."
+    )
+    offer_legacy_db_adoption()
     return env_path
 
 
@@ -448,15 +599,24 @@ def change_credentials_file_reference(reference_path: Path = PROJECT_ROOT) -> Pa
     return env_path
 
 
-def ensure_interactive_credentials(reference_path: Path = PROJECT_ROOT) -> None:
+def ensure_interactive_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
+    """Resolve (or create) the active profile and return its env-file path.
+
+    On a true first launch (no credentials file anywhere) we show the welcome
+    dialogue and create a client-named profile. An incomplete/invalid existing
+    file is left in place so the user can repair it from the Credentials menu.
+    """
     try:
         load_credentials(reference_path)
     except FileNotFoundError:
+        print_welcome()
+        return bootstrap_credentials(reference_path)
+    except (KeyError, ValueError) as exc:
         print(
-            "\nNo referenced credentials file was found for this project. "
-            "Let's create one before continuing."
+            f"\nThe active credentials file is incomplete or invalid ({exc}). "
+            "Use the Credentials menu to finish setting it up."
         )
-        bootstrap_credentials(reference_path)
+    return resolve_credentials_path(reference_path)
 
 
 def run_token_migration(reference_path: Path = PROJECT_ROOT) -> None:
@@ -476,6 +636,114 @@ def build_credentials_menu() -> Dict[str, MenuItem]:
         "1": MenuItem("1", "View / update credentials (creates the file if none exists)", lambda: manage_credentials(PROJECT_ROOT)),
         "2": MenuItem("2", "Change referenced credentials file", lambda: change_credentials_file_reference(PROJECT_ROOT)),
         "3": MenuItem("3", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
+_ANSI_CODES = {
+    "reset": "\033[0m",
+    "bold": "\033[1m",
+    "green": "\033[32m",
+    "red": "\033[31m",
+}
+
+
+def _supports_color() -> bool:
+    """Only emit ANSI codes when writing to an interactive terminal."""
+    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+
+def _colorize(text: str, *codes: str) -> str:
+    if not _supports_color() or not codes:
+        return text
+    prefix = "".join(_ANSI_CODES[code] for code in codes)
+    return f"{prefix}{text}{_ANSI_CODES['reset']}"
+
+
+def print_session_header() -> None:
+    """Show the active profile + Jira environment in a bordered box above the menu.
+
+    The border is green for the sandbox and red for production, giving an
+    at-a-glance cue about which Jira environment commands will target.
+    """
+    if _session is None:
+        return
+    env_value = _session.environment_label
+    if _session.environment_url:
+        env_value += f" ({_session.environment_url})"
+    rows = [
+        ("Profile", _session.profile_label),
+        ("Environment", env_value),
+        ("Database", _session.db_path.name),
+    ]
+    lines = [f"{label}: {value}" for label, value in rows]
+    width = max(len(line) for line in lines)
+    border_color = "red" if _session.use_prod else "green"
+
+    top = _colorize("┌" + "─" * (width + 2) + "┐", border_color)
+    bottom = _colorize("└" + "─" * (width + 2) + "┘", border_color)
+    side = _colorize("│", border_color)
+
+    print()
+    print(top)
+    for line in lines:
+        print(f"{side} {line.ljust(width)} {side}")
+    print(bottom)
+
+
+def toggle_environment() -> None:
+    if _session is None:
+        return
+    _session.use_prod = not _session.use_prod
+    print(
+        f"\nJira environment is now {_session.environment_label}. "
+        "All Jira commands will target it until you change it again."
+    )
+
+
+def switch_profile(reference_path: Path = PROJECT_ROOT) -> None:
+    """Pick another discovered profile (or type a path) and make it active."""
+    profiles = list_credential_profiles()
+    active = _session.env_path if _session else resolve_credentials_path(reference_path)
+    if profiles:
+        print("\nAvailable profiles:")
+        for index, (path, name) in enumerate(profiles, start=1):
+            marker = " (active)" if path == active else ""
+            label = name or path.name
+            print(f"  [{index}] {label} — {path}{marker}")
+    else:
+        print("\nNo profiles found in your home directory yet.")
+    choice = prompt("Pick a number, or Enter to type a path", default="")
+    if choice.isdigit() and 1 <= int(choice) <= len(profiles):
+        env_path = profiles[int(choice) - 1][0]
+    elif choice:
+        env_path = Path(choice).expanduser()
+    else:
+        typed = prompt("Credentials env file path", default=str(active))
+        if not typed:
+            print("No profile selected.")
+            return
+        env_path = Path(typed).expanduser()
+
+    if not env_path.exists():
+        print(f"No file exists at {env_path}.")
+        return
+    write_project_env_pointer(reference_path, env_path)
+    session = _set_session(reference_path, env_path)
+    print(f"\nActive profile is now '{session.profile_label}' ({env_path}).")
+    offer_legacy_db_adoption()
+    if not session.db_path.exists():
+        print(
+            f"Note: {session.db_path} does not exist yet — run a sync for this "
+            "profile before using the Tasks/Reports/Atlassian menus."
+        )
+
+
+def build_profile_env_menu(reference_path: Path = PROJECT_ROOT) -> Dict[str, MenuItem]:
+    return {
+        "1": MenuItem("1", "Toggle Jira environment (Sandbox <-> Production)", toggle_environment),
+        "2": MenuItem("2", "Switch active profile", lambda: switch_profile(reference_path)),
+        "3": MenuItem("3", "Create a new profile", lambda: bootstrap_credentials(reference_path)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -580,6 +848,9 @@ def print_rerun_command(module: str, argv: Sequence[str]) -> None:
     parts = ["python3", "-m", module]
     parts.extend(str(a) for a in argv)
     cmd = shlex.join(parts)
+    # Prefix the per-profile database so a standalone re-run targets the same DB.
+    if _session is not None and _session.db_path != PROJECT_ROOT / "data" / "asana.sqlite":
+        cmd = f"{ASANA_JIRA_DB_PATH_ENV}={shlex.quote(str(_session.db_path))} {cmd}"
     print("\nRe-run directly without the interactive menu:\n  " + cmd + "\n")
 
 
@@ -811,7 +1082,7 @@ def args_incremental_updates(log_level: str) -> List[str]:
 
 def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     args = build_common_args(log_level)
-    db_path = PROJECT_ROOT / "data" / "asana.sqlite"
+    db_path = active_db_path()
     conn: Optional[sqlite3.Connection] = None
     try:
         conn = _open_sqlite(db_path)
@@ -1294,7 +1565,7 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
         ),
         "6": MenuItem("6", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
         "7": MenuItem("7", "Clear export IDs", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level))),
-        "8": MenuItem("8", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, ["--clear-jira-project-map"])),
+        "8": MenuItem("8", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, build_common_args(log_level) + ["--clear-jira-project-map"])),
         "9": MenuItem("9", "Sync Jira attachments", lambda: run_sync_attachments(log_level)),
         "10": MenuItem(
             "10",
@@ -1327,17 +1598,23 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_cli_args(argv)
     log_level = resolve_log_level(args.log_level)
     configure_logging(log_level)
-    ensure_interactive_credentials(PROJECT_ROOT)
+    env_path = ensure_interactive_credentials(PROJECT_ROOT)
+    if _session is None:
+        # Existing profile (ensure didn't bootstrap, which sets the session itself).
+        _set_session(PROJECT_ROOT, env_path, use_prod=False)
+        offer_legacy_db_adoption()
     top_menu = {
         "1": MenuItem("1", "Initialization (metadata only)", lambda: run_group("Initialization", build_init_menu(args.log_level))),
         "2": MenuItem("2", "Tasks (full/extras/incremental)", lambda: run_group("Tasks", build_tasks_menu(args.log_level))),
         "3": MenuItem("3", "Atlassian (exports, mappings, attachments)", lambda: run_group("Atlassian", build_atlassian_menu(args.log_level))),
         "4": MenuItem("4", "Reports (projects, users, memberships, team summary, portfolios)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
         "5": MenuItem("5", "Credentials (create or change env file)", lambda: run_group("Credentials", build_credentials_menu())),
+        "6": MenuItem("6", "Profile & Environment (switch profile, toggle Sandbox/Production)", lambda: run_group("Profile & Environment", build_profile_env_menu(PROJECT_ROOT))),
         "q": MenuItem("q", "Quit", lambda: sys.exit(0)),
     }
 
     while True:
+        print_session_header()
         print_menu("Asana Toolkit Interactive CLI", top_menu)
         choice = input("Select a category: ").strip()
         if choice not in top_menu:
