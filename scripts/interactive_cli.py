@@ -277,6 +277,96 @@ def prompt_credentials_values() -> Credentials:
     )
 
 
+# Credentials dataclass field -> (env var name, kind) for the view/edit flow.
+# kind: "required" text, "optional" text, "bool", or "secret" (masked on display).
+CREDENTIAL_FIELDS = [
+    ("token", "ASANA_TOKEN", "secret"),
+    ("workspace_gid", "ASANA_WORKSPACE_GID", "required"),
+    ("skip_ssl_verification", "SKIP_SSL_VERIFICATION", "bool"),
+    ("atlassian_username", "ATLASSIAN_USERNAME", "optional"),
+    ("atlassian_token", "ATLASSIAN_TOKEN", "secret"),
+    ("jira_base_url", "JIRA_BASE_URL", "optional"),
+    ("jira_sandbox_base_url", "JIRA_SANDBOX_BASE_URL", "optional"),
+]
+
+
+def _display_credential_value(kind: str, value) -> str:
+    if kind == "bool":
+        return "true" if value else "false"
+    if not value:
+        return "(not set)"
+    if kind == "secret":
+        return "******** (set)"
+    return str(value)
+
+
+def _edit_credential_field(field: str, env_name: str, kind: str, values: Dict[str, object]) -> None:
+    if kind == "bool":
+        values[field] = prompt_bool(f"{env_name}?", default=bool(values[field]))
+        return
+    if kind == "secret":
+        new = prompt(f"New {env_name} (blank = keep current)", default="")
+        if new:
+            values[field] = new
+        return
+    if kind == "required":
+        new = prompt(env_name, default=str(values[field] or ""))
+        if new:
+            values[field] = new
+        else:
+            print(f"{env_name} is required; keeping the current value.")
+        return
+    # optional text: blank keeps current, '-' clears it
+    new = prompt(f"{env_name} (blank = keep, '-' = clear)", default="")
+    if new == "-":
+        values[field] = None
+    elif new:
+        values[field] = new
+
+
+def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
+    """Show current credentials (tokens masked) and let the user update individual keys."""
+    values: Dict[str, object] = {field: getattr(current, field) for field, _, _ in CREDENTIAL_FIELDS}
+    dirty = False
+    while True:
+        print(f"\nCredentials in {env_path}:")
+        for index, (field, env_name, kind) in enumerate(CREDENTIAL_FIELDS, start=1):
+            print(f"  [{index}] {env_name} = {_display_credential_value(kind, values[field])}")
+        choice = input("Select a number to update, 's' to save, or 'q' to cancel: ").strip().lower()
+        if choice == "q":
+            print("No changes saved.")
+            return env_path
+        if choice == "s":
+            if not dirty:
+                print("No changes to save.")
+                return env_path
+            write_credentials_file(env_path, Credentials(**values))
+            print(f"Updated credentials saved to {env_path}.")
+            return env_path
+        if choice.isdigit() and 1 <= int(choice) <= len(CREDENTIAL_FIELDS):
+            field, env_name, kind = CREDENTIAL_FIELDS[int(choice) - 1]
+            _edit_credential_field(field, env_name, kind, values)
+            dirty = True
+        else:
+            print("Invalid choice. Enter a number, 's', or 'q'.")
+
+
+def manage_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
+    """Create credentials when none are found; otherwise view/update the existing file."""
+    env_path = resolve_credentials_path(reference_path)
+    if not env_path.exists():
+        print(f"\nNo credentials file found at {env_path}. Let's walk through creating one.")
+        return bootstrap_credentials(reference_path)
+    try:
+        current = load_credentials(reference_path)
+    except (KeyError, ValueError) as exc:
+        print(f"\nCredentials at {env_path} are incomplete or invalid ({exc}).")
+        if prompt_bool("Recreate the file from scratch?", default=True):
+            return bootstrap_credentials(reference_path)
+        raise SystemExit("Credentials were not changed.")
+    return edit_existing_credentials(env_path, current)
+
+
 def bootstrap_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
     env_path = prompt_credentials_env_path(resolve_credentials_path(reference_path))
     if env_path.exists() and not prompt_bool(f"{env_path} already exists. Overwrite it?", default=False):
@@ -315,7 +405,7 @@ def ensure_interactive_credentials(reference_path: Path = PROJECT_ROOT) -> None:
 
 def build_credentials_menu() -> Dict[str, MenuItem]:
     return {
-        "1": MenuItem("1", "Create or update credentials file", lambda: bootstrap_credentials(PROJECT_ROOT)),
+        "1": MenuItem("1", "View / update credentials (creates the file if none exists)", lambda: manage_credentials(PROJECT_ROOT)),
         "2": MenuItem("2", "Change referenced credentials file", lambda: change_credentials_file_reference(PROJECT_ROOT)),
         "b": MenuItem("b", "Back", lambda: None),
     }
