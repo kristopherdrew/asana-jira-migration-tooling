@@ -50,6 +50,7 @@ from scripts.atlassian import (  # noqa: E402
     create_team_project_jira_issues,
     export_project_to_jira_csv,
     export_team_project_jira_csv,
+    get_jira_migration_decisions,
     import_jira_task_keys,
     sync_jira_attachments,
     update_atlassian_user_map,
@@ -1006,6 +1007,28 @@ def args_create_team_project_jira_issues(log_level: str) -> List[str]:
     return args
 
 
+def args_get_jira_migration_decisions(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    jira_base = prompt("Jira base URL (e.g. https://example.atlassian.net)", default="")
+    if not jira_base:
+        raise SystemExit("Jira base URL is required.")
+    args.extend(["--jira-base-url", jira_base])
+    jql = prompt(
+        "JQL (blank = derive from stored project keys: project IN (...) AND issuetype = Task AND field is not EMPTY)",
+        default="",
+    )
+    if jql:
+        args.extend(["--jql", jql])
+    field_name = prompt("Decision field name", default="Asana Migration Decision")
+    if field_name:
+        args.extend(["--field-name", field_name])
+    if confirm("Store mapped issues even when the decision is blank?", default=False):
+        args.append("--include-empty")
+    if confirm("Dry run (fetch and print decisions, write nothing)?", default=True):
+        args.append("--dry-run")
+    return args
+
+
 def run_group(title: str, menu: Dict[str, MenuItem]) -> None:
     while True:
         print_menu(title, menu)
@@ -1089,6 +1112,11 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
             "9",
             "Create team/project Jira issues (direct API)",
             lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level)),
+        ),
+        "10": MenuItem(
+            "10",
+            "Pull 'Asana Migration Decision' from Jira (project-level)",
+            lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level)),
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }

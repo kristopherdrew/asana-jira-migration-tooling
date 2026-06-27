@@ -662,6 +662,23 @@ Maps Asana team/project → created Jira Epic/Task key so re-runs skip existing 
 | `jira_key` | TEXT |  |
 | `synced_at` | TEXT |  |
 
+#### `project_jira_decisions`
+
+Stores the 'Asana Migration Decision' custom-field value read back from each project's Jira Task issue, keyed by Asana project GID.
+
+- **Source:** Jira JQL search for the decision field (POST /rest/api/3/search/jql) + field-id lookup (GET /rest/api/3/fields); jira_key resolved to project via team_project_jira_mappings (kind='project') — not an Asana API.
+- **Populated by:** `scripts/atlassian/get_jira_migration_decisions.py`
+- **Written by:** `upsert_project_jira_decisions`
+- **Write semantics:** Upsert by project_gid (PK); UNIQUE(jira_key). FK→projects.
+- **Foreign keys:** project_gid → projects(gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `project_gid` | TEXT | ✓ |
+| `jira_key` | TEXT |  |
+| `decision` | TEXT |  |
+| `synced_at` | TEXT |  |
+
 #### `exported_tasks`
 
 Audit trail of which tasks were written in each Jira-export batch (--export-id).
