@@ -19,7 +19,6 @@ from scripts.export_project_to_jira_csv import (
     normalize_jira_base_url,
     parse_project_list,
     prompt_and_run_incremental_refresh,
-    prompt_for_jira_base_url,
     print_project_stats,
 )
 
@@ -1289,23 +1288,6 @@ class ExportProjectToJiraCsvTest(TestCase):
             "https://my-domain.atlassian.net",
         )
         self.assertIsNone(normalize_jira_base_url("   "))
-
-    @patch("scripts.atlassian.export_project_to_jira_csv.input", return_value="")
-    def test_prompt_for_jira_base_url_uses_default_when_blank(
-        self,
-        mock_input: Mock,
-    ) -> None:
-        with patch("scripts.atlassian.export_project_to_jira_csv.sys.stdin") as mock_stdin:
-            mock_stdin.isatty.return_value = True
-            result = prompt_for_jira_base_url("https://custom.atlassian.net")
-        self.assertEqual(result, "https://custom.atlassian.net")
-        mock_input.assert_called_once()
-
-    def test_prompt_for_jira_base_url_skips_when_non_interactive(self) -> None:
-        with patch("scripts.atlassian.export_project_to_jira_csv.sys.stdin") as mock_stdin:
-            mock_stdin.isatty.return_value = False
-            result = prompt_for_jira_base_url(None)
-        self.assertIsNone(result)
 
     def test_parse_project_list_explicit_gids_include_archived(self) -> None:
         self.connection.execute(

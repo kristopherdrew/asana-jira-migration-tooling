@@ -17,6 +17,8 @@ ENV_VAR_NAMES = {
     "skip_ssl_verification": "SKIP_SSL_VERIFICATION",
     "atlassian_username": "ATLASSIAN_USERNAME",
     "atlassian_token": "ATLASSIAN_TOKEN",
+    "jira_base_url": "JIRA_BASE_URL",
+    "jira_sandbox_base_url": "JIRA_SANDBOX_BASE_URL",
 }
 
 
@@ -27,6 +29,32 @@ class Credentials:
     skip_ssl_verification: bool
     atlassian_username: Optional[str] = None
     atlassian_token: Optional[str] = None
+    jira_base_url: Optional[str] = None
+    jira_sandbox_base_url: Optional[str] = None
+
+
+def resolve_jira_base_url(credentials: "Credentials", prod: bool = False) -> str:
+    """Return the configured Jira base URL for the selected environment.
+
+    Defaults to the sandbox (``JIRA_SANDBOX_BASE_URL``); pass ``prod=True`` to
+    target production (``JIRA_BASE_URL``). Raises ``ValueError`` with actionable
+    guidance when the chosen environment's URL is not set in the credentials.
+    """
+    if prod:
+        url, env_name, which = credentials.jira_base_url, ENV_VAR_NAMES["jira_base_url"], "production"
+    else:
+        url, env_name, which = (
+            credentials.jira_sandbox_base_url,
+            ENV_VAR_NAMES["jira_sandbox_base_url"],
+            "sandbox",
+        )
+    url = (url or "").strip()
+    if not url:
+        hint = "" if prod else " (or pass --prod to target production)"
+        raise ValueError(
+            f"No {which} Jira base URL configured. Set {env_name} in your credentials file{hint}."
+        )
+    return url.rstrip("/")
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -166,6 +194,8 @@ def load_credentials(path: str | Path = ".") -> Credentials:
 
     atlassian_username = (_read_value("atlassian_username", env_file_data) or "").strip() or None
     atlassian_token = (_read_value("atlassian_token", env_file_data) or "").strip() or None
+    jira_base_url = (_read_value("jira_base_url", env_file_data) or "").strip() or None
+    jira_sandbox_base_url = (_read_value("jira_sandbox_base_url", env_file_data) or "").strip() or None
 
     return Credentials(
         token=token.strip(),
@@ -173,6 +203,8 @@ def load_credentials(path: str | Path = ".") -> Credentials:
         skip_ssl_verification=skip_ssl_bool,
         atlassian_username=atlassian_username,
         atlassian_token=atlassian_token,
+        jira_base_url=jira_base_url,
+        jira_sandbox_base_url=jira_sandbox_base_url,
     )
 
 
@@ -194,6 +226,10 @@ def write_credentials_file(path: str | Path, credentials: Credentials) -> Path:
         lines.append(_format_env_assignment("ATLASSIAN_USERNAME", credentials.atlassian_username))
     if credentials.atlassian_token:
         lines.append(_format_env_assignment("ATLASSIAN_TOKEN", credentials.atlassian_token))
+    if credentials.jira_base_url:
+        lines.append(_format_env_assignment("JIRA_BASE_URL", credentials.jira_base_url))
+    if credentials.jira_sandbox_base_url:
+        lines.append(_format_env_assignment("JIRA_SANDBOX_BASE_URL", credentials.jira_sandbox_base_url))
 
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:

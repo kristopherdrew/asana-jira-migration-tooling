@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in os.sys.path:
     os.sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.config import Credentials, load_credentials
+from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
 from src.lib.database import Database
 from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -63,7 +63,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--project-gids",
         help="Comma-separated list of Asana project GIDs to sync attachments for (processed sequentially).",
     )
-    parser.add_argument("--jira-base-url", required=True, help="Base URL for the Jira site (e.g., https://example.atlassian.net).")
+    parser.add_argument(
+        "--prod",
+        action="store_true",
+        help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
+    )
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for the CSV summary (default: exports/).")
     parser.add_argument("--task-gid", help="Optional Asana task GID to limit the sync to a single task.")
     parser.add_argument("--max-workers", type=int, default=DEFAULT_WORKERS, help="Concurrent upload workers (default: 2).")
@@ -476,6 +480,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         raise SystemExit(str(exc)) from exc
     configure_logging(log_level)
 
+    try:
+        jira_base_url = resolve_jira_base_url(load_credentials(), prod=args.prod)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
     project_gids = resolve_project_gids(args.project_gid, args.project_gids)
     # Create a dedicated attachment export folder per run when using the default exports/ path.
     output_root = Path(args.output_dir)
@@ -487,7 +496,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         report_paths = sync_attachments(
             database_path=args.database,
             project_gids=project_gids,
-            jira_base_url=args.jira_base_url,
+            jira_base_url=jira_base_url,
             output_dir=output_root,
             max_workers=max(args.max_workers, 1),
             throttle_seconds=max(args.throttle_seconds, 0.0),

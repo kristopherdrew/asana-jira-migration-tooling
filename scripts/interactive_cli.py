@@ -242,6 +242,16 @@ def confirm(text: str, default: bool = True) -> bool:
     return prompt_bool(text, default=default)
 
 
+def append_jira_env_flag(args: List[str]) -> None:
+    """Append --prod when the user opts into production; default is the sandbox URL.
+
+    The base URL itself now comes from the credentials file (JIRA_BASE_URL /
+    JIRA_SANDBOX_BASE_URL), so the only choice here is which environment to target.
+    """
+    if confirm("Use PRODUCTION Jira? (default: sandbox)", default=False):
+        args.append("--prod")
+
+
 def prompt_credentials_env_path(default: Optional[Path] = None) -> Path:
     default_path = str(default or DEFAULT_ENV_PATH)
     raw_path = prompt("Credentials env file path", default=default_path)
@@ -254,12 +264,16 @@ def prompt_credentials_values() -> Credentials:
     skip_ssl_verification = prompt_bool("Skip SSL verification?", default=False)
     atlassian_username = prompt("ATLASSIAN_USERNAME (optional)", default="")
     atlassian_token = prompt("ATLASSIAN_TOKEN (optional)", default="")
+    jira_base_url = prompt("JIRA_BASE_URL — production Jira site (optional)", default="")
+    jira_sandbox_base_url = prompt("JIRA_SANDBOX_BASE_URL — sandbox Jira site (optional)", default="")
     return Credentials(
         token=token,
         workspace_gid=workspace_gid,
         skip_ssl_verification=skip_ssl_verification,
         atlassian_username=atlassian_username or None,
         atlassian_token=atlassian_token or None,
+        jira_base_url=jira_base_url or None,
+        jira_sandbox_base_url=jira_sandbox_base_url or None,
     )
 
 
@@ -749,9 +763,7 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
 
     if confirm("Stats only (no CSV)?", default=False):
         args.append("--stats-only")
-    jira_base = prompt("Jira base URL (blank to use default)", default="")
-    if jira_base:
-        args.extend(["--jira-base-url", jira_base])
+    append_jira_env_flag(args)
     fallback_atl = prompt("Fallback Atlassian account ID for unmapped users (optional)", default="")
     if fallback_atl:
         args.extend(["--fallback-atlassian-id", fallback_atl])
@@ -994,14 +1006,11 @@ def args_sync_attachments(log_level: str) -> List[str]:
     project_gids = prompt("Project GID(s) to sync attachments for (comma-separated allowed)", default="")
     if not project_gids:
         raise SystemExit("At least one project GID is required.")
-    jira_base = prompt("Jira base URL", default="")
-    if not jira_base:
-        raise SystemExit("Jira base URL is required.")
     if "," in project_gids:
         args.extend(["--project-gids", project_gids])
     else:
         args.extend(["--project-gid", project_gids])
-    args.extend(["--jira-base-url", jira_base])
+    append_jira_env_flag(args)
     if confirm("Dry run (no uploads)?", default=True):
         args.append("--dry-run")
     return args
@@ -1009,13 +1018,11 @@ def args_sync_attachments(log_level: str) -> List[str]:
 
 def args_create_team_project_jira_issues(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    jira_base = prompt("Jira base URL (e.g. https://example.atlassian.net)", default="")
-    if not jira_base:
-        raise SystemExit("Jira base URL is required.")
     jira_project_key = prompt("Target Jira project key (e.g. MIG)", default="")
     if not jira_project_key:
         raise SystemExit("Jira project key is required.")
-    args.extend(["--jira-base-url", jira_base, "--jira-project-key", jira_project_key])
+    args.extend(["--jira-project-key", jira_project_key])
+    append_jira_env_flag(args)
     team_gid = _prompt_team_gid_from_lookup(
         "team/project Jira creation",
         "Team GID to restrict creation to (blank = all teams)",
@@ -1031,10 +1038,7 @@ def args_create_team_project_jira_issues(log_level: str) -> List[str]:
 
 def args_get_jira_migration_decisions(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    jira_base = prompt("Jira base URL (e.g. https://example.atlassian.net)", default="")
-    if not jira_base:
-        raise SystemExit("Jira base URL is required.")
-    args.extend(["--jira-base-url", jira_base])
+    append_jira_env_flag(args)
     jql = prompt(
         "JQL (blank = derive from stored project keys: project IN (...) AND issuetype = Task AND field is not EMPTY)",
         default="",

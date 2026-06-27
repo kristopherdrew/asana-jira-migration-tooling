@@ -64,11 +64,12 @@ class IncrementalArgsBuilderTest(TestCase):
         )
 
     def test_create_team_project_jira_issues_include_empty_with_team(self) -> None:
+        # Prompt order: project key, prod? (sandbox=n), [team via mock], include-empty?, dry-run?
         with patch(
             "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_a"
         ), patch(
             "builtins.input",
-            side_effect=["https://x.atlassian.net", "MIG", "y", "n"],
+            side_effect=["MIG", "n", "y", "n"],
         ):
             args = interactive_cli.args_create_team_project_jira_issues("INFO")
         self.assertEqual(
@@ -76,8 +77,6 @@ class IncrementalArgsBuilderTest(TestCase):
             [
                 "--log-level",
                 "INFO",
-                "--jira-base-url",
-                "https://x.atlassian.net",
                 "--jira-project-key",
                 "MIG",
                 "--team-gid",
@@ -86,12 +85,13 @@ class IncrementalArgsBuilderTest(TestCase):
             ],
         )
 
-    def test_create_team_project_jira_issues_defaults_skip_empty_and_dry_run(self) -> None:
+    def test_create_team_project_jira_issues_prod_flag_and_dry_run(self) -> None:
+        # Choosing production appends --prod (before the team scope); blank team, dry-run on.
         with patch(
             "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value=""
         ), patch(
             "builtins.input",
-            side_effect=["https://x.atlassian.net", "MIG", "n", "y"],
+            side_effect=["MIG", "y", "n", "y"],
         ):
             args = interactive_cli.args_create_team_project_jira_issues("INFO")
         self.assertEqual(
@@ -99,10 +99,9 @@ class IncrementalArgsBuilderTest(TestCase):
             [
                 "--log-level",
                 "INFO",
-                "--jira-base-url",
-                "https://x.atlassian.net",
                 "--jira-project-key",
                 "MIG",
+                "--prod",
                 "--dry-run",
             ],
         )
