@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import io
+import tempfile
+from contextlib import redirect_stdout
+from os import environ
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 from scripts import interactive_cli
-from src.lib.config import Credentials
+from src.lib.config import Credentials, load_credentials, write_credentials_file
 
 
 class IncrementalArgsBuilderTest(TestCase):
@@ -215,6 +219,80 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_prompt_values.assert_called_once()
         mock_write_credentials_file.assert_called_once()
         mock_write_project_env_pointer.assert_called_once_with(Path("/tmp/project"), Path("/tmp/new-client.env"))
+
+    @patch("scripts.interactive_cli.bootstrap_credentials", return_value=Path("/tmp/new.env"))
+    def test_manage_credentials_walks_through_when_missing(self, mock_bootstrap) -> None:
+        with patch(
+            "scripts.interactive_cli.resolve_credentials_path", return_value=Path("/tmp/does-not-exist.env")
+        ):
+            result = interactive_cli.manage_credentials(Path("/tmp/project"))
+        self.assertEqual(result, Path("/tmp/new.env"))
+        mock_bootstrap.assert_called_once_with(Path("/tmp/project"))
+
+    def test_manage_credentials_edits_existing_merges_and_masks_tokens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            env_path = project_root / "client.env"
+            write_credentials_file(
+                env_path,
+                Credentials(
+                    token="asana-token-SECRET",
+                    workspace_gid="ws-1",
+                    skip_ssl_verification=False,
+                    atlassian_username="u@example.com",
+                    atlassian_token="jira-token-SECRET",
+                    jira_base_url="https://prod.example",
+                    jira_sandbox_base_url="https://old-sb.example",
+                ),
+            )
+            (project_root / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
+
+            buffer = io.StringIO()
+            # Pick [7] JIRA_SANDBOX_BASE_URL, enter a new value, then save.
+            with patch.dict(environ, {}, clear=True), patch(
+                "builtins.input", side_effect=["7", "https://new-sb.example", "s"]
+            ), redirect_stdout(buffer):
+                interactive_cli.manage_credentials(project_root)
+
+            output = buffer.getvalue()
+            # Tokens are masked, never printed in the clear.
+            self.assertIn("******** (set)", output)
+            self.assertNotIn("asana-token-SECRET", output)
+            self.assertNotIn("jira-token-SECRET", output)
+
+            # The edit is merged: sandbox URL changed, everything else preserved.
+            with patch.dict(environ, {}, clear=True):
+                updated = load_credentials(project_root)
+            self.assertEqual(updated.jira_sandbox_base_url, "https://new-sb.example")
+            self.assertEqual(updated.jira_base_url, "https://prod.example")
+            self.assertEqual(updated.token, "asana-token-SECRET")
+            self.assertEqual(updated.atlassian_token, "jira-token-SECRET")
+            self.assertEqual(updated.atlassian_username, "u@example.com")
+
+    def test_manage_credentials_cancel_discards_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            env_path = project_root / "client.env"
+            write_credentials_file(
+                env_path,
+                Credentials(
+                    token="t",
+                    workspace_gid="ws-1",
+                    skip_ssl_verification=False,
+                    jira_sandbox_base_url="https://old-sb.example",
+                ),
+            )
+            (project_root / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
+
+            # Edit the sandbox URL but quit without saving.
+            with patch.dict(environ, {}, clear=True), patch(
+                "builtins.input", side_effect=["7", "https://discarded.example", "q"]
+            ), redirect_stdout(io.StringIO()):
+                interactive_cli.manage_credentials(project_root)
+
+            with patch.dict(environ, {}, clear=True):
+                unchanged = load_credentials(project_root)
+            self.assertEqual(unchanged.jira_sandbox_base_url, "https://old-sb.example")
 
     @patch("scripts.interactive_cli.log_run")
     @patch("scripts.interactive_cli.run_script")
