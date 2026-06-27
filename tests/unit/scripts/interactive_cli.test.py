@@ -14,6 +14,12 @@ from src.lib.config import Credentials, load_credentials, write_credentials_file
 
 
 class IncrementalArgsBuilderTest(TestCase):
+    def setUp(self) -> None:
+        # Force the env-file backend so credential tests stay hermetic (no real Keychain).
+        patcher = patch("src.lib.keychain.is_available", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_initial_team_args_include_memberships(self) -> None:
         self.assertEqual(
             interactive_cli.args_initial_teams("INFO"),
@@ -263,8 +269,8 @@ class IncrementalArgsBuilderTest(TestCase):
                 interactive_cli.manage_credentials(project_root)
 
             output = buffer.getvalue()
-            # Tokens are masked, never printed in the clear.
-            self.assertIn("******** (set)", output)
+            # Tokens are masked, never printed in the clear (backend annotated).
+            self.assertIn("******** (set, env file)", output)
             self.assertNotIn("asana-token-SECRET", output)
             self.assertNotIn("jira-token-SECRET", output)
 
@@ -401,7 +407,7 @@ class IncrementalArgsBuilderTest(TestCase):
                 "Export team memberships report",
                 "Export team report",
                 "Export custom field usage report",
-                "Export team/project Jira CSV",
+                "Export initial metadata report (.xlsx)",
             ],
         )
 
@@ -418,7 +424,7 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIs(mock_run_script.call_args_list[2].args[0], interactive_cli.export_team_memberships.main)
         self.assertIs(mock_run_script.call_args_list[3].args[0], interactive_cli.export_team_report.main)
         self.assertIs(mock_run_script.call_args_list[4].args[0], interactive_cli.export_custom_field_usage_report.main)
-        self.assertIs(mock_run_script.call_args_list[5].args[0], interactive_cli.export_team_project_jira_csv.main)
+        self.assertIs(mock_run_script.call_args_list[5].args[0], interactive_cli.export_all_reports_xlsx.main)
         self.assertEqual(mock_run_script.call_args_list[0].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
         self.assertEqual(mock_run_script.call_args_list[1].args[1], ["--log-level", "DEBUG"])
         self.assertEqual(mock_run_script.call_args_list[2].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
@@ -559,3 +565,59 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_args_get_tasks.assert_called_once_with("INFO")
         self.assertEqual(mock_confirm.call_count, 2)
         mock_prompt_required.assert_called_once_with("Service user GID")
+
+
+class TokenMigrationTest(TestCase):
+    """offer_token_migration / run_token_migration with a faked available Keychain."""
+
+    def setUp(self) -> None:
+        from src.lib import keychain
+
+        self.store: dict[str, str] = {}
+        patchers = [
+            patch.object(keychain, "is_available", return_value=True),
+            patch.object(keychain, "get_secret", side_effect=self.store.get),
+            patch.object(keychain, "set_secret", side_effect=self.store.__setitem__),
+            patch.object(keychain, "delete_secret", side_effect=lambda a: bool(self.store.pop(a, None))),
+        ]
+        for p in patchers:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _write_env(self, tmpdir, with_tokens=True) -> Path:
+        env_path = Path(tmpdir) / "client.env"
+        lines = ["export ASANA_WORKSPACE_GID=ws-1"]
+        if with_tokens:
+            lines += ["export ASANA_TOKEN=asana-secret", "export ATLASSIAN_TOKEN=jira-secret"]
+        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return env_path
+
+    def test_offer_token_migration_moves_tokens_when_confirmed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = self._write_env(tmpdir, with_tokens=True)
+            with patch("scripts.interactive_cli.prompt_bool", return_value=True), redirect_stdout(io.StringIO()):
+                migrated = interactive_cli.offer_token_migration(env_path)
+            self.assertTrue(migrated)
+            self.assertEqual(self.store["client.env:ASANA_TOKEN"], "asana-secret")
+            self.assertEqual(self.store["client.env:ATLASSIAN_TOKEN"], "jira-secret")
+            contents = env_path.read_text(encoding="utf-8")
+            self.assertNotIn("ASANA_TOKEN", contents)
+            self.assertIn("ASANA_WORKSPACE_GID=ws-1", contents)
+
+    def test_offer_token_migration_declined_keeps_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = self._write_env(tmpdir, with_tokens=True)
+            with patch("scripts.interactive_cli.prompt_bool", return_value=False), redirect_stdout(io.StringIO()):
+                migrated = interactive_cli.offer_token_migration(env_path)
+            self.assertFalse(migrated)
+            self.assertIn("ASANA_TOKEN", env_path.read_text(encoding="utf-8"))
+            self.assertEqual(self.store, {})
+
+    def test_run_token_migration_reports_when_nothing_to_migrate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = self._write_env(tmpdir, with_tokens=False)
+            (Path(tmpdir) / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
+            buffer = io.StringIO()
+            with patch.dict(environ, {}, clear=True), redirect_stdout(buffer):
+                interactive_cli.run_token_migration(Path(tmpdir))
+            self.assertIn("No plaintext tokens", buffer.getvalue())

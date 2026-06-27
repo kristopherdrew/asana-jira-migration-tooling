@@ -130,7 +130,7 @@ Optional flags:
 - `--workspace-gid <gid>` to force the workspace used when building project URLs.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
-In the interactive Reports menu, this export can search team and project-owner names from the local SQLite snapshot before falling back to raw GID prompts.
+In the interactive Reports menu, this export first asks whether the review should be team-centric, owner-centric, or whole-workspace, then searches team or project-owner names from the local SQLite snapshot (falling back to a raw GID prompt) for the chosen scope only.
 
 ### Team Memberships Report
 Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, admin flags, direct Asana team/user URLs, and sync dates in one place. If the user snapshot is missing, the report still keeps the membership row and falls back to `unknown_user <gid>`.
