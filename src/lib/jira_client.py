@@ -121,6 +121,16 @@ class JiraClient:
             raise JiraApiError(0, f"Unable to parse JSON response for {path}: {exc}") from exc
 
     # ------------------------------------------------------------------
+    # Identity / credential validation
+    # ------------------------------------------------------------------
+    def get_myself(self) -> Dict[str, object]:
+        """Return the authenticated user via ``GET /rest/api/3/myself``.
+
+        Used to validate that the username + API token authenticate against the
+        site; raises ``JiraApiError`` (e.g. 401/403) when they do not."""
+        return self._request_json("GET", "/rest/api/3/myself")
+
+    # ------------------------------------------------------------------
     # Issue creation + create metadata
     # ------------------------------------------------------------------
     def create_issue(self, payload: Dict[str, object]) -> Dict[str, object]:

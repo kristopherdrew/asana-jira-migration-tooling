@@ -37,6 +37,14 @@ class CreateIssueTest(TestCase):
         with self.assertRaises(JiraApiError):
             client.create_issue({"fields": {}})
 
+    def test_get_myself_hits_myself_endpoint(self) -> None:
+        client = _RecordingClient([b'{"displayName":"Jane Q","accountId":"abc"}'])
+        result = client.get_myself()
+        self.assertEqual(result["displayName"], "Jane Q")
+        call = client.calls[0]
+        self.assertEqual(call["method"], "GET")
+        self.assertEqual(call["path"], "/rest/api/3/myself")
+
 
 class JiraApiErrorTest(TestCase):
     def test_status_and_body_are_accessible(self) -> None:

@@ -161,6 +161,7 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_load_credentials.assert_called_once_with(Path("/tmp/project"))
         mock_bootstrap_credentials.assert_called_once_with(Path("/tmp/project"))
 
+    @patch("scripts.interactive_cli.report_credential_checks", return_value=True)
     @patch("scripts.interactive_cli.write_project_env_pointer")
     @patch("scripts.interactive_cli.write_credentials_file")
     @patch(
@@ -180,15 +181,18 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_prompt_values,
         mock_write_credentials_file,
         mock_write_project_env_pointer,
+        mock_report_checks,
     ) -> None:
         result = interactive_cli.bootstrap_credentials(Path("/tmp/project"))
 
         self.assertEqual(result, Path("/tmp/client.env"))
         mock_prompt_env_path.assert_called_once()
         mock_prompt_values.assert_called_once()
+        mock_report_checks.assert_called_once()
         mock_write_credentials_file.assert_called_once()
         mock_write_project_env_pointer.assert_called_once_with(Path("/tmp/project"), Path("/tmp/client.env"))
 
+    @patch("scripts.interactive_cli.report_credential_checks", return_value=True)
     @patch("scripts.interactive_cli.write_project_env_pointer")
     @patch("scripts.interactive_cli.write_credentials_file")
     @patch("scripts.interactive_cli.prompt_bool", return_value=True)
@@ -210,6 +214,7 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_prompt_bool,
         mock_write_credentials_file,
         mock_write_project_env_pointer,
+        mock_report_checks,
     ) -> None:
         with patch("scripts.interactive_cli.resolve_credentials_path", return_value=Path("/tmp/current.env")):
             result = interactive_cli.change_credentials_file_reference(Path("/tmp/project"))
@@ -249,7 +254,10 @@ class IncrementalArgsBuilderTest(TestCase):
 
             buffer = io.StringIO()
             # Pick [7] JIRA_SANDBOX_BASE_URL, enter a new value, then save.
+            # Token validation is exercised separately; stub it to pass here.
             with patch.dict(environ, {}, clear=True), patch(
+                "scripts.interactive_cli.report_credential_checks", return_value=True
+            ), patch(
                 "builtins.input", side_effect=["7", "https://new-sb.example", "s"]
             ), redirect_stdout(buffer):
                 interactive_cli.manage_credentials(project_root)
@@ -293,6 +301,55 @@ class IncrementalArgsBuilderTest(TestCase):
             with patch.dict(environ, {}, clear=True):
                 unchanged = load_credentials(project_root)
             self.assertEqual(unchanged.jira_sandbox_base_url, "https://old-sb.example")
+
+    def test_manage_credentials_does_not_save_when_validation_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            env_path = project_root / "client.env"
+            write_credentials_file(
+                env_path,
+                Credentials(
+                    token="t",
+                    workspace_gid="ws-1",
+                    skip_ssl_verification=False,
+                    jira_sandbox_base_url="https://old-sb.example",
+                ),
+            )
+            (project_root / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
+
+            # Edit + save, but validation fails (and user declines save-anyway) -> 'q' to leave.
+            with patch.dict(environ, {}, clear=True), patch(
+                "scripts.interactive_cli.report_credential_checks", return_value=False
+            ), patch(
+                "builtins.input", side_effect=["7", "https://new-sb.example", "s", "q"]
+            ), redirect_stdout(io.StringIO()):
+                interactive_cli.manage_credentials(project_root)
+
+            with patch.dict(environ, {}, clear=True):
+                unchanged = load_credentials(project_root)
+            self.assertEqual(unchanged.jira_sandbox_base_url, "https://old-sb.example")
+
+    @patch("scripts.interactive_cli.check_credentials")
+    def test_report_credential_checks_passes_without_prompting(self, mock_check) -> None:
+        from src.lib.credential_check import CheckResult
+
+        mock_check.return_value = [CheckResult("Asana", True, "authenticated as Jane")]
+        with patch("scripts.interactive_cli.prompt_bool") as mock_prompt_bool, redirect_stdout(io.StringIO()):
+            creds = Credentials(token="t", workspace_gid="w", skip_ssl_verification=False)
+            self.assertTrue(interactive_cli.report_credential_checks(creds))
+        mock_prompt_bool.assert_not_called()
+
+    @patch("scripts.interactive_cli.check_credentials")
+    def test_report_credential_checks_prompts_save_anyway_on_failure(self, mock_check) -> None:
+        from src.lib.credential_check import CheckResult
+
+        mock_check.return_value = [CheckResult("Asana", False, "Asana token rejected (HTTP 401).")]
+        with patch("scripts.interactive_cli.prompt_bool", return_value=False) as mock_prompt_bool, redirect_stdout(
+            io.StringIO()
+        ):
+            creds = Credentials(token="bad", workspace_gid="w", skip_ssl_verification=False)
+            self.assertFalse(interactive_cli.report_credential_checks(creds))
+        mock_prompt_bool.assert_called_once()
 
     @patch("scripts.interactive_cli.log_run")
     @patch("scripts.interactive_cli.run_script")
