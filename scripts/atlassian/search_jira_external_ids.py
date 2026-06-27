@@ -90,7 +90,7 @@ class JiraSearchClient:
         return self._request("POST", "/rest/api/3/search/jql", headers=headers, data=body)
 
     def list_fields(self) -> List[Dict[str, object]]:
-        """Return all Jira fields (GET /rest/api/3/fields) for name->id resolution.
+        """Return all Jira fields (GET /rest/api/3/field) for name->id resolution.
 
         The endpoint returns a bare JSON array, so ``_request`` yields a list here
         rather than the dict returned by the search endpoint.
@@ -100,7 +100,7 @@ class JiraSearchClient:
             "Accept": "application/json",
             "User-Agent": "asana-jira-search/1.0",
         }
-        payload = self._request("GET", "/rest/api/3/fields", headers=headers)
+        payload = self._request("GET", "/rest/api/3/field", headers=headers)
         return payload if isinstance(payload, list) else []
 
     def _request(

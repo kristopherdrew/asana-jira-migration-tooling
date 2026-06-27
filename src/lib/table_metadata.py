@@ -333,7 +333,7 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "project_jira_decisions",
         "Jira / Atlassian mapping",
         "Stores the 'Asana Migration Decision' custom-field value read back from each project's Jira Task issue, keyed by Asana project GID.",
-        "Jira JQL search for the decision field (POST /rest/api/3/search/jql) + field-id lookup (GET /rest/api/3/fields); jira_key resolved to project via team_project_jira_mappings (kind='project') — not an Asana API.",
+        "Jira JQL search for the decision field (POST /rest/api/3/search/jql) + field-id lookup (GET /rest/api/3/field); jira_key resolved to project via team_project_jira_mappings (kind='project') — not an Asana API.",
         ["scripts/atlassian/get_jira_migration_decisions.py"],
         "upsert_project_jira_decisions",
         "Upsert by project_gid (PK); UNIQUE(jira_key). FK→projects.",
