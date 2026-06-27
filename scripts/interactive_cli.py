@@ -1038,43 +1038,43 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem(
             "1",
-            "Export project details report",
-            run_project_details_report,
-        ),
-        "2": MenuItem(
-            "2",
-            "Export users report",
-            lambda: run_script(export_users.main, args_report_defaults(log_level)),
-        ),
-        "3": MenuItem(
-            "3",
-            "Export team memberships report",
-            run_team_memberships_report,
-        ),
-        "4": MenuItem(
-            "4",
-            "Export team report",
-            run_team_report,
-        ),
-        "5": MenuItem(
-            "5",
-            "Export custom field usage report",
-            run_custom_field_usage_report,
-        ),
-        "6": MenuItem(
-            "6",
             "Export initial metadata report (.xlsx)",
             lambda: run_script(export_all_reports_xlsx.main, args_report_defaults(log_level)),
         ),
+        "2": MenuItem(
+            "2",
+            "Export field & section migration review (.xlsx)",
+            run_field_section_review_report,
+        ),
+        "3": MenuItem(
+            "3",
+            "Export project details report",
+            run_project_details_report,
+        ),
+        "4": MenuItem(
+            "4",
+            "Export users report",
+            lambda: run_script(export_users.main, args_report_defaults(log_level)),
+        ),
+        "5": MenuItem(
+            "5",
+            "Export team memberships report",
+            run_team_memberships_report,
+        ),
+        "6": MenuItem(
+            "6",
+            "Export team report",
+            run_team_report,
+        ),
         "7": MenuItem(
             "7",
-            "Export portfolio report (summary + items)",
-            run_portfolio_report,
+            "Export custom field usage report",
+            run_custom_field_usage_report,
         ),
         "8": MenuItem(
             "8",
-            "Export field & section migration review (.xlsx)",
-            run_field_section_review_report,
+            "Export portfolio report (summary + items)",
+            run_portfolio_report,
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
