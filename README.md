@@ -5,7 +5,7 @@ Python-only automation scripts for exporting entities from the Asana API into a 
 ## Requirements
 - Python 3.11 or later (use `python3` on macOS/Linux).
 - Asana personal access token with read access to the target workspace.
-- Credentials should live in an env-style file under your home directory, not in the project root. Supported keys are `ASANA_TOKEN`, `ASANA_WORKSPACE_GID`, `SKIP_SSL_VERIFICATION`, `ATLASSIAN_USERNAME`, and `ATLASSIAN_TOKEN`.
+- Credentials should live in an env-style file under your home directory, not in the project root. Supported keys are `ASANA_TOKEN`, `ASANA_WORKSPACE_GID`, `SKIP_SSL_VERIFICATION`, `ATLASSIAN_USERNAME`, `ATLASSIAN_TOKEN`, `JIRA_BASE_URL` (production Jira site), and `JIRA_SANDBOX_BASE_URL` (sandbox Jira site). Jira scripts read the base URL from these two keys and default to the **sandbox**; pass `--prod` to target production.
 - For multi-client setups, keep one env file per client under your home directory and add a git-ignored `.asana_jira_env_path` file in the project root that points to the correct one for that copy of the repo. The resolution order is: process environment variables, env file named by `.asana_jira_env_path`, then default `~/.asana_jira_env`.
 
 ### Initial Setup
@@ -17,6 +17,8 @@ export ASANA_WORKSPACE_GID="your_workspace_gid"
 export SKIP_SSL_VERIFICATION="false"
 export ATLASSIAN_USERNAME="you@example.com"
 export ATLASSIAN_TOKEN="your_jira_api_token"
+export JIRA_BASE_URL="https://your-prod.atlassian.net"
+export JIRA_SANDBOX_BASE_URL="https://your-sandbox.atlassian.net"
 EOF
 chmod 600 ~/.asana_jira_env_client_a
 ```
@@ -57,7 +59,7 @@ Menu highlights:
 - Category 4 (Reports): project details, team summary, users, team memberships, custom field usage.
 - Category 5 (Credentials): create/update the referenced env file or switch the project to a different one.
 
-On first launch, if the interactive CLI cannot resolve a credentials file from the environment or `.asana_jira_env_path`, it starts a setup flow that asks for the Asana token, workspace GID, SSL verification flag, and optional Atlassian credentials, then writes the env file and project pointer for you.
+On first launch, if the interactive CLI cannot resolve a credentials file from the environment or `.asana_jira_env_path`, it starts a setup flow that asks for the Asana token, workspace GID, SSL verification flag, optional Atlassian credentials, and the optional production/sandbox Jira base URLs, then writes the env file and project pointer for you.
 
 When you run the Initialization flow, the projects step prompts for archived scope so you can choose active, archived, or all projects during the first data pull. The flow now adds the service user immediately after the user sync so any team-scoped metadata later in the run can see that membership. If any team update fails, the script writes `exports/service_user_team_add_failures_<timestamp>.csv` with the team GIDs and error messages.
 

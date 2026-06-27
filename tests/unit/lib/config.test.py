@@ -8,6 +8,7 @@ from src.lib.config import (
     Credentials,
     load_credentials,
     resolve_credentials_path,
+    resolve_jira_base_url,
     write_credentials_file,
     write_project_env_pointer,
 )
@@ -133,6 +134,61 @@ class LoadCredentialsTest(TestCase):
             with patch.dict(environ, {}, clear=True):
                 with self.assertRaises(FileNotFoundError):
                     load_credentials(project_root)
+
+    def test_loads_jira_base_urls_from_env_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            env_path = project_root / ".asana_jira_env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "ASANA_TOKEN=t",
+                        "ASANA_WORKSPACE_GID=w",
+                        "SKIP_SSL_VERIFICATION=false",
+                        "JIRA_BASE_URL=https://prod.atlassian.net",
+                        "JIRA_SANDBOX_BASE_URL=https://sandbox.atlassian.net",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(environ, {"ASANA_JIRA_ENV_FILE": str(env_path)}, clear=False):
+                credentials = load_credentials(project_root)
+            self.assertEqual(credentials.jira_base_url, "https://prod.atlassian.net")
+            self.assertEqual(credentials.jira_sandbox_base_url, "https://sandbox.atlassian.net")
+
+    def test_resolve_jira_base_url_selects_environment(self) -> None:
+        creds = Credentials(
+            token="t",
+            workspace_gid="w",
+            skip_ssl_verification=False,
+            jira_base_url="https://prod.atlassian.net/",
+            jira_sandbox_base_url="https://sandbox.atlassian.net",
+        )
+        # Default is sandbox; --prod selects production. Trailing slash is stripped.
+        self.assertEqual(resolve_jira_base_url(creds), "https://sandbox.atlassian.net")
+        self.assertEqual(resolve_jira_base_url(creds, prod=True), "https://prod.atlassian.net")
+
+    def test_resolve_jira_base_url_missing_url_raises(self) -> None:
+        creds = Credentials(token="t", workspace_gid="w", skip_ssl_verification=False)
+        with self.assertRaises(ValueError):
+            resolve_jira_base_url(creds)  # no sandbox URL
+        with self.assertRaises(ValueError):
+            resolve_jira_base_url(creds, prod=True)  # no production URL
+
+    def test_write_credentials_file_persists_jira_base_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            credentials = Credentials(
+                token="t",
+                workspace_gid="w",
+                skip_ssl_verification=False,
+                jira_base_url="https://prod.atlassian.net",
+                jira_sandbox_base_url="https://sandbox.atlassian.net",
+            )
+            write_credentials_file(env_path, credentials)
+            contents = env_path.read_text(encoding="utf-8")
+            self.assertIn("export JIRA_BASE_URL=https://prod.atlassian.net", contents)
+            self.assertIn("export JIRA_SANDBOX_BASE_URL=https://sandbox.atlassian.net", contents)
 
     def test_write_credentials_file_and_pointer(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

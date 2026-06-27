@@ -30,20 +30,19 @@ Flags (supply at least one of `--csv`, `--atlassian-export`, or `--clear`):
 - `--log-level <LEVEL>` — adjust logging verbosity (default `INFO`).
 
 ### Search Jira For External IDs
-Fetch Jira issues using the v3 `POST /rest/api/3/search/jql` endpoint (nextPageToken pagination), pull the external ID field (e.g., an Asana task GID stored in `customfield_<id>`), and upsert the Jira→Asana mapping into SQLite. The query is always forced to `ORDER BY created ASC, issuekey ASC` to keep pagination deterministic. Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials.
+Fetch Jira issues using the v3 `POST /rest/api/3/search/jql` endpoint (nextPageToken pagination), pull the external ID field (e.g., an Asana task GID stored in `customfield_<id>`), and upsert the Jira→Asana mapping into SQLite. The query is always forced to `ORDER BY created ASC, issuekey ASC` to keep pagination deterministic. The Jira base URL comes from the credentials file (`JIRA_SANDBOX_BASE_URL` by default, `JIRA_BASE_URL` with `--prod`). Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials.
 ```bash
 python3 -m scripts.search_jira_external_ids \\
-  --jira-base-url https://example.atlassian.net \\
   --jql 'project = ENG AND "External issue ID" is not EMPTY' \\
   --external-id-field customfield_12345 \\
   --max-results 500
 ```
 Required flags:
-- `--jira-base-url <url>` for the Jira Cloud instance.
 - `--jql <expression>` to pick the issue set (order is forced to `created ASC`).
 - `--external-id-field <key>` identifying the field that holds the external/task ID (e.g., `customfield_12345`).
 
 Optional flags:
+- `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 - `--max-results <n>` page size per search call (default 500; clamped to Jira’s cap).
 - `--database <path>` SQLite file to update (default `data/asana.sqlite`).
 - `--dry-run` to print mappings without writing to SQLite.
@@ -52,24 +51,18 @@ Optional flags:
 ### Pull Asana Migration Decisions From Jira
 Read the **"Asana Migration Decision"** custom field back from the project-level Jira issues (the Task issues created by `create_team_project_jira_issues`) and store each value in the `project_jira_decisions` table, keyed by Asana project GID. The field id is resolved by name at runtime via `GET /rest/api/3/field` (no hard-coded `customfield_<id>`), issues are paged with `POST /rest/api/3/search/jql` (deterministic `ORDER BY created ASC, issuekey ASC`), and each `jira_key` is mapped to its project through `team_project_jira_mappings` (`kind='project'`). The decision then appears as the `jira_migration_decision` column in the project details report (and the combined `.xlsx` Projects tab). Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials.
 
-`--jql` is optional: when omitted, the search is derived from the project-level Jira keys already stored in `team_project_jira_mappings`. The distinct project keys are pulled out of those issue keys (e.g. `MIG-12` → `MIG`) and combined into `project IN (<derived keys>) AND issuetype = "Task" AND "<field-name>" is not EMPTY`. So a fresh pull usually needs only the base URL.
+The Jira base URL comes from the credentials file — the **sandbox** (`JIRA_SANDBOX_BASE_URL`) by default, or production (`JIRA_BASE_URL`) with `--prod`. `--jql` is optional too: when omitted, the search is derived from the project-level Jira keys already stored in `team_project_jira_mappings`. The distinct project keys are pulled out of those issue keys (e.g. `MIG-12` → `MIG`) and combined into `project IN (<derived keys>) AND issuetype = "Task" AND "<field-name>" is not EMPTY`. So a fresh sandbox pull usually needs no flags at all.
 ```bash
-# derive the JQL from stored keys (no --jql needed)
+# sandbox, JQL derived from stored keys (no flags needed)
+python3 -m scripts.atlassian.get_jira_migration_decisions --dry-run
+# write the values (sandbox)
+python3 -m scripts.atlassian.get_jira_migration_decisions
+# target production, scope explicitly
 python3 -m scripts.atlassian.get_jira_migration_decisions \\
-  --jira-base-url https://example.atlassian.net \\
-  --dry-run
-# write the values
-python3 -m scripts.atlassian.get_jira_migration_decisions \\
-  --jira-base-url https://example.atlassian.net
-# or scope explicitly
-python3 -m scripts.atlassian.get_jira_migration_decisions \\
-  --jira-base-url https://example.atlassian.net \\
-  --jql 'project = MIG AND issuetype = "Task"'
+  --prod --jql 'project = MIG AND issuetype = "Task"'
 ```
-Required flags:
-- `--jira-base-url <url>` for the Jira Cloud instance.
-
 Optional flags:
+- `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 - `--jql <expression>` to pick the issue set explicitly (order is forced to `created ASC`). Omit to derive the default from stored project keys.
 - `--field-name <name>` display name of the decision field (default `Asana Migration Decision`; resolved case-insensitively and used in the derived JQL).
 - `--max-results <n>` page size per search call (default 500; clamped to Jira’s cap).
@@ -105,8 +98,7 @@ Optional flags:
 - `--custom-fields <name_or_gid,...>` to restrict the export to the specified custom fields.
 - `--no-custom-fields` to omit all custom fields from the export.
 - `--no-custom-field-prompt` to skip the interactive selector.
-- `--jira-base-url <url>` to set the Jira instance used when constructing the “External issue ID” JQL search links.
-- `--no-jira-url-prompt` to skip the Jira base URL question in unattended runs; requires `--jira-base-url`.
+- `--prod` to build the “External issue ID” JQL search links against the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 - `--add-epics` to inject a synthetic project-level epic row, place it in the `Open` section, and re-parent top-level tasks to it for Jira imports that expect an Epic ancestor.
 - `--add-section-epics` to inject one synthetic epic per section and re-parent top-level tasks to the first section they belong to.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
@@ -115,7 +107,7 @@ When you provide `--export-id`, every exported task GID is persisted to the `exp
 
 When `--export-id` is present and you're writing to the default `exports/` directory, each run (even single-project exports) now uses a dedicated `exports/export-XX-<export-id>` folder so the task CSV, field counts, link modifications, and skipped-task reports stay grouped together.
 
-When launched from an interactive terminal and `--custom-fields` isn’t provided, the script pauses after listing detected fields (with per-field value counts) so you can export all fields or enter a comma-separated subset. It also prints a single comma-separated line you can copy, prune, and paste back into the prompt. Provide `--jira-base-url` to set the JQL link host up front; otherwise the script prompts for it once. In unattended runs, pass both `--jira-base-url` and `--no-jira-url-prompt`.
+When launched from an interactive terminal and `--custom-fields` isn’t provided, the script pauses after listing detected fields (with per-field value counts) so you can export all fields or enter a comma-separated subset. It also prints a single comma-separated line you can copy, prune, and paste back into the prompt. The JQL link host comes from the credentials file (`JIRA_SANDBOX_BASE_URL` by default, `JIRA_BASE_URL` with `--prod`).
 
 Each user-authored comment appears in its own `Comment` column (the header repeats for every additional comment). Comment cells follow Jira’s expected format `dd/MMM/yy h:mm AM/PM;<atlassian_account_id>; <comment text>` and preserve multiline content via CSV quoting. Comment author IDs are resolved through the `user_atlassian_accounts` table using the task creator’s Asana GID; refresh it via `scripts.update_atlassian_user_map` whenever Atlassian account assignments change.
 
@@ -142,16 +134,18 @@ Optional flags:
 ### Create Team/Project Jira Issues (Direct API)
 A direct alternative to the CSV import above: instead of generating a CSV for the Jira import wizard, this creates the same Team→Epic and Project→Task hierarchy by POSTing to the Jira Cloud REST API. It reuses the exact row-building logic of `export_team_project_jira_csv` (same owner resolution, descriptions, and `No Team` epic), then for each row resolves issue-type and custom-field IDs via `createmeta`, creates all Epics first, captures their real Jira keys, and links each Task to its team's Epic via `parent`. Standard fields map directly (`summary`; `description` as ADF; `assignee` by Atlassian accountId when the (effective) owner's account is active — for Tasks the owner is the *effective* owner: the project owner when their Atlassian account is active, otherwise the project's top active task creator, matching how Epics resolve their effective admin; `labels` from the owner source (`project_owner`/`task_creator`/…) + last-active label + project type (`personal_project`/`team_project`), spaces stripped); the remaining columns map to Jira custom fields resolved by field name (override the column→field-name map with `--field-map`): by default `Team URL`→`Team (Asana)`, `Project URL`→`Project (Asana)`, `Instructions`→`Testing Instructions`, `Project Status`→`Asana Current Project Status`, plus `Project Count (Asana)` (Epics) and `Task Count (Asana)` (Epics and Tasks). The two count fields must exist on the relevant Jira create screens (`Project Count (Asana)` on Epic; `Task Count (Asana)` on Epic + Task) or their values are warned-and-skipped. Created issues are recorded in the `team_project_jira_mappings` table, so re-runs skip anything already created (no duplicates). Requires `ATLASSIAN_USERNAME`/`ATLASSIAN_TOKEN` in the resolved credentials.
 ```bash
-# Preview the payloads without creating anything
-python3 -m scripts.create_team_project_jira_issues --jira-base-url https://example.atlassian.net --jira-project-key MIG --dry-run
-# Create issues (prompts for confirmation; use --yes to skip)
-python3 -m scripts.create_team_project_jira_issues --jira-base-url https://example.atlassian.net --jira-project-key MIG
+# Preview the payloads without creating anything (sandbox)
+python3 -m scripts.create_team_project_jira_issues --jira-project-key MIG --dry-run
+# Create issues in production (prompts for confirmation; use --yes to skip)
+python3 -m scripts.create_team_project_jira_issues --prod --jira-project-key MIG
 # Create issues for a single team only (interactively search for the team by name)
-python3 -m scripts.create_team_project_jira_issues --jira-base-url https://example.atlassian.net --jira-project-key MIG --pick-team
+python3 -m scripts.create_team_project_jira_issues --prod --jira-project-key MIG --pick-team
 ```
 Required flags:
-- `--jira-base-url <url>` for the Jira site (e.g., `https://example.atlassian.net`).
 - `--jira-project-key <KEY>` the target Jira project where Epics/Tasks are created.
+
+Environment selection:
+- `--prod` targets the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 
 Optional flags:
 - `--epic-issue-type <name>` / `--task-issue-type <name>` issue-type names to resolve via `createmeta` (defaults `Epic` / `Task`).
@@ -179,12 +173,12 @@ A run report CSV (`team_project_jira_create_<timestamp>.csv`) records each entry
 A one-time, in-place repair for personal-project Jira issues created before My Tasks links were available: those carry a dead synthetic `…/project/personal_<user_gid>` URL in their `Project (Asana)` field. After `get_users` captures each owner's My Tasks GID, this script rebuilds the corrected `https://app.asana.com/0/<user_task_list_gid>/list` value and PUTs it onto the existing issues (`PUT /rest/api/3/issue/{key}`), preserving comments, attachments, and history — no delete/recreate.
 ```bash
 python3 -m scripts.atlassian.update_personal_project_jira_urls \
-  --jira-base-url https://example.atlassian.net --jira-project-key MIG --dry-run
+  --prod --jira-project-key MIG --dry-run
 ```
 It targets personal-project Task rows that already have an Asana→Jira mapping and resolves the `Project (Asana)` field via the Task `createmeta`. Rows that resolve to a real My Tasks link are updated; rows where no proper link can be generated have the field **cleared** (`null`) so the dead synthetic URL is removed rather than left in place. Unmapped personal projects are reported `skipped-unmapped`.
 
 Required flags:
-- `--jira-base-url <url>` and `--jira-project-key <key>`.
+- `--jira-project-key <key>` (and `--prod` to target production; omit for the sandbox `JIRA_SANDBOX_BASE_URL`).
 
 Optional flags:
 - `--task-issue-type <name>` issue type the project issues use (default `Task`).
@@ -256,15 +250,15 @@ Task-centric user columns pair the human-readable details with Atlassian IDs and
 ### Sync Jira Attachments
 Downloads every attachment referenced by the tasks in a project and uploads those files to the Jira issues linked via `task_jira_mappings`, keeping filenames consistent with the `!filename!` markers embedded in notes/comments.
 ```bash
-python3 -m scripts.sync_jira_attachments --project-gid <gid> --jira-base-url https://example.atlassian.net
-# or
-python3 -m scripts.sync_jira_attachments --project-gids <gid1,gid2,...> --jira-base-url https://example.atlassian.net
+python3 -m scripts.sync_jira_attachments --project-gid <gid>
+# or, against production
+python3 -m scripts.sync_jira_attachments --project-gids <gid1,gid2,...> --prod
 ```
 Required flags:
 - One scope selector: `--project-gid <gid>` or `--project-gids <gid1,gid2,...>`.
-- `--jira-base-url <url>` for the target Jira site.
 
 Optional flags:
+- `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 - `--database <path>`: SQLite snapshot to read from (default `data/asana.sqlite`).
 - `--output-dir <path>`: Where to write the CSV audit report (default `exports/`). Each project run produces `<ProjectName>_attachment_sync_<timestamp>.csv`.
 - `--max-workers <n>` / `--throttle-seconds <s>`: Control concurrency and insert a small delay between uploads to respect Jira’s rate limits (defaults: 2 workers, 0.5 seconds).
@@ -277,5 +271,5 @@ When writing to the default `exports/` directory, each attachment sync run creat
 
 Requirements:
 - The resolved credentials must include `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` (Jira API token) alongside the Asana fields.
-- The Jira base URL is required so the script knows which site to call.
+- The Jira base URL is read from the credentials file (`JIRA_SANDBOX_BASE_URL` by default, `JIRA_BASE_URL` with `--prod`); the chosen environment's URL must be set.
 - Attachments are downloaded under `exports/tmp_attachments/` (one temp folder per run). Each file is fetched once per Asana attachment id, cached locally, and uploaded per Jira issue key. If a Jira issue already has a file with the same name, the script skips re-uploading and records `skipped-existing` in the report.

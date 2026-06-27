@@ -24,6 +24,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from scripts.merge_project_exports import merge_csv_files, merge_field_counts, merge_link_mods
 from src.lib.attachments import jira_unique_attachment_name
 from src.lib.database import Database
+from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
@@ -309,32 +310,6 @@ def organize_outputs(output_dir: Path) -> None:
                     except Exception:
                         # If move fails, leave file in place and continue.
                         logger.warning("Unable to move %s to %s", path, dest, exc_info=True)
-
-
-def prompt_for_jira_base_url(current_value: Optional[str]) -> Optional[str]:
-    if not sys.stdin.isatty():
-        logger.info("Skipping Jira base URL prompt (non-interactive session).")
-        return current_value
-    default_value = normalize_jira_base_url(current_value)
-    if default_value:
-        prompt = f"Jira base URL for JQL links? [{default_value}]: "
-    else:
-        prompt = "Jira base URL for JQL links: "
-    try:
-        response = input(prompt).strip()
-    except EOFError:
-        logger.info("Skipping Jira base URL prompt (input unavailable).")
-        return default_value
-    if not response:
-        if default_value:
-            return default_value
-        logger.warning("Jira base URL is required.")
-        return None
-    normalized = normalize_jira_base_url(response)
-    if not normalized:
-        logger.warning("Provided Jira base URL was invalid or empty after trimming.")
-        return default_value
-    return normalized
 
 
 def load_project_names(connection: sqlite3.Connection) -> Dict[str, str]:
@@ -1019,13 +994,12 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Control incremental refresh behavior across projects: prompt (default), always run (yes), or never run (no).",
     )
     parser.add_argument(
-        "--jira-base-url",
-        help="Base URL for Jira when constructing search links.",
-    )
-    parser.add_argument(
-        "--no-jira-url-prompt",
+        "--prod",
         action="store_true",
-        help="Skip the interactive Jira base URL prompt (requires --jira-base-url).",
+        help=(
+            "Use the production Jira base URL (JIRA_BASE_URL) for JQL search links. "
+            "Default: sandbox (JIRA_SANDBOX_BASE_URL)."
+        ),
     )
     parser.add_argument(
         "--log-level",
@@ -3062,12 +3036,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         if args.custom_fields
         else None
     )
-    jira_base_url = normalize_jira_base_url(args.jira_base_url)
-    if not jira_base_url:
-        if args.no_jira_url_prompt:
-            raise SystemExit("--jira-base-url is required when --no-jira-url-prompt is set.")
-        else:
-            jira_base_url = prompt_for_jira_base_url(None)
+    try:
+        jira_base_url = normalize_jira_base_url(resolve_jira_base_url(load_credentials(), prod=args.prod))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     if not jira_base_url:
         raise SystemExit("Jira base URL is required.")
     output_dir = output_root

@@ -26,7 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.adf import text_to_adf
-from src.lib.config import Credentials, load_credentials
+from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
 from src.lib.database import Database
 from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -69,7 +69,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--database", default=DEFAULT_DB_PATH, help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).")
     parser.add_argument("--workspace-gid", help="Optional Asana workspace GID used to build project URLs.")
-    parser.add_argument("--jira-base-url", required=True, help="Base URL for the Jira site (e.g., https://example.atlassian.net).")
+    parser.add_argument(
+        "--prod",
+        action="store_true",
+        help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
+    )
     parser.add_argument("--jira-project-key", required=True, help="Target Jira project key where issues are created (e.g., MIG).")
     parser.add_argument("--epic-issue-type", default="Epic", help="Issue type name for team epics (default: Epic).")
     parser.add_argument("--task-issue-type", default="Task", help="Issue type name for project tasks (default: Task).")
@@ -665,9 +669,14 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     configure_logging(log_level)
 
     try:
+        jira_base_url = resolve_jira_base_url(load_credentials(), prod=args.prod)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    try:
         report_path = create_team_project_jira_issues(
             database_path=args.database,
-            jira_base_url=args.jira_base_url,
+            jira_base_url=jira_base_url,
             jira_project_key=args.jira_project_key,
             output_dir=Path(args.output_dir),
             workspace_gid=args.workspace_gid,

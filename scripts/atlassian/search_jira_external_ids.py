@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.config import Credentials, load_credentials
+from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
 from src.lib.database import Database, DEFAULT_DB_PATH
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
@@ -333,7 +333,11 @@ def upsert_mappings(
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--jira-base-url", required=True, help="Base URL for the Jira site (e.g., https://example.atlassian.net).")
+    parser.add_argument(
+        "--prod",
+        action="store_true",
+        help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
+    )
     parser.add_argument(
         "--jql",
         required=True,
@@ -375,18 +379,19 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     credentials = load_credentials()
     try:
         username, jira_token = ensure_atlassian_credentials(credentials)
+        base_url = resolve_jira_base_url(credentials, prod=args.prod)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
     max_results = clamp_max_results(args.max_results)
     logger.info(
         "Starting Jira search (base=%s, maxResults=%s, dry_run=%s)",
-        args.jira_base_url,
+        base_url,
         max_results,
         args.dry_run,
     )
     client = JiraSearchClient(
-        base_url=args.jira_base_url,
+        base_url=base_url,
         username=username,
         token=jira_token,
         skip_ssl_verification=credentials.skip_ssl_verification,
