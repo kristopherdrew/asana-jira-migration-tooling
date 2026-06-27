@@ -65,6 +65,7 @@ from src.lib.config import (  # noqa: E402
     write_credentials_file,
     write_project_env_pointer,
 )
+from src.lib.credential_check import check_credentials  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
 
 
@@ -277,6 +278,33 @@ def prompt_credentials_values() -> Credentials:
     )
 
 
+def report_credential_checks(credentials: Credentials) -> bool:
+    """Validate the tokens live and print per-service results.
+
+    Returns True when it is safe to save — either every check passed, or the user
+    explicitly chose to save despite failures (e.g. they are offline)."""
+    print("\nValidating credentials...")
+    results = check_credentials(credentials)
+    any_failed = False
+    for result in results:
+        status = "OK  " if result.ok else "FAIL"
+        print(f"  [{status}] {result.service}: {result.detail}")
+        any_failed = any_failed or not result.ok
+    if not any_failed:
+        return True
+    return prompt_bool("One or more checks failed. Save anyway?", default=False)
+
+
+def prompt_validated_credentials() -> Credentials:
+    """Prompt for all credential values, re-prompting until they validate (or save-anyway)."""
+    credentials = prompt_credentials_values()
+    while not report_credential_checks(credentials):
+        if not prompt_bool("Re-enter credentials and try again?", default=True):
+            raise SystemExit("Credentials file was not written.")
+        credentials = prompt_credentials_values()
+    return credentials
+
+
 # Credentials dataclass field -> (env var name, kind) for the view/edit flow.
 # kind: "required" text, "optional" text, "bool", or "secret" (masked on display).
 CREDENTIAL_FIELDS = [
@@ -340,7 +368,11 @@ def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
             if not dirty:
                 print("No changes to save.")
                 return env_path
-            write_credentials_file(env_path, Credentials(**values))
+            candidate = Credentials(**values)
+            if not report_credential_checks(candidate):
+                print("Not saved. Fix the flagged values and try again, or 'q' to cancel.")
+                continue
+            write_credentials_file(env_path, candidate)
             print(f"Updated credentials saved to {env_path}.")
             return env_path
         if choice.isdigit() and 1 <= int(choice) <= len(CREDENTIAL_FIELDS):
@@ -371,7 +403,7 @@ def bootstrap_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
     env_path = prompt_credentials_env_path(resolve_credentials_path(reference_path))
     if env_path.exists() and not prompt_bool(f"{env_path} already exists. Overwrite it?", default=False):
         raise SystemExit("Credentials file was not updated.")
-    credentials = prompt_credentials_values()
+    credentials = prompt_validated_credentials()
     write_credentials_file(env_path, credentials)
     write_project_env_pointer(reference_path, env_path)
     print(f"Credentials saved to {env_path} and referenced from the project pointer.")
@@ -385,7 +417,7 @@ def change_credentials_file_reference(reference_path: Path = PROJECT_ROOT) -> Pa
         print(f"No file exists at {env_path}. You can create it now.")
         if not prompt_bool("Create this credentials file now?", default=True):
             raise SystemExit("Credentials file was not changed.")
-        credentials = prompt_credentials_values()
+        credentials = prompt_validated_credentials()
         write_credentials_file(env_path, credentials)
     write_project_env_pointer(reference_path, env_path)
     print(f"Project pointer now references {env_path}.")
