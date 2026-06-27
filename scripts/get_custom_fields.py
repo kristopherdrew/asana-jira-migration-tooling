@@ -8,7 +8,7 @@ import logging
 from typing import Iterable, Optional
 
 from src.lib.config import load_credentials
-from src.lib.database import Database, synced_at_timestamp
+from src.lib.database import Database, synced_at_timestamp, resolve_default_db_path
 from src.lib.http_client import AsanaHttpClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.tasks.custom_fields import fetch_custom_field, fetch_workspace_custom_fields
@@ -56,7 +56,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=DEFAULT_DB_PATH)
+    database = Database(db_path=resolve_default_db_path(DEFAULT_DB_PATH))
     sync_time = synced_at_timestamp()
 
     field_count = 0

@@ -4,17 +4,32 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
+from src.lib import keychain
 from src.lib.config import (
     Credentials,
+    file_has_plaintext_tokens,
+    list_credential_profiles,
     load_credentials,
+    migrate_tokens_to_keychain,
+    named_profile_env_path,
+    profile_slug,
+    read_profile_jira_urls,
+    read_profile_name,
     resolve_credentials_path,
     resolve_jira_base_url,
+    slugify,
     write_credentials_file,
     write_project_env_pointer,
 )
 
 
 class LoadCredentialsTest(TestCase):
+    def setUp(self) -> None:
+        # Force the env-file backend so these tests never touch the real Keychain.
+        patcher = patch.object(keychain, "is_available", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_loads_and_normalizes_boolean_from_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)
@@ -222,3 +237,179 @@ class LoadCredentialsTest(TestCase):
                     + "\n",
                 )
                 self.assertEqual(pointer_path.read_text(encoding="utf-8"), f"{env_path}\n")
+
+    def test_write_and_load_client_name_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".asana_jira_env_acme"
+            credentials = Credentials(
+                token="token-123",
+                workspace_gid="workspace-456",
+                skip_ssl_verification=False,
+                client_name="Acme Corp",
+            )
+            with patch.dict(environ, {"ASANA_JIRA_ENV_FILE": str(env_path)}, clear=True):
+                write_credentials_file(env_path, credentials)
+                contents = env_path.read_text(encoding="utf-8")
+                self.assertIn("export CLIENT_NAME='Acme Corp'", contents)
+                # CLIENT_NAME is prepended to the file.
+                self.assertTrue(contents.startswith("export CLIENT_NAME="))
+                reloaded = load_credentials(Path(tmpdir))
+            self.assertEqual(reloaded.client_name, "Acme Corp")
+
+    def test_read_profile_name_returns_none_without_client_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".asana_jira_env"
+            env_path.write_text("ASANA_TOKEN=t\nASANA_WORKSPACE_GID=w\n", encoding="utf-8")
+            self.assertIsNone(read_profile_name(env_path))
+            self.assertIsNone(read_profile_name(Path(tmpdir) / "missing"))
+
+    def test_read_profile_jira_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".asana_jira_env_acme"
+            env_path.write_text(
+                "JIRA_BASE_URL=https://prod.example.net\n"
+                "JIRA_SANDBOX_BASE_URL=https://sandbox.example.net\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                read_profile_jira_urls(env_path),
+                ("https://prod.example.net", "https://sandbox.example.net"),
+            )
+            # Missing file or missing keys yield (None, None) / partial None.
+            self.assertEqual(read_profile_jira_urls(Path(tmpdir) / "missing"), (None, None))
+
+
+class ProfileHelpersTest(TestCase):
+    def test_slugify_normalizes_to_safe_characters(self) -> None:
+        self.assertEqual(slugify("Acme Corp"), "acme_corp")
+        self.assertEqual(slugify("  A/B & C!  "), "ab__c")
+        self.assertEqual(slugify("Globex-2"), "globex-2")
+        self.assertEqual(slugify(""), "client")
+        self.assertEqual(slugify("***"), "client")
+
+    def test_named_profile_env_path_uses_slug(self) -> None:
+        self.assertEqual(named_profile_env_path("Acme Corp").name, ".asana_jira_env_acme_corp")
+
+    def test_profile_slug_from_env_path(self) -> None:
+        self.assertEqual(profile_slug(Path.home() / ".asana_jira_env"), "")
+        self.assertEqual(profile_slug(Path.home() / ".asana_jira_env_acme_corp"), "acme_corp")
+        self.assertEqual(profile_slug(Path("/x/weird-name.env")), "weird-nameenv")
+
+    def test_list_credential_profiles_discovers_and_excludes_pointer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, patch.object(
+            keychain, "is_available", return_value=False
+        ), patch("src.lib.config.DEFAULT_ENV_PATH", Path(tmpdir) / ".asana_jira_env"):
+            home = Path(tmpdir)
+            default = home / ".asana_jira_env"
+            default.write_text("ASANA_TOKEN=t\nASANA_WORKSPACE_GID=w\n", encoding="utf-8")
+            named = home / ".asana_jira_env_acme"
+            write_credentials_file(
+                named,
+                Credentials(token="t", workspace_gid="w", skip_ssl_verification=False, client_name="Acme"),
+            )
+            # The project pointer is excluded even if it lands in the same directory.
+            (home / ".asana_jira_env_path").write_text("/somewhere\n", encoding="utf-8")
+            # A directory matching the glob is skipped.
+            (home / ".asana_jira_env_dir").mkdir()
+
+            profiles = list_credential_profiles()
+
+            found = {path.name: name for path, name in profiles}
+            self.assertEqual(found, {".asana_jira_env": None, ".asana_jira_env_acme": "Acme"})
+
+
+class KeychainCredentialsTest(TestCase):
+    """Behavior when the macOS Keychain backend is available (faked in-memory)."""
+
+    def setUp(self) -> None:
+        self.store: dict[str, str] = {}
+        patchers = [
+            patch.object(keychain, "is_available", return_value=True),
+            patch.object(keychain, "get_secret", side_effect=self.store.get),
+            patch.object(keychain, "set_secret", side_effect=self.store.__setitem__),
+            patch.object(keychain, "delete_secret", side_effect=lambda a: bool(self.store.pop(a, None))),
+        ]
+        for p in patchers:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_write_stores_tokens_in_keychain_and_omits_from_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            write_credentials_file(
+                env_path,
+                Credentials(
+                    token="asana-secret",
+                    workspace_gid="ws-1",
+                    skip_ssl_verification=False,
+                    atlassian_username="u@example.com",
+                    atlassian_token="jira-secret",
+                    jira_base_url="https://prod.example",
+                ),
+            )
+            contents = env_path.read_text(encoding="utf-8")
+            self.assertNotIn("ASANA_TOKEN", contents)
+            self.assertNotIn("ATLASSIAN_TOKEN", contents)
+            self.assertIn("ASANA_WORKSPACE_GID", contents)
+            self.assertIn("ATLASSIAN_USERNAME", contents)
+            self.assertEqual(self.store["client.env:ASANA_TOKEN"], "asana-secret")
+            self.assertEqual(self.store["client.env:ATLASSIAN_TOKEN"], "jira-secret")
+
+    def test_load_reads_tokens_from_keychain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            env_path = project_root / "client.env"
+            env_path.write_text(
+                "export ASANA_WORKSPACE_GID=ws-1\nexport ATLASSIAN_USERNAME=u@example.com\n",
+                encoding="utf-8",
+            )
+            (project_root / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
+            self.store["client.env:ASANA_TOKEN"] = "asana-secret"
+            self.store["client.env:ATLASSIAN_TOKEN"] = "jira-secret"
+
+            with patch.dict(environ, {}, clear=True):
+                creds = load_credentials(project_root)
+            self.assertEqual(creds.token, "asana-secret")
+            self.assertEqual(creds.atlassian_token, "jira-secret")
+            self.assertEqual(creds.workspace_gid, "ws-1")
+
+    def test_process_env_overrides_keychain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            env_path = project_root / "client.env"
+            env_path.write_text("export ASANA_WORKSPACE_GID=ws-1\n", encoding="utf-8")
+            (project_root / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
+            self.store["client.env:ASANA_TOKEN"] = "from-keychain"
+
+            with patch.dict(environ, {"ASANA_TOKEN": "from-env"}, clear=True):
+                creds = load_credentials(project_root)
+            self.assertEqual(creds.token, "from-env")
+
+    def test_migrate_moves_file_tokens_to_keychain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            env_path.write_text(
+                "\n".join(
+                    [
+                        "export ASANA_TOKEN=asana-secret",
+                        "export ASANA_WORKSPACE_GID=ws-1",
+                        "export ATLASSIAN_TOKEN=jira-secret",
+                        "export JIRA_BASE_URL=https://prod.example",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(file_has_plaintext_tokens(env_path))
+
+            migrated = migrate_tokens_to_keychain(env_path)
+            self.assertEqual(sorted(migrated), ["ASANA_TOKEN", "ATLASSIAN_TOKEN"])
+            self.assertEqual(self.store["client.env:ASANA_TOKEN"], "asana-secret")
+            self.assertEqual(self.store["client.env:ATLASSIAN_TOKEN"], "jira-secret")
+
+            contents = env_path.read_text(encoding="utf-8")
+            self.assertNotIn("ASANA_TOKEN", contents)
+            self.assertNotIn("ATLASSIAN_TOKEN", contents)
+            self.assertIn("ASANA_WORKSPACE_GID=ws-1", contents)
+            self.assertIn("JIRA_BASE_URL=https://prod.example", contents)
+            self.assertFalse(file_has_plaintext_tokens(env_path))

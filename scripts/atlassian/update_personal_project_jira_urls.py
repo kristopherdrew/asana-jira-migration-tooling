@@ -34,7 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.config import load_credentials, resolve_jira_base_url
-from src.lib.database import Database
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from scripts.atlassian.export_team_project_jira_csv import build_team_project_rows
@@ -69,7 +69,7 @@ REPORT_FIELDNAMES = ["asana_gid", "jira_key", "project_url", "status", "message"
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", default=DEFAULT_DB_PATH, help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).")
+    parser.add_argument("--database", default=resolve_default_db_path(), help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).")
     parser.add_argument("--workspace-gid", help="Optional Asana workspace GID used when building URLs.")
     parser.add_argument(
         "--prod",

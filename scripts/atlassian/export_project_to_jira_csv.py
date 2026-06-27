@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, quote, urlparse
 
 from scripts.merge_project_exports import merge_csv_files, merge_field_counts, merge_link_mods
 from src.lib.attachments import jira_unique_attachment_name
-from src.lib.database import Database
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
@@ -925,7 +925,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--database",
-        default=DEFAULT_DB_PATH,
+        default=resolve_default_db_path(),
         help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).",
     )
     parser.add_argument(

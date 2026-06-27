@@ -1,9 +1,32 @@
 import sqlite3
 import tempfile
+from os import environ
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
-from src.lib.database import Database, synced_at_timestamp
+from src.lib.database import (
+    ASANA_JIRA_DB_PATH_ENV,
+    Database,
+    resolve_default_db_path,
+    synced_at_timestamp,
+)
+
+
+class DefaultDbPathResolutionTest(TestCase):
+    def test_env_override_then_fallback_then_default(self) -> None:
+        with patch.dict(environ, {ASANA_JIRA_DB_PATH_ENV: "data/asana_acme.sqlite"}, clear=False):
+            self.assertEqual(resolve_default_db_path(), "data/asana_acme.sqlite")
+            # An explicit fallback is ignored while the env override is set.
+            self.assertEqual(resolve_default_db_path("data/local.sqlite"), "data/asana_acme.sqlite")
+            self.assertEqual(Database().db_path, Path("data/asana_acme.sqlite"))
+
+        env_without_override = {k: v for k, v in environ.items() if k != ASANA_JIRA_DB_PATH_ENV}
+        with patch.dict(environ, env_without_override, clear=True):
+            self.assertEqual(resolve_default_db_path(), "data/asana.sqlite")
+            self.assertEqual(resolve_default_db_path("data/local.sqlite"), "data/local.sqlite")
+            # An explicit db_path always wins over both env and default.
+            self.assertEqual(Database(db_path="data/explicit.sqlite").db_path, Path("data/explicit.sqlite"))
 
 
 class DatabaseTest(TestCase):

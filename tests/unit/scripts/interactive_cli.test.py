@@ -20,6 +20,15 @@ class IncrementalArgsBuilderTest(TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+        # Baseline session (sandbox) so the args builders and DB helpers have state.
+        self._orig_session = interactive_cli._session
+        interactive_cli._session = interactive_cli.CliSession(
+            reference_path=Path("/tmp/project"),
+            env_path=Path("/tmp/.asana_jira_env"),
+            use_prod=False,
+        )
+        self.addCleanup(lambda: setattr(interactive_cli, "_session", self._orig_session))
+
     def test_initial_team_args_include_memberships(self) -> None:
         self.assertEqual(
             interactive_cli.args_initial_teams("INFO"),
@@ -74,12 +83,14 @@ class IncrementalArgsBuilderTest(TestCase):
         )
 
     def test_create_team_project_jira_issues_include_empty_with_team(self) -> None:
-        # Prompt order: project key, prod? (sandbox=n), [team via mock], include-empty?, dry-run?
+        # Sandbox session (no per-command prompt). Prompt order: project key, [team via mock],
+        # include-empty?, dry-run?
+        interactive_cli._session.use_prod = False
         with patch(
             "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_a"
         ), patch(
             "builtins.input",
-            side_effect=["MIG", "n", "y", "n"],
+            side_effect=["MIG", "y", "n"],
         ):
             args = interactive_cli.args_create_team_project_jira_issues("INFO")
         self.assertEqual(
@@ -96,12 +107,13 @@ class IncrementalArgsBuilderTest(TestCase):
         )
 
     def test_create_team_project_jira_issues_prod_flag_and_dry_run(self) -> None:
-        # Choosing production appends --prod (before the team scope); blank team, dry-run on.
+        # A PRODUCTION session appends --prod (before the team scope); blank team, dry-run on.
+        interactive_cli._session.use_prod = True
         with patch(
             "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value=""
         ), patch(
             "builtins.input",
-            side_effect=["MIG", "y", "n", "y"],
+            side_effect=["MIG", "n", "y"],
         ):
             args = interactive_cli.args_create_team_project_jira_issues("INFO")
         self.assertEqual(
@@ -162,11 +174,13 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_load_credentials,
         mock_bootstrap_credentials,
     ) -> None:
-        interactive_cli.ensure_interactive_credentials(Path("/tmp/project"))
+        with redirect_stdout(io.StringIO()):
+            interactive_cli.ensure_interactive_credentials(Path("/tmp/project"))
 
         mock_load_credentials.assert_called_once_with(Path("/tmp/project"))
         mock_bootstrap_credentials.assert_called_once_with(Path("/tmp/project"))
 
+    @patch("scripts.interactive_cli._set_session")
     @patch("scripts.interactive_cli.report_credential_checks", return_value=True)
     @patch("scripts.interactive_cli.write_project_env_pointer")
     @patch("scripts.interactive_cli.write_credentials_file")
@@ -180,23 +194,34 @@ class IncrementalArgsBuilderTest(TestCase):
             atlassian_token="jira-token",
         ),
     )
-    @patch("scripts.interactive_cli.prompt_credentials_env_path", return_value=Path("/tmp/client.env"))
-    def test_bootstrap_credentials_writes_file_and_pointer(
+    @patch("scripts.interactive_cli.named_profile_env_path", return_value=Path("/tmp/.asana_jira_env_acme"))
+    @patch("scripts.interactive_cli.prompt_required", return_value="Acme Corp")
+    def test_bootstrap_credentials_writes_named_profile_and_pointer(
         self,
-        mock_prompt_env_path,
+        mock_prompt_name,
+        mock_named_path,
         mock_prompt_values,
         mock_write_credentials_file,
         mock_write_project_env_pointer,
         mock_report_checks,
+        mock_set_session,
     ) -> None:
-        result = interactive_cli.bootstrap_credentials(Path("/tmp/project"))
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            result = interactive_cli.bootstrap_credentials(Path("/tmp/project"))
 
-        self.assertEqual(result, Path("/tmp/client.env"))
-        mock_prompt_env_path.assert_called_once()
+        self.assertEqual(result, Path("/tmp/.asana_jira_env_acme"))
+        mock_prompt_name.assert_called_once()
+        mock_named_path.assert_called_once_with("Acme Corp")
         mock_prompt_values.assert_called_once()
         mock_report_checks.assert_called_once()
-        mock_write_credentials_file.assert_called_once()
-        mock_write_project_env_pointer.assert_called_once_with(Path("/tmp/project"), Path("/tmp/client.env"))
+        # The free-text client name is stamped onto the saved credentials.
+        saved_creds = mock_write_credentials_file.call_args.args[1]
+        self.assertEqual(saved_creds.client_name, "Acme Corp")
+        mock_write_project_env_pointer.assert_called_once_with(
+            Path("/tmp/project"), Path("/tmp/.asana_jira_env_acme")
+        )
+        mock_set_session.assert_called_once()
 
     @patch("scripts.interactive_cli.report_credential_checks", return_value=True)
     @patch("scripts.interactive_cli.write_project_env_pointer")
@@ -623,3 +648,179 @@ class TokenMigrationTest(TestCase):
             with patch.dict(environ, {}, clear=True), redirect_stdout(buffer):
                 interactive_cli.run_token_migration(Path(tmpdir))
             self.assertIn("No plaintext tokens", buffer.getvalue())
+
+
+class ProfileSessionTest(TestCase):
+    """The session-level profile + Sandbox/Production state and switching."""
+
+    def setUp(self) -> None:
+        self._orig_session = interactive_cli._session
+        self.addCleanup(lambda: setattr(interactive_cli, "_session", self._orig_session))
+        keychain_patch = patch("src.lib.keychain.is_available", return_value=False)
+        keychain_patch.start()
+        self.addCleanup(keychain_patch.stop)
+        # These tests legitimately set the per-profile DB env var; don't leak it.
+        self._orig_db_env = environ.get(interactive_cli.ASANA_JIRA_DB_PATH_ENV)
+
+        def _restore_db_env() -> None:
+            if self._orig_db_env is None:
+                environ.pop(interactive_cli.ASANA_JIRA_DB_PATH_ENV, None)
+            else:
+                environ[interactive_cli.ASANA_JIRA_DB_PATH_ENV] = self._orig_db_env
+
+        self.addCleanup(_restore_db_env)
+
+    def _set_session(self, env_path: Path, use_prod: bool = False) -> None:
+        interactive_cli._session = interactive_cli.CliSession(
+            reference_path=Path("/tmp/project"), env_path=env_path, use_prod=use_prod
+        )
+
+    def test_append_jira_env_flag_follows_session_toggle(self) -> None:
+        self._set_session(Path("/tmp/.asana_jira_env_acme"), use_prod=False)
+        args: list = []
+        interactive_cli.append_jira_env_flag(args)
+        self.assertEqual(args, [])
+
+        interactive_cli._session.use_prod = True
+        interactive_cli.append_jira_env_flag(args)
+        self.assertEqual(args, ["--prod"])
+
+    def test_db_path_for_env_is_per_profile(self) -> None:
+        default_db = interactive_cli.db_path_for_env(Path.home() / ".asana_jira_env")
+        named_db = interactive_cli.db_path_for_env(Path.home() / ".asana_jira_env_acme")
+        self.assertEqual(default_db.name, "asana.sqlite")
+        self.assertEqual(named_db.name, "asana_acme.sqlite")
+
+    def test_print_session_header_shows_profile_and_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".asana_jira_env_acme"
+            write_credentials_file(
+                env_path,
+                Credentials(
+                    token="t",
+                    workspace_gid="w",
+                    skip_ssl_verification=False,
+                    client_name="Acme Corp",
+                    jira_base_url="https://prod.example.net",
+                    jira_sandbox_base_url="https://sandbox.example.net",
+                ),
+            )
+            interactive_cli._set_session(Path(tmpdir), env_path, use_prod=False)
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                interactive_cli.print_session_header()
+            output = buffer.getvalue()
+            self.assertIn("Profile: Acme Corp", output)
+            # Sandbox session shows the sandbox URL next to the environment.
+            self.assertIn("Environment: SANDBOX (https://sandbox.example.net)", output)
+            self.assertIn("Database: asana_acme.sqlite", output)
+            # A bordered box wraps the block.
+            self.assertIn("┌", output)
+            self.assertIn("│ Profile: Acme Corp", output)
+            self.assertIn("└", output)
+
+    def test_print_session_header_uses_production_url_when_prod(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".asana_jira_env_acme"
+            write_credentials_file(
+                env_path,
+                Credentials(
+                    token="t",
+                    workspace_gid="w",
+                    skip_ssl_verification=False,
+                    client_name="Acme Corp",
+                    jira_base_url="https://prod.example.net",
+                    jira_sandbox_base_url="https://sandbox.example.net",
+                ),
+            )
+            interactive_cli._set_session(Path(tmpdir), env_path, use_prod=True)
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                interactive_cli.print_session_header()
+            self.assertIn("Environment: PRODUCTION (https://prod.example.net)", buffer.getvalue())
+
+    def test_offer_legacy_db_adoption_renames_when_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "data").mkdir()
+            legacy = root / "data" / "asana.sqlite"
+            legacy.write_bytes(b"x" * 4096)
+            env_path = root / ".asana_jira_env_acme"
+            with patch("scripts.interactive_cli.PROJECT_ROOT", root):
+                self._set_session(env_path, use_prod=False)
+                target = interactive_cli.db_path_for_env(env_path)
+                self.assertFalse(target.exists())
+                with patch("scripts.interactive_cli.prompt_bool", return_value=True), redirect_stdout(io.StringIO()):
+                    interactive_cli.offer_legacy_db_adoption()
+            self.assertFalse(legacy.exists())
+            self.assertTrue(target.exists())
+            self.assertEqual(target.name, "asana_acme.sqlite")
+
+    def test_offer_legacy_db_adoption_declined_keeps_legacy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "data").mkdir()
+            legacy = root / "data" / "asana.sqlite"
+            legacy.write_bytes(b"x" * 4096)
+            env_path = root / ".asana_jira_env_acme"
+            with patch("scripts.interactive_cli.PROJECT_ROOT", root):
+                self._set_session(env_path, use_prod=False)
+                with patch("scripts.interactive_cli.prompt_bool", return_value=False) as mock_bool, redirect_stdout(io.StringIO()):
+                    interactive_cli.offer_legacy_db_adoption()
+                    mock_bool.assert_called_once()
+            self.assertTrue(legacy.exists())
+
+    def test_offer_legacy_db_adoption_skips_default_profile_and_missing_legacy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "data").mkdir()
+            legacy = root / "data" / "asana.sqlite"
+            legacy.write_bytes(b"x" * 4096)
+            with patch("scripts.interactive_cli.PROJECT_ROOT", root):
+                # Default profile: target IS the legacy file -> never prompts.
+                self._set_session(root / ".asana_jira_env", use_prod=False)
+                with patch("scripts.interactive_cli.prompt_bool") as mock_bool:
+                    interactive_cli.offer_legacy_db_adoption()
+                    mock_bool.assert_not_called()
+                # Named profile but no legacy file -> never prompts.
+                legacy.unlink()
+                self._set_session(root / ".asana_jira_env_acme", use_prod=False)
+                with patch("scripts.interactive_cli.prompt_bool") as mock_bool:
+                    interactive_cli.offer_legacy_db_adoption()
+                    mock_bool.assert_not_called()
+
+    def test_toggle_environment_flips_use_prod(self) -> None:
+        self._set_session(Path("/tmp/.asana_jira_env_acme"), use_prod=False)
+        with redirect_stdout(io.StringIO()):
+            interactive_cli.toggle_environment()
+        self.assertTrue(interactive_cli._session.use_prod)
+        with redirect_stdout(io.StringIO()):
+            interactive_cli.toggle_environment()
+        self.assertFalse(interactive_cli._session.use_prod)
+
+    def test_switch_profile_writes_pointer_and_sets_db_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_root = Path(tmpdir)
+            env_path = project_root / ".asana_jira_env_globex"
+            write_credentials_file(
+                env_path,
+                Credentials(token="t", workspace_gid="w", skip_ssl_verification=False, client_name="Globex"),
+            )
+            self._set_session(project_root / ".asana_jira_env", use_prod=True)
+            buffer = io.StringIO()
+            with patch("scripts.interactive_cli.list_credential_profiles", return_value=[(env_path, "Globex")]), \
+                patch("scripts.interactive_cli.offer_legacy_db_adoption"), \
+                patch("builtins.input", side_effect=["1"]), \
+                redirect_stdout(buffer):
+                interactive_cli.switch_profile(project_root)
+
+                # Pointer now references the chosen profile.
+                pointer = (project_root / ".asana_jira_env_path").read_text(encoding="utf-8").strip()
+                self.assertEqual(pointer, str(env_path))
+                # Session + DB env follow the switch; the toggle is preserved.
+                self.assertEqual(interactive_cli._session.client_name, "Globex")
+                self.assertTrue(interactive_cli._session.use_prod)
+                self.assertEqual(
+                    environ[interactive_cli.ASANA_JIRA_DB_PATH_ENV],
+                    str(interactive_cli.db_path_for_env(env_path)),
+                )

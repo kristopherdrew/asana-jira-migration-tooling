@@ -7,7 +7,7 @@ import argparse
 import logging
 from datetime import datetime, timezone
 
-from src.lib.database import Database, DEFAULT_DB_PATH
+from src.lib.database import Database, DEFAULT_DB_PATH, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--database",
-        default=DEFAULT_DB_PATH,
+        default=resolve_default_db_path(),
         help="Path to the SQLite snapshot (default: data/asana.sqlite).",
     )
     parser.add_argument(

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from src.lib.config import load_credentials
-from src.lib.database import Database, synced_at_timestamp
+from src.lib.database import Database, synced_at_timestamp, resolve_default_db_path
 from src.lib.http_client import AsanaHttpClient, AsanaHttpError
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.project_scope import ScopeProject, determine_projects, parse_gid_list, validate_scope_args
@@ -908,7 +908,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=DEFAULT_DB_PATH)
+    database = Database(db_path=resolve_default_db_path(DEFAULT_DB_PATH))
     sync_time = synced_at_timestamp()
 
     all_teams_mode = (

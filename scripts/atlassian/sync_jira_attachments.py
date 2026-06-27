@@ -24,7 +24,7 @@ if str(PROJECT_ROOT) not in os.sys.path:
     os.sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
-from src.lib.database import Database
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.attachments import jira_unique_attachment_name
@@ -57,7 +57,7 @@ class AttachmentJob:
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", default=DEFAULT_DB_PATH, help="Path to SQLite DB (default: data/asana.sqlite).")
+    parser.add_argument("--database", default=resolve_default_db_path(), help="Path to SQLite DB (default: data/asana.sqlite).")
     parser.add_argument("--project-gid", help="Asana project GID to sync attachments for.")
     parser.add_argument(
         "--project-gids",

@@ -27,7 +27,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.adf import text_to_adf
 from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
-from src.lib.database import Database
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.team_picker import search_team
@@ -67,7 +67,7 @@ REPORT_FIELDNAMES = ["kind", "asana_gid", "summary", "jira_key", "status", "mess
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database", default=DEFAULT_DB_PATH, help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).")
+    parser.add_argument("--database", default=resolve_default_db_path(), help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).")
     parser.add_argument("--workspace-gid", help="Optional Asana workspace GID used to build project URLs.")
     parser.add_argument(
         "--prod",
