@@ -60,18 +60,21 @@ from scripts.atlassian import (  # noqa: E402
 )
 from src.lib.config import (  # noqa: E402
     Credentials,
-    DEFAULT_ENV_PATH,
     file_has_plaintext_tokens,
-    list_credential_profiles,
+    has_active_marker,
+    list_project_profiles,
     load_credentials,
+    migrate_home_profiles_into_project,
     migrate_tokens_to_keychain,
-    named_profile_env_path,
     profile_slug,
+    project_profile_path,
+    read_active_slug,
     read_profile_name,
     read_profile_jira_urls,
     resolve_credentials_path,
+    slugify,
+    write_active_slug,
     write_credentials_file,
-    write_project_env_pointer,
 )
 from src.lib.database import ASANA_JIRA_DB_PATH_ENV  # noqa: E402
 from src.lib import keychain  # noqa: E402
@@ -113,7 +116,7 @@ class CliSession:
 
     @property
     def profile_label(self) -> str:
-        return self.client_name or self.env_path.name
+        return self.client_name or profile_slug(self.env_path) or "default"
 
     @property
     def environment_label(self) -> str:
@@ -367,12 +370,6 @@ def append_jira_env_flag(args: List[str]) -> None:
         args.append("--prod")
 
 
-def prompt_credentials_env_path(default: Optional[Path] = None) -> Path:
-    default_path = str(default or DEFAULT_ENV_PATH)
-    raw_path = prompt("Credentials env file path", default=default_path)
-    return Path(raw_path).expanduser()
-
-
 def prompt_credentials_values() -> Credentials:
     token = prompt_required("ASANA_TOKEN")
     workspace_gid = prompt_required("ASANA_WORKSPACE_GID")
@@ -558,7 +555,7 @@ def print_welcome() -> None:
         "   - JIRA_BASE_URL / JIRA_SANDBOX_BASE_URL  your Jira sites\n"
         "\n"
         "On macOS the two tokens are stored securely in the Keychain; the\n"
-        "rest is saved to a per-profile env file (~/.asana_jira_env_<name>).\n"
+        "rest is saved to a per-profile file in the project (profiles/<name>.env).\n"
         "Each profile also gets its own database (data/asana_<name>.sqlite).\n"
         "\n"
         "Let's create your first profile.\n"
@@ -568,14 +565,15 @@ def print_welcome() -> None:
 def bootstrap_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
     """Create a new, client-named profile and make it the active one."""
     name = prompt_required("Client / profile name")
-    env_path = named_profile_env_path(name)
+    slug = slugify(name)
+    env_path = project_profile_path(slug, reference_path)
     if env_path.exists() and not prompt_bool(
         f"A profile already exists at {env_path}. Overwrite it?", default=False
     ):
         raise SystemExit("Credentials file was not updated.")
     credentials = replace(prompt_validated_credentials(), client_name=name)
     write_credentials_file(env_path, credentials)
-    write_project_env_pointer(reference_path, env_path)
+    write_active_slug(slug, reference_path)
     _set_session(reference_path, env_path)
     print(
         f"\nProfile '{name}' saved to {env_path} and set as the active profile.\n"
@@ -585,18 +583,39 @@ def bootstrap_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
     return env_path
 
 
-def change_credentials_file_reference(reference_path: Path = PROJECT_ROOT) -> Path:
-    current_path = resolve_credentials_path(reference_path)
-    env_path = prompt_credentials_env_path(current_path)
-    if not env_path.exists():
-        print(f"No file exists at {env_path}. You can create it now.")
-        if not prompt_bool("Create this credentials file now?", default=True):
-            raise SystemExit("Credentials file was not changed.")
-        credentials = prompt_validated_credentials()
-        write_credentials_file(env_path, credentials)
-    write_project_env_pointer(reference_path, env_path)
-    print(f"Project pointer now references {env_path}.")
-    return env_path
+def run_startup_migration(reference_path: Path = PROJECT_ROOT) -> None:
+    """One-time relocation of home profiles (~/.asana_jira_env*) into profiles/.
+
+    Copies each home profile into ``profiles/<slug>.env`` and re-keys its Keychain
+    secrets (see ``migrate_home_profiles_into_project``). When no active profile is
+    selected yet, adopts a sensible one so the toolkit comes up on the right profile.
+    """
+    migrated = migrate_home_profiles_into_project(reference_path)
+    if migrated:
+        print("\nMoved existing profiles into the project:")
+        for _slug, home_path, project_path in migrated:
+            print(f"  {home_path}  ->  {project_path}")
+        print(
+            "(The originals in your home directory were left untouched; you can "
+            "remove them once you've confirmed everything works.)"
+        )
+
+    if has_active_marker(reference_path):
+        return
+    profiles = list_project_profiles(reference_path)
+    if not profiles:
+        return
+    if len(profiles) == 1:
+        slug = profile_slug(profiles[0][0])
+        write_active_slug(slug, reference_path)
+        return
+    # Prefer the default profile when present; otherwise let the user choose.
+    slugs = {profile_slug(path): path for path, _name in profiles}
+    if "" in slugs:
+        write_active_slug("", reference_path)
+        return
+    print("\nMultiple profiles found — pick the one to start with.")
+    switch_profile(reference_path)
 
 
 def ensure_interactive_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
@@ -634,8 +653,7 @@ def run_token_migration(reference_path: Path = PROJECT_ROOT) -> None:
 def build_credentials_menu() -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "View / update credentials (creates the file if none exists)", lambda: manage_credentials(PROJECT_ROOT)),
-        "2": MenuItem("2", "Change referenced credentials file", lambda: change_credentials_file_reference(PROJECT_ROOT)),
-        "3": MenuItem("3", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
+        "2": MenuItem("2", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -702,33 +720,30 @@ def toggle_environment() -> None:
 
 
 def switch_profile(reference_path: Path = PROJECT_ROOT) -> None:
-    """Pick another discovered profile (or type a path) and make it active."""
-    profiles = list_credential_profiles()
+    """Pick another project profile (profiles/*.env) and make it active."""
+    profiles = list_project_profiles(reference_path)
     active = _session.env_path if _session else resolve_credentials_path(reference_path)
-    if profiles:
-        print("\nAvailable profiles:")
-        for index, (path, name) in enumerate(profiles, start=1):
-            marker = " (active)" if path == active else ""
-            label = name or path.name
-            print(f"  [{index}] {label} — {path}{marker}")
-    else:
-        print("\nNo profiles found in your home directory yet.")
-    choice = prompt("Pick a number, or Enter to type a path", default="")
-    if choice.isdigit() and 1 <= int(choice) <= len(profiles):
-        env_path = profiles[int(choice) - 1][0]
-    elif choice:
-        env_path = Path(choice).expanduser()
-    else:
-        typed = prompt("Credentials env file path", default=str(active))
-        if not typed:
-            print("No profile selected.")
-            return
-        env_path = Path(typed).expanduser()
-
-    if not env_path.exists():
-        print(f"No file exists at {env_path}.")
+    if not profiles:
+        print(
+            "\nNo profiles found in profiles/ yet. "
+            "Use 'Create a new profile' to add one."
+        )
         return
-    write_project_env_pointer(reference_path, env_path)
+    print("\nAvailable profiles:")
+    for index, (path, name) in enumerate(profiles, start=1):
+        marker = " (active)" if path == active else ""
+        label = name or path.name
+        print(f"  [{index}] {label} — {path}{marker}")
+    choice = prompt("Pick a number (Enter to cancel)", default="")
+    if not choice:
+        print("No profile selected.")
+        return
+    if not (choice.isdigit() and 1 <= int(choice) <= len(profiles)):
+        print("Invalid selection.")
+        return
+    env_path = profiles[int(choice) - 1][0]
+
+    write_active_slug(profile_slug(env_path), reference_path)
     session = _set_session(reference_path, env_path)
     print(f"\nActive profile is now '{session.profile_label}' ({env_path}).")
     offer_legacy_db_adoption()
@@ -1598,6 +1613,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_cli_args(argv)
     log_level = resolve_log_level(args.log_level)
     configure_logging(log_level)
+    run_startup_migration(PROJECT_ROOT)
     env_path = ensure_interactive_credentials(PROJECT_ROOT)
     if _session is None:
         # Existing profile (ensure didn't bootstrap, which sets the session itself).

@@ -32,11 +32,21 @@ class IsAvailableTest(TestCase):
 
 
 class AccountForTest(TestCase):
-    def test_namespaces_by_file_name_and_var(self) -> None:
+    def test_legacy_account_namespaces_by_file_name_and_var(self) -> None:
+        self.assertEqual(
+            keychain.legacy_account_for("/home/me/.asana_jira_env_client_a", "ASANA_TOKEN"),
+            ".asana_jira_env_client_a:ASANA_TOKEN",
+        )
+        # ``account_for`` is retained as an alias of the legacy scheme.
         self.assertEqual(
             keychain.account_for("/home/me/.asana_jira_env_client_a", "ASANA_TOKEN"),
             ".asana_jira_env_client_a:ASANA_TOKEN",
         )
+
+    def test_slug_account_namespaces_by_slug_and_var(self) -> None:
+        self.assertEqual(keychain.account_for_slug("acme", "ASANA_TOKEN"), "acme:ASANA_TOKEN")
+        # Empty slug (the default profile) maps to "default".
+        self.assertEqual(keychain.account_for_slug("", "ATLASSIAN_TOKEN"), "default:ATLASSIAN_TOKEN")
 
 
 class GetSecretTest(TestCase):
