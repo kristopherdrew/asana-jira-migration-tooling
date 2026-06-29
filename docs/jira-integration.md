@@ -273,3 +273,34 @@ Requirements:
 - The resolved credentials must include `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` (Jira API token) alongside the Asana fields.
 - The Jira base URL is read from the credentials file (`JIRA_SANDBOX_BASE_URL` by default, `JIRA_BASE_URL` with `--prod`); the chosen environment's URL must be set.
 - Attachments are downloaded under `exports/tmp_attachments/` (one temp folder per run). Each file is fetched once per Asana attachment id, cached locally, and uploaded per Jira issue key. If a Jira issue already has a file with the same name, the script skips re-uploading and records `skipped-existing` in the report.
+
+### Publish Markdown to Confluence
+Publishes local Markdown documents to Confluence Cloud as pages, converting each body to Confluence **storage format locally** rather than routing the content through a language model. This is the fast path: an agent that "copies" docs into Confluence actually re-generates every page body as model output (slow and expensive — minutes per page); this script does the markdown→storage translation deterministically in `src/lib/markdown_to_confluence.py` (~3 ms/page) so the only per-page cost is one REST call.
+
+```bash
+python3 -m scripts.atlassian.publish_markdown_to_confluence \
+  --base-url https://example.atlassian.net \
+  --space-key DOCS \
+  --source-dir docs/presentation/playbook \
+  --title-prefix "Vibe Coding — " \
+  --exclude README.md \
+  --parent-title "Vibe Coding, Safely"
+```
+
+Pages are **upserted by title**: a page whose title already exists in the target space is updated in place (a new version is created), otherwise it is created — so re-running is idempotent. Each page title defaults to the file's first `# ` heading (falling back to the filename), and that H1 is stripped from the body so it does not duplicate Confluence's own page title (pass `--keep-h1` to retain it). Files are processed in sorted filename order so numbered docs (`01-…`, `02-…`) land in order.
+
+The converter covers the Markdown the repo's docs use: ATX headings, fenced code blocks (with language → Confluence `code` macro), pipe tables, blockquotes, ordered/unordered/nested lists, GitHub task lists (`- [ ]`/`- [x]` → Confluence task lists), horizontal rules, and inline bold/italic/inline-code/links. Intra-page anchor links (`#heading`) are emitted as written; Confluence generates its own heading anchors, so those may not resolve.
+
+Inputs:
+- `--base-url <url>` — the Atlassian **site** URL (e.g. `https://example.atlassian.net`); the client appends `/wiki` itself. Required.
+- `--space-key <key>` — Confluence space key the pages live in. Required.
+- `--source-dir <dir>` — directory of Markdown files (combined with `--glob`, default `*.md`), and/or positional `files …` for explicit paths.
+- `--parent-id <id>` / `--parent-title <title>` — nest the published pages under a parent (title is resolved to an id in the space).
+- `--title-prefix <str>` — prepended to every derived title; `--keep-h1` — keep the leading H1 in the body; `--exclude <name>` — skip a file by name (repeatable).
+- `--workers <n>` (default 4), `--limit <n>`, `--output-dir <dir>` (default `exports/`), `--dry-run`, `--yes`, `--log-level <LEVEL>`.
+
+Outputs `exports/confluence_publish_report.csv` (columns `source_file`, `title`, `page_id`, `status` [`created`/`updated`/`dry-run`/`error`], `message`). A `--dry-run` is a pure offline preview — it converts every file and writes the report **without credentials or any network call**, so it is the safest way to verify titles and conversion before publishing.
+
+Requirements:
+- `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials (same as the Jira scripts) — required only for a real publish, not for `--dry-run`.
+- The shared Confluence REST client lives in `src/lib/confluence_client.py` (mirrors `src/lib/jira_client.py`: stdlib-only, Basic auth, 429/5xx retries with jittered backoff, honors `skip_ssl_verification`).
