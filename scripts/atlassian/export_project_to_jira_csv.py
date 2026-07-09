@@ -2261,13 +2261,6 @@ def export_project(
 
         header = [
             "current_project",
-            "project_num_tasks",
-            "project_num_incomplete_tasks",
-            "project_num_completed_tasks",
-            "project_task_counts_captured_at",
-            "project_last_task_created_at",
-            "project_last_task_resolved_at",
-            "project_last_task_updated_at",
             "jira_project_name",
             "jira_project_key",
             "jira_project_type",
@@ -2288,19 +2281,23 @@ def export_project(
             "creator_atlassian_email",
             "projects",
             "modified_section",
-            "start_on",
-            "start_at",
-            "created_at",
-            "due_date",
-            "completed",
-            "completed_at",
-            "actual_time_minutes",
-            "notes",
         ]
+        # Keep the raw Section column(s) adjacent to modified_section.
         if max_sections:
             for idx in range(1, max_sections + 1):
                 suffix = f" ({idx})" if idx > 1 else ""
                 header.append(f"Section{suffix}")
+        header.extend(
+            [
+                "start_on",
+                "start_at",
+                "created_at",
+                "due_date",
+                "completed",
+                "completed_at",
+                "actual_time_minutes",
+            ]
+        )
         if max_tags:
             header.extend(["Tags"] * max_tags)
         for meta in field_meta:
@@ -2310,6 +2307,8 @@ def export_project(
                     header.append(f"{meta['name']}{suffix}")
             else:
                 header.append(meta["name"])
+        # notes sits immediately before the comment columns.
+        header.append("notes")
         max_comments = max((len(items) for items in comments_by_task.values()), default=0)
         header.extend(["Comment"] * max_comments)
 
@@ -2460,13 +2459,6 @@ def export_project(
             jira_proj = jira_project_map.get(project_gid, {})
             row = [
                 current_project_display,
-                "" if project_num_tasks is None else str(project_num_tasks),
-                "" if project_num_incomplete_tasks is None else str(project_num_incomplete_tasks),
-                "" if project_num_completed_tasks is None else str(project_num_completed_tasks),
-                format_export_datetime(project_task_counts_captured_at),
-                format_export_datetime(project_last_task_created_at),
-                format_export_datetime(project_last_task_resolved_at),
-                format_export_datetime(project_last_task_updated_at),
                 jira_proj.get("jira_project_name", ""),
                 jira_proj.get("jira_project_key", ""),
                 "software",
@@ -2487,19 +2479,22 @@ def export_project(
                 creator_atl_email,
                 projects_value,
                 modified_section,
-                start_on_value,
-                start_at_value,
-                created_at_value,
-                due_date,
-                completed_flag,
-                completed_at_value,
-                actual_time_value,
-                notes_value,
             ]
             if max_sections:
                 row.extend(sections)
                 if len(sections) < max_sections:
                     row.extend([""] * (max_sections - len(sections)))
+            row.extend(
+                [
+                    start_on_value,
+                    start_at_value,
+                    created_at_value,
+                    due_date,
+                    completed_flag,
+                    completed_at_value,
+                    actual_time_value,
+                ]
+            )
             if max_tags:
                 tags = tags_map.get(task["gid"], [])
                 row.extend(tags)
@@ -2531,6 +2526,7 @@ def export_project(
                         elif single["date_value"]:
                             cell = format_export_datetime(single["date_value"])
                     row.append(cell)
+            row.append(notes_value)
             if max_comments:
                 comments = comments_by_task.get(task["gid"], [])
                 if comments:
@@ -2555,13 +2551,6 @@ def export_project(
                 "hierarchy_depth",
                 "jira_parent_gid",
                 "jira_hierarchy_depth",
-                "project_num_tasks",
-                "project_num_incomplete_tasks",
-                "project_num_completed_tasks",
-                "project_task_counts_captured_at",
-                "project_last_task_created_at",
-                "project_last_task_resolved_at",
-                "project_last_task_updated_at",
                 "jira_project_name",
                 "jira_project_key",
                 "jira_project_type",
