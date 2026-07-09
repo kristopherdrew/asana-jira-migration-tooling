@@ -305,13 +305,20 @@ class ExportProjectToJiraCsvTest(TestCase):
         creator_atl_index = header.index("creator_atlassian_id")
         creator_atl_email_index = header.index("creator_atlassian_email")
         current_project_index = header.index("current_project")
-        project_num_tasks_index = header.index("project_num_tasks")
-        project_num_incomplete_index = header.index("project_num_incomplete_tasks")
-        project_num_completed_index = header.index("project_num_completed_tasks")
-        project_captured_at_index = header.index("project_task_counts_captured_at")
-        project_created_index = header.index("project_last_task_created_at")
-        project_resolved_index = header.index("project_last_task_resolved_at")
-        project_updated_index = header.index("project_last_task_updated_at")
+        for removed_column in (
+            "project_num_tasks",
+            "project_num_incomplete_tasks",
+            "project_num_completed_tasks",
+            "project_task_counts_captured_at",
+            "project_last_task_created_at",
+            "project_last_task_resolved_at",
+            "project_last_task_updated_at",
+        ):
+            self.assertNotIn(removed_column, header)
+        # modified_section is immediately followed by the raw Section column(s).
+        self.assertEqual(header.index("modified_section") + 1, min(section_columns))
+        # notes sits immediately before the comment column(s).
+        self.assertEqual(header.index("notes") + 1, min(comment_columns))
         projects_index = header.index("projects")
         start_on_index = header.index("start_on")
         start_at_index = header.index("start_at")
@@ -344,13 +351,6 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(first_task[creator_atl_index], "atl-account-alice")
         self.assertEqual(first_task[creator_atl_email_index], "alice.atl@example.com")
         self.assertEqual(first_task[current_project_index], "Example Project (proj_1)")
-        self.assertEqual(first_task[project_num_tasks_index], "10")
-        self.assertEqual(first_task[project_num_incomplete_index], "4")
-        self.assertEqual(first_task[project_num_completed_index], "6")
-        self.assertEqual(first_task[project_captured_at_index], "01/Jan/25 12:00 am")
-        self.assertEqual(first_task[project_created_index], "26/Feb/25 12:45 pm")
-        self.assertEqual(first_task[project_resolved_index], "04/Mar/25 9:05 am")
-        self.assertEqual(first_task[project_updated_index], "05/Mar/25 4:00 pm")
         self.assertEqual(
             first_task[projects_index],
             "Example Project (proj_1); Secondary Project (proj_2)",
@@ -376,13 +376,6 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(second_task[creator_atl_email_index], "bob.atl@example.com")
         self.assertEqual(second_task[asana_id_index], "task_2")
         self.assertEqual(second_task[current_project_index], "Example Project (proj_1)")
-        self.assertEqual(second_task[project_num_tasks_index], "10")
-        self.assertEqual(second_task[project_num_incomplete_index], "4")
-        self.assertEqual(second_task[project_num_completed_index], "6")
-        self.assertEqual(second_task[project_captured_at_index], "01/Jan/25 12:00 am")
-        self.assertEqual(second_task[project_created_index], "26/Feb/25 12:45 pm")
-        self.assertEqual(second_task[project_resolved_index], "04/Mar/25 9:05 am")
-        self.assertEqual(second_task[project_updated_index], "05/Mar/25 4:00 pm")
         self.assertEqual(second_task[projects_index], "Example Project (proj_1)")
         self.assertEqual(second_task[start_on_index], "02/Mar/25 12:00 am")
         self.assertEqual(second_task[start_at_index], "02/Mar/25 1:30 pm")
