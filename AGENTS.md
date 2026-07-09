@@ -69,9 +69,9 @@ The SQLite schema is documented in [docs/data-model.md](docs/data-model.md) (per
 - Target ≥90% statement coverage; include asynchronous and pagination edge cases in every suite.
 - Use `python3 -m unittest --failfast` during development for faster feedback and add regression tests for every bug fix.
 
-## Commit & Pull Request Guidelines
+## Commit Guidelines
 - Follow Conventional Commits (e.g., `feat(tasks): add recurring scheduling`). Scope names should align with the `src/` folder touched.
-- Rebase onto `main` before opening a PR and link the relevant Asana task.
+- Link the relevant Asana task in the commit when there is one.
 - Describe changes plainly, enumerate tests executed (`python3 -m unittest ...`), and attach logs or exports when relevant.
 - When a prompt-driven change is completed, ask whether the user wants the changes committed.
 - If you ask, include a suggested Conventional Commit message.
