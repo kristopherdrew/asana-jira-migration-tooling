@@ -73,7 +73,6 @@ The SQLite schema is documented in [docs/data-model.md](docs/data-model.md) (per
 - Follow Conventional Commits (e.g., `feat(tasks): add recurring scheduling`). Scope names should align with the `src/` folder touched.
 - Rebase onto `main` before opening a PR and link the relevant Asana task.
 - Describe changes plainly, enumerate tests executed (`python3 -m unittest ...`), and attach logs or exports when relevant.
-- Wait for CI checks to pass and secure at least one reviewer approval before merging.
 - When a prompt-driven change is completed, ask whether the user wants the changes committed.
 - If you ask, include a suggested Conventional Commit message.
 - Do not create a commit unless the user explicitly approves it.
