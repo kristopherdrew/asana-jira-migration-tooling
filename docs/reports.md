@@ -132,6 +132,28 @@ Optional flags:
 
 In the interactive Reports menu, this export first asks whether the review should be team-centric, owner-centric, or whole-workspace, then searches team or project-owner names from the local SQLite snapshot (falling back to a raw GID prompt) for the chosen scope only.
 
+### Project Members Report (.xlsx)
+A standalone multi-tab `.xlsx` listing project membership captured from Asana — the `members` array on each project, synced into the `project_members` table by `get_projects`. Scope it to one team's projects with `--team-gid`; omit it for the whole workspace. The tabs are:
+- **Overview** — generation time, source DB, the scope applied, and a Tab→Rows index.
+- **Project Members** — one row per membership record (one project + one member): `team_name`, `project_name`, `project_url`, `archived`, an Atlassian-aware member column (`member_name`/`member_email`/`member_atlassian_status`), and the `project_gid`/`user_gid`. The member name/email come from the `users` snapshot when available (falling back to the name embedded on the membership when the user is not synced); `member_atlassian_status` stays blank without a `user_atlassian_accounts` mapping.
+- **Member Summary** — one row per member: `member_name`/`member_email`/`member_atlassian_status`, the `project_count` of projects they belong to, and a `;`-joined `project_names` list (sorted). Sorted by most projects first.
+
+Run the Asana syncs first (`get_teams`, `get_users`, `get_projects`) so membership, member identities, and team names are populated. The workbook is written by the dependency-free `src/lib/xlsx_writer.py`, so it needs only the Python standard library.
+```bash
+python3 -m scripts.export_project_members_report --database data/asana.sqlite
+```
+Required flags:
+- (none; uses `data/asana.sqlite` by default).
+
+Optional flags:
+- `--team-gid <gid>` to scope the report to one team's projects.
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated `project_members_<timestamp>.xlsx` filename.
+- `--workspace-gid <gid>` to force the workspace used when building project URLs.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+In the interactive Reports menu, this export searches team names from the local SQLite snapshot (falling back to a raw team GID prompt); leave the scope blank for all teams.
+
 ### Team Memberships Report
 Exports the `view_team_memberships` database view to CSV so you can review teams, users, roles, admin flags, direct Asana team/user URLs, and sync dates in one place. If the user snapshot is missing, the report still keeps the membership row and falls back to `unknown_user <gid>`.
 ```bash
