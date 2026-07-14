@@ -559,6 +559,23 @@ Portfolio-level status updates (kind-tagged status_update).
 
 ## Membership & identity
 
+#### `project_members`
+
+Users who are members of each project (roster only; no access level).
+
+- **Source:** GET /workspaces/{gid}/projects opt_fields=members.gid,members.name
+- **Populated by:** `scripts/get_projects.py`
+- **Written by:** `upsert_project`
+- **Write semantics:** Full-replace per project_gid via _replace_project_members. PK (project_gid, user_gid). FK->projects, FK->users.
+- **Foreign keys:** user_gid → users(gid); project_gid → projects(gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `project_gid` | TEXT | ✓ |
+| `user_gid` | TEXT | ✓ |
+| `user_name` | TEXT |  |
+| `synced_at` | TEXT |  |
+
 #### `team_members`
 
 Team membership roster with role / admin / active flags.

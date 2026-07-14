@@ -274,6 +274,15 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "Soft-delete per portfolio_gid then upsert by gid (PK); is_deleted flag.",
     ),
     # ---------------- Membership & identity ----------------
+    "project_members": _m(
+        "project_members",
+        "Membership & identity",
+        "Users who are members of each project (roster only; no access level).",
+        "GET /workspaces/{gid}/projects opt_fields=members.gid,members.name",
+        ["scripts/get_projects.py"],
+        "upsert_project",
+        "Full-replace per project_gid via _replace_project_members. PK (project_gid, user_gid). FK->projects, FK->users.",
+    ),
     "team_members": _m(
         "team_members",
         "Membership & identity",
