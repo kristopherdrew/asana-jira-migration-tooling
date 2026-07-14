@@ -43,6 +43,7 @@ from scripts import (  # noqa: E402
     export_custom_field_usage_report,
     export_portfolio_report,
     export_field_section_review_report,
+    export_project_members_report,
     export_all_reports_xlsx,
 )
 from scripts.atlassian import (  # noqa: E402
@@ -1298,6 +1299,16 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             args.append("--summary-only")
         run_script(export_portfolio_report.main, args)
 
+    def run_project_members_report() -> None:
+        args = args_report_defaults(log_level)
+        team_gid = _prompt_team_gid_from_lookup(
+            "project members",
+            "Team GID to scope project members (blank = all teams)",
+        )
+        if team_gid:
+            args.extend(["--team-gid", team_gid])
+        run_script(export_project_members_report.main, args)
+
     def run_field_section_review_report() -> None:
         args = args_report_defaults(log_level)
         print("\nScope the field & section review:")
@@ -1361,6 +1372,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "8",
             "Export portfolio report (summary + items)",
             run_portfolio_report,
+        ),
+        "9": MenuItem(
+            "9",
+            "Export project members report (.xlsx)",
+            run_project_members_report,
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
