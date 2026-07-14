@@ -341,6 +341,18 @@ CREATE TABLE IF NOT EXISTS project_custom_field_settings (
 );
 """
 
+PROJECT_MEMBERS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS project_members (
+    project_gid TEXT NOT NULL,
+    user_gid TEXT NOT NULL,
+    user_name TEXT,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (project_gid, user_gid),
+    FOREIGN KEY (project_gid) REFERENCES projects(gid),
+    FOREIGN KEY (user_gid) REFERENCES users(gid)
+);
+"""
+
 PROJECT_UPDATES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS project_updates (
     gid TEXT PRIMARY KEY,
@@ -697,6 +709,7 @@ class Database:
         connection.executescript(PROJECT_SCHEMA)
         connection.executescript(PROJECT_CUSTOM_FIELDS_SCHEMA)
         connection.executescript(PROJECT_CUSTOM_FIELD_SETTINGS_SCHEMA)
+        connection.executescript(PROJECT_MEMBERS_SCHEMA)
         connection.executescript(PROJECT_UPDATES_SCHEMA)
         connection.executescript(PORTFOLIOS_SCHEMA)
         connection.executescript(PORTFOLIO_ITEMS_SCHEMA)
@@ -851,6 +864,12 @@ class Database:
             connection,
             project.get("gid"),
             project.get("custom_field_settings") or [],
+            synced_at,
+        )
+        self._replace_project_members(
+            connection,
+            project.get("gid"),
+            project.get("members") or [],
             synced_at,
         )
 
@@ -2245,6 +2264,7 @@ class Database:
         self._ensure_index(connection, "idx_task_comments_task_gid", "task_comments", "task_gid")
         self._ensure_index(connection, "idx_task_attachments_task_gid", "task_attachments", "task_gid")
         self._ensure_index(connection, "idx_project_updates_project_gid", "project_updates", "project_gid")
+        self._ensure_index(connection, "idx_project_members_user_gid", "project_members", "user_gid")
         self._ensure_index(connection, "idx_portfolio_items_portfolio_gid", "portfolio_items", "portfolio_gid")
         self._ensure_index(connection, "idx_portfolio_items_item_gid", "portfolio_items", "item_gid")
         self._ensure_index(
@@ -3011,6 +3031,46 @@ class Database:
                 VALUES (
                     :project_gid, :custom_field_gid, :custom_field_name,
                     :custom_field_type, :is_important, :is_global_to_workspace, :synced_at
+                )
+                """,
+                rows,
+            )
+
+    def _replace_project_members(
+        self,
+        connection: sqlite3.Connection,
+        project_gid: Optional[str],
+        members: Iterable[Dict[str, Any]],
+        synced_at: datetime,
+    ) -> None:
+        if not project_gid:
+            return
+        connection.execute("DELETE FROM project_members WHERE project_gid = ?", (project_gid,))
+        rows = []
+        seen = set()
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            user_gid = member.get("gid")
+            if not user_gid or user_gid in seen:
+                continue
+            seen.add(user_gid)
+            rows.append(
+                {
+                    "project_gid": project_gid,
+                    "user_gid": user_gid,
+                    "user_name": member.get("name"),
+                    "synced_at": synced_at.isoformat(),
+                }
+            )
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO project_members (
+                    project_gid, user_gid, user_name, synced_at
+                )
+                VALUES (
+                    :project_gid, :user_gid, :user_name, :synced_at
                 )
                 """,
                 rows,

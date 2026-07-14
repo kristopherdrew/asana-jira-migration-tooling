@@ -25,6 +25,8 @@ PROJECT_FIELDS_DEFAULT = [
     "owner.name",
     "team.gid",
     "team.name",
+    "members.gid",
+    "members.name",
     "privacy_setting",
     "notes",
     "html_notes",

@@ -197,6 +197,78 @@ class DatabaseProjectsTest(TestCase):
         self.assertEqual(settings[0]["custom_field_gid"], "cf_updated")
         self.assertEqual(len(settings), 1)
 
+    def test_upsert_project_persists_members(self) -> None:
+        project = {
+            "gid": "proj_members",
+            "name": "Members Project",
+            "members": [
+                {"gid": "user_1", "name": "Ada Lovelace"},
+                {"gid": "user_2", "name": "Alan Turing"},
+                {"gid": "user_2", "name": "Alan Turing"},  # duplicate ignored
+                {"name": "No GID"},  # skipped (missing gid)
+                "not-a-dict",  # skipped (not a dict)
+            ],
+        }
+
+        sync_time = synced_at_timestamp()
+        self.database.upsert_project(self.connection, project, sync_time)
+        self.connection.commit()
+
+        members = list(
+            self.connection.execute(
+                "SELECT user_gid, user_name FROM project_members WHERE project_gid = ? ORDER BY user_gid",
+                ("proj_members",),
+            )
+        )
+        self.assertEqual(len(members), 2)
+        self.assertEqual(members[0]["user_gid"], "user_1")
+        self.assertEqual(members[0]["user_name"], "Ada Lovelace")
+        self.assertEqual(members[1]["user_gid"], "user_2")
+        self.assertEqual(members[1]["user_name"], "Alan Turing")
+
+    def test_upsert_project_replaces_member_rows(self) -> None:
+        project = {
+            "gid": "proj_member_replace",
+            "name": "Member Replace",
+            "members": [
+                {"gid": "user_1", "name": "Stays Then Goes"},
+                {"gid": "user_2", "name": "Also Goes"},
+            ],
+        }
+        self.database.upsert_project(self.connection, project, synced_at_timestamp())
+        self.connection.commit()
+
+        updated_project = {
+            "gid": "proj_member_replace",
+            "name": "Member Replace",
+            "members": [
+                {"gid": "user_1", "name": "Stays"},
+                {"gid": "user_3", "name": "New Member"},
+            ],
+        }
+        self.database.upsert_project(self.connection, updated_project, synced_at_timestamp())
+        self.connection.commit()
+
+        members = list(
+            self.connection.execute(
+                "SELECT user_gid FROM project_members WHERE project_gid = ? ORDER BY user_gid",
+                ("proj_member_replace",),
+            )
+        )
+        self.assertEqual([m["user_gid"] for m in members], ["user_1", "user_3"])
+
+    def test_upsert_project_with_no_members_writes_no_rows(self) -> None:
+        project = {"gid": "proj_no_members", "name": "No Members"}
+
+        self.database.upsert_project(self.connection, project, synced_at_timestamp())
+        self.connection.commit()
+
+        count = self.connection.execute(
+            "SELECT COUNT(*) AS c FROM project_members WHERE project_gid = ?",
+            ("proj_no_members",),
+        ).fetchone()["c"]
+        self.assertEqual(count, 0)
+
     def test_upsert_project_retains_null_task_counts_when_missing(self) -> None:
         project = {
             "gid": "proj_counts_missing",
