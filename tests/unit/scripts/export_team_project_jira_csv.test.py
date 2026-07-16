@@ -1016,3 +1016,173 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(gamma_task["Owner Atlassian ID"], "atl-creator-active")
         self.assertEqual(gamma_task["Owner Atlassian Status"], "active")
         self.assertEqual(owner_source_by_summary["Gamma Project"], "task_creator")
+
+    def test_falls_back_to_active_project_member_for_epic_and_task(self) -> None:
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        self.database.upsert_team(self.connection, {"gid": "team_e", "name": "Epsilon Team"}, sync_time)
+
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "owner_inactive",
+                "name": "Inactive Owner",
+                "resource_type": "user",
+                "email": "inactive.owner@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "member_active",
+                "name": "Active Member",
+                "resource_type": "user",
+                "email": "member@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [
+                {
+                    "gid": "owner_inactive",
+                    "atlassianAccountId": "atl-owner-inactive",
+                    "atlassianEmail": "inactive.owner.atl@example.com",
+                    "atlassianStatus": "deactivated",
+                },
+                {
+                    "gid": "member_active",
+                    "atlassianAccountId": "atl-member-active",
+                    "atlassianEmail": "member.atl@example.com",
+                    "atlassianStatus": "active",
+                },
+            ],
+            sync_time,
+        )
+
+        # Inactive owner, no admins, and the only task creator is also inactive, so
+        # neither the owner nor the task-creator rung yields an assignable user. The
+        # sole active-mapped person is a project member.
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_e1",
+                "name": "Epsilon Project",
+                "team": {"gid": "team_e", "name": "Epsilon Team"},
+                "owner": {"gid": "owner_inactive", "name": "Inactive Owner"},
+                "archived": False,
+                "num_tasks": 1,
+                "members": [{"gid": "member_active", "name": "Active Member"}],
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_e1",
+                "name": "Task E1",
+                "created_by": {"gid": "owner_inactive", "name": "Inactive Owner"},
+                "memberships": [{"project": {"gid": "proj_e1", "name": "Epsilon Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.connection.commit()
+
+        output_path = export_team_project_jira_csv(str(self.db_path), self.workspace / "exports", filename="member.csv")
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            raw_rows = list(csv.reader(handle))
+        header = raw_rows[0]
+        owner_source_idx = [i for i, name in enumerate(header) if name == "Labels"][0]
+        rows = [dict(zip(header, values)) for values in raw_rows[1:]]
+        owner_source_by_summary = {
+            values[header.index("Summary")]: values[owner_source_idx] for values in raw_rows[1:]
+        }
+
+        # Epic (team) falls back to the active project member.
+        epsilon_epic = next(row for row in rows if row["Summary"] == "Epsilon Team")
+        self.assertEqual(epsilon_epic["Owner"], "Active Member")
+        self.assertEqual(epsilon_epic["Owner Atlassian ID"], "atl-member-active")
+        self.assertEqual(epsilon_epic["Owner Atlassian Status"], "active")
+        self.assertEqual(owner_source_by_summary["Epsilon Team"], "project_member")
+
+        # Task (project) falls back to the same active project member.
+        epsilon_task = next(row for row in rows if row["Summary"] == "Epsilon Project")
+        self.assertEqual(epsilon_task["Owner"], "Active Member")
+        self.assertEqual(epsilon_task["Owner Email"], "member@example.com")
+        self.assertEqual(epsilon_task["Owner Atlassian ID"], "atl-member-active")
+        self.assertEqual(epsilon_task["Owner Atlassian Status"], "active")
+        self.assertEqual(owner_source_by_summary["Epsilon Project"], "project_member")
+        task_description = _description_to_map(epsilon_task["Description"])
+        self.assertEqual(task_description["effective_owner_source"], "project_member")
+        self.assertEqual(task_description["top_member_name"], "Active Member")
+
+    def test_task_stays_unassigned_when_no_active_owner_creator_or_member(self) -> None:
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        self.database.upsert_team(self.connection, {"gid": "team_f", "name": "Zeta Team"}, sync_time)
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "owner_inactive2",
+                "name": "Inactive Owner Two",
+                "resource_type": "user",
+                "email": "inactive2@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [
+                {
+                    "gid": "owner_inactive2",
+                    "atlassianAccountId": "atl-owner-inactive2",
+                    "atlassianEmail": "inactive2.atl@example.com",
+                    "atlassianStatus": "deactivated",
+                },
+            ],
+            sync_time,
+        )
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_f1",
+                "name": "Zeta Project",
+                "team": {"gid": "team_f", "name": "Zeta Team"},
+                "owner": {"gid": "owner_inactive2", "name": "Inactive Owner Two"},
+                "archived": False,
+                "num_tasks": 1,
+                "members": [{"gid": "owner_inactive2", "name": "Inactive Owner Two"}],
+            },
+            sync_time,
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_f1",
+                "name": "Task F1",
+                "created_by": {"gid": "owner_inactive2", "name": "Inactive Owner Two"},
+                "memberships": [{"project": {"gid": "proj_f1", "name": "Zeta Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.connection.commit()
+
+        output_path = export_team_project_jira_csv(str(self.db_path), self.workspace / "exports", filename="none.csv")
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            raw_rows = list(csv.reader(handle))
+        header = raw_rows[0]
+        rows = [dict(zip(header, values)) for values in raw_rows[1:]]
+
+        zeta_task = next(row for row in rows if row["Summary"] == "Zeta Project")
+        self.assertEqual(zeta_task["Owner"], "")
+        self.assertEqual(zeta_task["Owner Atlassian ID"], "")
+        self.assertEqual(zeta_task["Owner Atlassian Status"], "")

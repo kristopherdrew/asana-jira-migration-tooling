@@ -5,13 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
 
+from src.lib.atlassian_status import is_active_atlassian_status
+
 
 def _clean(value: Optional[str]) -> str:
     return (value or "").strip()
 
 
 def _is_active_atlassian(status: Optional[str]) -> bool:
-    return _clean(status).casefold() == "active"
+    return is_active_atlassian_status(status)
 
 
 def _display_value(atlassian_email: str, email: str, name: str, gid: str) -> str:
@@ -199,6 +201,34 @@ def build_team_analysis(connection) -> Dict[str, TeamAnalysis]:
         """
     ).fetchall()
 
+    member_rows = connection.execute(
+        """
+        SELECT
+            p.team_gid,
+            pm.user_gid AS user_gid,
+            COALESCE(u.name, pm.user_name, '') AS user_name,
+            COALESCE(u.email, '') AS user_email,
+            COALESCE(ua.atlassian_account_id, '') AS atlassian_account_id,
+            COALESCE(ua.atlassian_email, '') AS atlassian_email,
+            COALESCE(ua.atlassian_status, '') AS atlassian_status,
+            COUNT(DISTINCT p.gid) AS member_project_count
+        FROM project_members pm
+        JOIN projects p
+            ON p.gid = pm.project_gid
+        LEFT JOIN users u
+            ON u.gid = pm.user_gid
+        LEFT JOIN user_atlassian_accounts ua
+            ON ua.user_gid = pm.user_gid
+        WHERE p.team_gid IS NOT NULL
+            AND TRIM(COALESCE(pm.user_gid, '')) != ''
+        GROUP BY p.team_gid, pm.user_gid
+        ORDER BY p.team_gid,
+            member_project_count DESC,
+            COALESCE(ua.atlassian_email, u.email, u.name, pm.user_name, pm.user_gid) COLLATE NOCASE,
+            pm.user_gid
+        """
+    ).fetchall()
+
     admins_by_team: Dict[str, List[TeamCandidate]] = {team_gid: [] for team_gid in teams}
     for row in admin_rows:
         candidate = _row_to_candidate(
@@ -240,16 +270,32 @@ def build_team_analysis(connection) -> Dict[str, TeamAnalysis]:
         )
         creators_by_team.setdefault(row["team_gid"], []).append(candidate)
 
+    members_by_team: Dict[str, List[TeamCandidate]] = {team_gid: [] for team_gid in teams}
+    for row in member_rows:
+        candidate = _row_to_candidate(
+            row,
+            gid_key="user_gid",
+            display_key="user_name",
+            email_key="user_email",
+            atlassian_id_key="atlassian_account_id",
+            atlassian_email_key="atlassian_email",
+            atlassian_status_key="atlassian_status",
+            count_key="member_project_count",
+        )
+        members_by_team.setdefault(row["team_gid"], []).append(candidate)
+
     analyses: Dict[str, TeamAnalysis] = {}
     for team_gid, team_name in teams.items():
         admins = admins_by_team.get(team_gid, [])
         project_owners = owners_by_team.get(team_gid, [])
         task_creators = creators_by_team.get(team_gid, [])
+        project_members = members_by_team.get(team_gid, [])
 
         first_admin = admins[0] if admins else None
         first_active_admin = _choose_first_active_admin(admins)
         top_project_owner = project_owners[0] if project_owners else None
         top_active_task_creator = _choose_top_active_candidate(task_creators)
+        top_active_project_member = _choose_top_active_candidate(project_members)
 
         effective_candidate: Optional[TeamCandidate]
         effective_source = ""
@@ -259,10 +305,13 @@ def build_team_analysis(connection) -> Dict[str, TeamAnalysis]:
         elif top_project_owner is not None and top_project_owner.is_active_atlassian:
             effective_candidate = top_project_owner
             effective_source = "project_owner"
-        else:
+        elif top_active_task_creator is not None:
             effective_candidate = top_active_task_creator
+            effective_source = "task_creator"
+        else:
+            effective_candidate = top_active_project_member
             if effective_candidate is not None:
-                effective_source = "task_creator"
+                effective_source = "project_member"
 
         analyses[team_gid] = TeamAnalysis(
             team_gid=team_gid,

@@ -30,6 +30,7 @@ from src.lib.asana_urls import (
     build_user_task_list_url,
     infer_workspace_gid,
 )
+from src.lib.atlassian_status import is_active_atlassian_status
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.date_formatting import format_report_date, parse_iso_datetime
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -306,7 +307,7 @@ def _build_team_description_blocks(row: dict, analysis) -> list:
 
 
 def _is_active_atlassian_status(status: Optional[str]) -> bool:
-    return _clean_text(status).casefold() == "active"
+    return is_active_atlassian_status(status)
 
 
 class _EffectiveOwner(NamedTuple):
@@ -322,10 +323,17 @@ class _EffectiveOwner(NamedTuple):
 
 
 def _effective_owner_from_project(row: dict) -> _EffectiveOwner:
-    """Resolve a project's effective owner: the project owner when their
-    Atlassian account is active, otherwise the project's top active task creator
-    (the ``top_active_task_creators`` CTE only surfaces active Atlassian users, so a
-    fallback creator is always assignable). Returns an empty owner when neither applies."""
+    """Resolve a project's effective owner, walking increasingly-broad active
+    Atlassian candidates so a real person is assignable wherever one exists:
+
+    1. the project owner when their Atlassian account is active,
+    2. otherwise the project's top active task creator,
+    3. otherwise a top active project member.
+
+    The ``top_active_task_creators`` and ``top_active_project_members`` CTEs only
+    surface active, mapped Atlassian users, so any fallback they provide is always
+    assignable. Returns an empty owner when none applies (the project has no active,
+    mapped owner/creator/member)."""
     owner_name = _row_owner_from_project(row)
     if owner_name and _is_active_atlassian_status(row["owner_atlassian_status"]):
         return _EffectiveOwner(
@@ -343,6 +351,15 @@ def _effective_owner_from_project(row: dict) -> _EffectiveOwner:
             _clean_text(row["top_task_creator_email"]),
             _clean_text(row["top_task_creator_atlassian_id"]),
             _clean_text(row["top_task_creator_atlassian_status"]),
+        )
+    member_name = _clean_text(row["top_member_name"])
+    if member_name:
+        return _EffectiveOwner(
+            "project_member",
+            member_name,
+            _clean_text(row["top_member_email"]),
+            _clean_text(row["top_member_atlassian_id"]),
+            _clean_text(row["top_member_atlassian_status"]),
         )
     return _EffectiveOwner("", "", "", "", "")
 
@@ -385,6 +402,9 @@ def _build_project_description_blocks(row: dict) -> list:
                 ("top_task_creator_email", _clean_text(row["top_task_creator_email"])),
                 ("top_task_creator_atlassian_status", _clean_text(row["top_task_creator_atlassian_status"])),
                 ("top_task_creator_task_count", _count_to_text(row["top_task_creator_task_count"])),
+                ("top_member_name", _clean_text(row["top_member_name"])),
+                ("top_member_email", _clean_text(row["top_member_email"])),
+                ("top_member_atlassian_status", _clean_text(row["top_member_atlassian_status"])),
             ],
         ),
     ]
@@ -466,6 +486,37 @@ def build_team_project_rows(
                     GROUP BY tp.project_gid, t.created_by_gid
                 )
                 WHERE rn = 1
+            ),
+            top_active_project_members AS (
+                SELECT
+                    project_gid,
+                    member_name,
+                    member_email,
+                    member_atlassian_id,
+                    member_atlassian_status
+                FROM (
+                    SELECT
+                        pm.project_gid AS project_gid,
+                        COALESCE(u.name, pm.user_name, '') AS member_name,
+                        COALESCE(u.email, '') AS member_email,
+                        COALESCE(ua.atlassian_account_id, '') AS member_atlassian_id,
+                        COALESCE(ua.atlassian_status, '') AS member_atlassian_status,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY pm.project_gid
+                            ORDER BY
+                                COALESCE(ua.atlassian_email, u.email, u.name, pm.user_name, pm.user_gid) COLLATE NOCASE,
+                                pm.user_gid
+                        ) AS rn
+                    FROM project_members pm
+                    JOIN user_atlassian_accounts ua
+                        ON ua.user_gid = pm.user_gid
+                    LEFT JOIN users u
+                        ON u.gid = pm.user_gid
+                    WHERE TRIM(COALESCE(pm.user_gid, '')) != ''
+                        AND TRIM(COALESCE(ua.atlassian_account_id, '')) != ''
+                        AND LOWER(TRIM(COALESCE(ua.atlassian_status, ''))) = 'active'
+                )
+                WHERE rn = 1
             )
             SELECT
                 p.gid,
@@ -497,7 +548,11 @@ def build_team_project_rows(
                 tatc.creator_email AS top_task_creator_email,
                 tatc.creator_atlassian_id AS top_task_creator_atlassian_id,
                 tatc.creator_atlassian_status AS top_task_creator_atlassian_status,
-                tatc.task_count AS top_task_creator_task_count
+                tatc.task_count AS top_task_creator_task_count,
+                tapm.member_name AS top_member_name,
+                tapm.member_email AS top_member_email,
+                tapm.member_atlassian_id AS top_member_atlassian_id,
+                tapm.member_atlassian_status AS top_member_atlassian_status
             FROM projects p
             LEFT JOIN teams t
                 ON t.gid = p.team_gid
@@ -505,6 +560,8 @@ def build_team_project_rows(
                 ON atc.project_gid = p.gid
             LEFT JOIN top_active_task_creators tatc
                 ON tatc.project_gid = p.gid
+            LEFT JOIN top_active_project_members tapm
+                ON tapm.project_gid = p.gid
             LEFT JOIN users u
                 ON u.gid = p.owner_gid
             LEFT JOIN user_atlassian_accounts ua
