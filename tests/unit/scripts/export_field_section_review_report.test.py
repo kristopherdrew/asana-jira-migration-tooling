@@ -243,10 +243,70 @@ class ExportFieldSectionReviewReportTest(TestCase):
 
     def test_empty_database_yields_header_only_sheets(self) -> None:
         sheets = self._sheets()
-        expected = {"Projects", "Sections", "Custom Fields", "Custom Field Values", "Field Catalog", "Section Catalog"}
+        expected = {
+            "Projects",
+            "Project Members",
+            "Member Summary",
+            "Sections",
+            "Custom Fields",
+            "Custom Field Values",
+            "Field Catalog",
+            "Section Catalog",
+        }
         self.assertEqual(set(sheets), expected)
         for title, rows in sheets.items():
             self.assertEqual(len(rows), 1, f"{title} should have a header row only")
+
+    def test_membership_tabs_populated_and_scoped(self) -> None:
+        self._team("team_1", "Team One")
+        self._team("team_2", "Team Two")
+        self.database.upsert_user(self.connection, {"gid": "u1", "name": "Ada", "email": "ada@x.com"}, SYNC_TIME)
+        self.database.upsert_user(self.connection, {"gid": "u2", "name": "Alan", "email": "alan@x.com"}, SYNC_TIME)
+        self.database.upsert_project(
+            self.connection,
+            {"gid": "proj_1", "name": "Alpha", "team": {"gid": "team_1"}, "members": [{"gid": "u1", "name": "Ada"}]},
+            SYNC_TIME,
+        )
+        self.database.upsert_project(
+            self.connection,
+            {"gid": "proj_2", "name": "Bravo", "team": {"gid": "team_2"}, "members": [{"gid": "u2", "name": "Alan"}]},
+            SYNC_TIME,
+        )
+        self.connection.commit()
+
+        scoped = self._sheets(team_gid="team_1")
+        members = self._as_dicts(scoped["Project Members"])
+        self.assertEqual([row["user_gid"] for row in members], ["u1"])
+        summary = self._as_dicts(scoped["Member Summary"])
+        self.assertEqual([row["user_gid"] for row in summary], ["u1"])
+        self.assertEqual(summary[0]["project_names"], "Alpha")
+
+    def test_workbook_named_after_team(self) -> None:
+        self._team("team_1", "Payments / Billing")
+        self._project("proj_1", "Project One", "team_1", owner_gid="u1")
+        self.connection.commit()
+
+        output_path = export_field_section_review_report(
+            str(self.db_path),
+            self.workspace / "exports",
+            team_gid="team_1",
+            workspace_gid="ws_1",
+        )
+        # Team name drives the filename; unsafe chars are sanitized.
+        self.assertEqual(output_path.name, "Payments Billing Migration Review.xlsx")
+        self.assertTrue(output_path.exists())
+
+    def test_workbook_named_workspace_when_unscoped(self) -> None:
+        self._team("team_1", "Team One")
+        self._project("proj_1", "Project One", "team_1")
+        self.connection.commit()
+
+        output_path = export_field_section_review_report(
+            str(self.db_path),
+            self.workspace / "exports",
+            workspace_gid="ws_1",
+        )
+        self.assertEqual(output_path.name, "Workspace Migration Review.xlsx")
 
     def test_export_writes_workbook_with_overview(self) -> None:
         self._team("team_1", "Team One")
