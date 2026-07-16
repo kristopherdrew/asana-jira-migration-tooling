@@ -16,6 +16,10 @@ with the dependency-free :mod:`src.lib.xlsx_writer`:
 * **Overview** — generated-at, source DB, scope applied, and a Tab→Rows index.
 * **Projects** — one row per in-scope project (team, Atlassian-aware owner +
   effective team admin, task/section/custom-field rollups, archived flag).
+* **Project Members** — one row per (project, member) membership record with an
+  Atlassian-aware member column (from the ``project_members`` table).
+* **Member Summary** — one row per member: project count + a ``;``-joined list
+  of the projects they belong to.
 * **Sections** — one row per (project, section) with task and completed counts.
 * **Custom Fields** — one row per (project, field) with usage % and distinct
   values used.
@@ -29,13 +33,16 @@ with the dependency-free :mod:`src.lib.xlsx_writer`:
   across the scope: how many projects/teams use it and total tasks.
 
 Scope with ``--team-gid`` and/or ``--owner-gid`` to focus on one admin's set of
-projects; omit both for the whole workspace.
+projects; omit both for the whole workspace. The workbook is named after the
+scope — ``<Team> Migration Review.xlsx`` (or the owner name, else
+``Workspace Migration Review.xlsx``) unless ``--filename`` overrides it.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +58,11 @@ from src.lib.asana_urls import build_project_url, infer_workspace_gid
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.team_analysis import build_team_analysis
 from src.lib.xlsx_writer import write_workbook
+from scripts.export_project_members_report import (
+    _member_summary_sheet,
+    _membership_rows,
+    _project_members_sheet,
+)
 
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
@@ -125,6 +137,34 @@ def _scope_clause(
         params.append(owner_gid)
     fragment = ("" if not clauses else " AND " + " AND ".join(clauses))
     return fragment, params
+
+
+def _resolve_scope_name(
+    connection, team_gid: Optional[str], owner_gid: Optional[str]
+) -> str:
+    """Human name for the scope: the team name, else the owner name, else Workspace."""
+    if team_gid:
+        row = connection.execute(
+            "SELECT name FROM teams WHERE gid = ?", (team_gid,)
+        ).fetchone()
+        if row and row["name"]:
+            return row["name"]
+        return f"Team {team_gid}"
+    if owner_gid:
+        row = connection.execute(
+            "SELECT name FROM users WHERE gid = ?", (owner_gid,)
+        ).fetchone()
+        if row and row["name"]:
+            return row["name"]
+        return f"Owner {owner_gid}"
+    return "Workspace"
+
+
+def _safe_filename(name: str) -> str:
+    """Strip characters that are unsafe in a filename, collapsing whitespace."""
+    cleaned = re.sub(r'[\\/:*?"<>|]+', " ", name)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or "Migration Review"
 
 
 def _projects_sheet(
@@ -667,8 +707,11 @@ def build_review_sheets(
 ) -> List[Tuple[str, List[list]]]:
     """Build the data tabs (each a ``(title, rows)`` with a header row first)."""
     scope, params = _scope_clause(team_gid, owner_gid)
+    membership_rows = _membership_rows(connection, scope, params)
     return [
         _projects_sheet(connection, workspace_gid, scope, params),
+        _project_members_sheet(membership_rows, workspace_gid),
+        _member_summary_sheet(membership_rows),
         _sections_sheet(connection, workspace_gid, scope, params),
         _custom_fields_sheet(connection, workspace_gid, scope, params),
         _custom_field_values_sheet(connection, workspace_gid, scope, params),
@@ -679,6 +722,7 @@ def build_review_sheets(
 
 def _build_overview(
     data_sheets: List[Tuple[str, List[list]]],
+    report_title: str,
     database: str,
     team_gid: Optional[str],
     owner_gid: Optional[str],
@@ -693,7 +737,7 @@ def _build_overview(
         if part
     ) or "whole workspace"
     overview: List[list] = [
-        ["Field & Section migration review", None],
+        [report_title, None],
         ["Generated (UTC)", generated_at],
         ["Source database", database],
         ["Scope", scope_label],
@@ -717,18 +761,19 @@ def export_field_section_review_report(
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    output_path = output_dir / (filename or f"field_section_review_{timestamp}.xlsx")
-
     with database.connect() as connection:
         database.initialize(connection)
         resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
+        report_title = f"{_resolve_scope_name(connection, team_gid, owner_gid)} Migration Review"
         data_sheets = build_review_sheets(
             connection, resolved_workspace_gid, team_gid, owner_gid
         )
 
+    output_path = output_dir / (filename or f"{_safe_filename(report_title)}.xlsx")
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    overview = _build_overview(data_sheets, database_path, team_gid, owner_gid, generated_at)
+    overview = _build_overview(
+        data_sheets, report_title, database_path, team_gid, owner_gid, generated_at
+    )
     write_workbook(output_path, [overview] + data_sheets)
 
     total_rows = sum(max(len(rows) - 1, 0) for _, rows in data_sheets)
