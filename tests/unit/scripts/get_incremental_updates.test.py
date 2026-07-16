@@ -7,6 +7,7 @@ from unittest import TestCase
 from unittest.mock import Mock, patch
 
 from src.lib.database import Database
+from src.lib.http_client import AsanaHttpError
 from scripts.get_incremental_updates import (
     collect_workspace_summaries,
     ensure_memberships,
@@ -146,6 +147,38 @@ class GetIncrementalUpdatesMembershipTest(TestCase):
         self.assertEqual(client.calls[1][1]["projects.any"], "proj-alpha")
         self.assertEqual(client.calls[2][1]["projects.any"], "proj-beta")
 
+    def test_collect_workspace_summaries_skips_project_that_404s(self) -> None:
+        responses = {
+            None: [{"gid": "global_task"}],
+            "proj-alpha": [{"gid": "alpha_task"}],
+            "proj-beta": [{"gid": "beta_task"}],
+        }
+        client = _MappingClient(responses, error_on={"proj-alpha": 404})
+        projects = [
+            {"project_gid": "proj-alpha", "project_name": "Deleted Project"},
+            {"project_gid": "proj-beta"},
+        ]
+        summaries = collect_workspace_summaries(
+            client,
+            workspace_gid="ws",
+            modified_since="2025-11-01",
+            page_size=50,
+            projects=projects,
+        )
+        gids = sorted(summary["gid"] for summary in summaries)
+        self.assertEqual(gids, ["beta_task", "global_task"])
+
+    def test_collect_workspace_summaries_propagates_global_scan_error(self) -> None:
+        client = _MappingClient({}, error_on={None: 500})
+        with self.assertRaises(AsanaHttpError):
+            collect_workspace_summaries(
+                client,
+                workspace_gid="ws",
+                modified_since="2025-11-01",
+                page_size=50,
+                projects=[{"project_gid": "proj-alpha"}],
+            )
+
 
 class _RecordingClient:
     def __init__(self, responses):
@@ -161,13 +194,16 @@ class _RecordingClient:
 
 
 class _MappingClient:
-    def __init__(self, responses):
+    def __init__(self, responses, error_on=None):
         self.responses = responses
+        self.error_on = error_on or {}
         self.calls = []
 
     def get_paginated(self, endpoint, params=None):
         params = dict(params or {})
         self.calls.append((endpoint, params))
         key = params.get("projects.any")
+        if key in self.error_on:
+            raise AsanaHttpError(self.error_on[key], "Not Found")
         for item in self.responses.get(key, []):
             yield item
