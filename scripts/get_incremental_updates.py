@@ -682,14 +682,24 @@ def collect_workspace_summaries(
 ) -> List[Dict]:
     summary_map: Dict[str, Dict] = {}
 
-    def ingest(label: str, iterable: Iterable[Dict]) -> None:
+    def ingest(label: str, iterable: Iterable[Dict], skip_errors: bool = False) -> None:
         start_count = len(summary_map)
         logger.info("[All Teams] %s...", label)
-        for item in iterable:
-            gid = item.get("gid")
-            if not gid or gid in summary_map:
-                continue
-            summary_map[gid] = item
+        try:
+            for item in iterable:
+                gid = item.get("gid")
+                if not gid or gid in summary_map:
+                    continue
+                summary_map[gid] = item
+        except AsanaHttpError as exc:
+            if not skip_errors:
+                raise
+            logger.warning(
+                "[All Teams] %s → skipped (Asana API error %s; project likely deleted or inaccessible).",
+                label,
+                exc.status,
+            )
+            return
         added = len(summary_map) - start_count
         logger.info("[All Teams] %s → %s task(s) queued (total: %s).", label, added, len(summary_map))
 
@@ -722,7 +732,7 @@ def collect_workspace_summaries(
         for future in as_completed(futures):
             label, iterable = future.result()
             if label:
-                ingest(label, iterable)
+                ingest(label, iterable, skip_errors=True)
 
     return list(summary_map.values())
 
