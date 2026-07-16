@@ -26,6 +26,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.adf import text_to_adf
+from src.lib.atlassian_status import is_active_atlassian_status
 from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.jira_client import JiraApiError, JiraClient
@@ -200,7 +201,7 @@ def resolve_issue_type_id(issue_types: List[Dict[str, object]], name: str) -> st
 
 
 def _is_active_status(status: Optional[str]) -> bool:
-    return (status or "").strip().casefold() == "active"
+    return is_active_atlassian_status(status)
 
 
 def _is_rich_text_schema(schema: Dict[str, object]) -> bool:
