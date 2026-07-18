@@ -466,6 +466,8 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         # Tasks only carry their own actual task count; Project Count stays blank.
         self.assertEqual(alpha_task["Project Count (Asana)"], "")
         self.assertEqual(alpha_task["Task Count (Asana)"], "2")
+        # Last Working Day = the most recent task modified_at (2025-03-06), YYYY-MM-DD.
+        self.assertEqual(alpha_task["Last Working Day"], "2025-03-06")
         # The three section headers introduce the bulleted detail groups.
         self.assertIn("Primary Details", alpha_task["Description"])
         self.assertIn("Secondary Details", alpha_task["Description"])

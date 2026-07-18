@@ -36,6 +36,22 @@ Optional flags:
 - `--workspace-gid <gid>` to force the workspace used when building user URLs.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
+### Project Last-Updated Report
+Exports one row per project summarizing how recently its tasks were touched, so you can spot stale vs. active projects at a glance. Each row carries `project_gid`, `project_name`, `task_count` (number of tasks in the project, via the `task_projects` junction), `latest_task_update` (the most recent task `modified_at` in the project, formatted `YYYY-MM-DD`), and `latest_updated_task_gid`/`latest_updated_task_name` naming the single most recently modified task. Projects with no synced tasks appear with `task_count` `0` and blank date/task columns. Rows are sorted by `latest_task_update` descending (most recently active project first). The date columns stay blank until the task sync has populated `tasks` and `task_projects`.
+```bash
+python3 -m scripts.export_project_last_updated_report --database data/asana.sqlite
+```
+Required flags:
+- (none; uses `data/asana.sqlite` by default).
+
+Optional flags:
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated `project_last_updated_<timestamp>.csv` filename.
+- `--team-gid <gid>` to limit the report to one team’s projects.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
+
 ### Project Details Report
 Exports one row per project from SQLite with the project metadata, a direct Asana project URL, the team URL, the project owner as `owner_name`/`owner_email`/`owner_atlassian_status` (resolved from the `users` and `user_atlassian_accounts` tables; the Asana GID is no longer emitted), a per-project effective owner as `effective_owner_source`/`effective_owner_name`/`effective_owner_email`/`effective_owner_atlassian_status` (the project owner when their Atlassian account is active, otherwise the top active task creator; `effective_owner_source` is `project_owner`, `task_creator`, or blank), the current snapshot counts stored on `projects` (`num_tasks`, `num_incomplete_tasks`, `num_completed_tasks`), and task activity dates derived from synced task rows (`last_task_created_at`, `last_task_resolved_at`, `last_task_updated_at`). A separate `actual_task_count` column (with `actual_task_data_present` set to `true` when live task data exists) sits immediately before `num_tasks` for easy comparison. The export also surfaces the active Atlassian user who created the most tasks in each project as `top_task_creator_name`/`top_task_creator_email`/`top_task_creator_atlassian_status`/`top_task_creator_task_count` (inactive Atlassian creators are excluded, so these stay blank when no active creator exists). A `jira_migration_decision` column carries the "Asana Migration Decision" value pulled back from each project's Jira issue (populated by `scripts.atlassian.get_jira_migration_decisions`; blank until that pull runs), and `task_counts_captured_at` is emitted as the final column. The task activity and top-creator columns remain blank until the task sync has populated `tasks`.
 ```bash

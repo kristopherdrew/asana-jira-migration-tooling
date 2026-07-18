@@ -110,6 +110,8 @@ class LoadFieldMapTest(TestCase):
             field_map = load_field_map(str(path))
         self.assertEqual(field_map["Team URL"], "Asana Team URL")
         self.assertEqual(field_map["Project URL"], "Project (Asana)")  # default preserved
+        # The last-updated date folds into creation via the "Last working day" field.
+        self.assertEqual(field_map["Last Working Day"], "customfield_11475")
 
 
 class FieldRefResolutionTest(TestCase):
@@ -130,12 +132,28 @@ class FieldRefResolutionTest(TestCase):
         )
         self.assertEqual(payload["fields"]["customfield_10001"], "https://t/")
 
+    def test_build_issue_payload_sets_last_working_day_date(self) -> None:
+        # A date custom field takes the YYYY-MM-DD string as-is (folds the
+        # per-project last-updated date into task creation).
+        date_fields = dict(
+            TASK_FIELDS,
+            **{"Last working day": {"fieldId": "customfield_11475", "schema": {"type": "date"}}},
+        )
+        payload = build_issue_payload(
+            {"Summary": "P", "Last Working Day": "2026-07-10", "Owner Source": ""},
+            project_key="MIG",
+            issue_type_id="10001",
+            field_defs=date_fields,
+            custom_field_map={"Last Working Day": "customfield_11475"},
+        )
+        self.assertEqual(payload["fields"]["customfield_11475"], "2026-07-10")
+
 
 class InteractiveFieldMapTest(TestCase):
     def test_prompt_keeps_default_on_blank_and_takes_id(self) -> None:
         # Columns iterate in DEFAULT_FIELD_MAP order: Team URL, Project URL,
-        # Instructions, Project Status, Project Count, Task Count.
-        answers = iter(["customfield_10002", "", "", "", "", ""])
+        # Instructions, Project Status, Project Count, Task Count, Last Working Day.
+        answers = iter(["customfield_10002", "", "", "", "", "", ""])
         result = prompt_field_map(
             load_field_map(None),
             {"Epic": EPIC_FIELDS, "Task": TASK_FIELDS},
