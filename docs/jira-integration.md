@@ -329,3 +329,23 @@ Outputs `exports/confluence_publish_report.csv` (columns `source_file`, `title`,
 Requirements:
 - `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials (same as the Jira scripts) — required only for a real publish, not for `--dry-run`.
 - The shared Confluence REST client lives in `src/lib/confluence_client.py` (mirrors `src/lib/jira_client.py`: stdlib-only, Basic auth, 429/5xx retries with jittered backoff, honors `skip_ssl_verification`).
+
+### Unassigned Jira Assignee Report (.xlsx)
+A one-time, **read-only** diagnostic. Queries the live Jira instance for the migrated issues (the Team→Epic / Project→Task hierarchy created via `create_team_project_jira_issues`) that are **currently unassigned**, then shows which of them would now receive an assignee under the revised owner logic (owner → top active task creator → **active project member**), and who. "Currently unassigned" is taken from Jira itself — the authoritative state, since the create-time assignee `400` drop and any manual edits mean the local DB can't be trusted for it — while the *proposed* assignee is recomputed locally from `build_team_project_rows` (no writes to Jira, Asana, or the database).
+
+```bash
+python3 -m scripts.report_unassigned_jira_assignees --prod
+```
+
+It reads `team_project_jira_mappings` to learn which Jira issues we created (and their Asana project/team), derives the Jira project key(s) from those issue keys, and runs a single JQL query (`project IN (…) AND assignee IS EMPTY AND issuetype IN ("Task","Epic")`, paged via `nextPageToken`). Each unassigned issue is joined back to its Asana source and its revised effective owner. Unassigned issues that are **not** in our mappings (e.g. manually-created ones) are skipped and counted.
+
+The workbook (`exports/unassigned_jira_assignees_<timestamp>.xlsx`) has three tabs:
+- **Overview** — generation time, source DB, Jira base URL, the JQL scope, and headline counts (unassigned+mapped, would-get-assignee, still-unassigned, unmapped-skipped).
+- **Unassigned Issues** — one row per currently-unassigned mapped issue: `jira_key`, `issue_type`, `summary`, `asana_kind`/`asana_gid`/`asana_name`, `would_get_assignee`, and the revised `revised_owner_source`/`name`/`email`/`atlassian_id`/`atlassian_status`. Recovered rows (would get an assignee) sort first.
+- **Summary** — counts by `issue_type` × `revised_owner_source` (project_owner / task_creator / project_member / none), making the `project_member` recovery bucket explicit.
+
+Optional flags:
+- `--prod` to target production Jira (`JIRA_BASE_URL`); omit for sandbox (`JIRA_SANDBOX_BASE_URL`).
+- `--database <path>` (defaults to the active profile's DB), `--output-dir <dir>` (default `exports/`), `--filename <name>`, `--log-level <LEVEL>`.
+
+Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials (same as the other Jira scripts).
