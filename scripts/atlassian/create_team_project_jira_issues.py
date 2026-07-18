@@ -61,6 +61,11 @@ DEFAULT_FIELD_MAP: Dict[str, str] = {
     "Project Status": "Asana Current Project Status",
     "Project Count (Asana)": "Project Count (Asana)",
     "Task Count (Asana)": "Task Count (Asana)",
+    # Each project's most recent task-update date (YYYY-MM-DD) is set at creation
+    # on the "Last working day" date field. The standalone
+    # set_project_last_updated_jira_field.py updates this same field on existing
+    # issues (default id customfield_11475).
+    "Last Working Day": "customfield_11475",
 }
 
 REPORT_FIELDNAMES = ["kind", "asana_gid", "summary", "jira_key", "status", "message"]

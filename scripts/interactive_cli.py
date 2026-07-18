@@ -44,6 +44,7 @@ from scripts import (  # noqa: E402
     export_portfolio_report,
     export_field_section_review_report,
     export_project_members_report,
+    export_project_last_updated_report,
     export_all_reports_xlsx,
 )
 from scripts.atlassian import (  # noqa: E402
@@ -58,6 +59,7 @@ from scripts.atlassian import (  # noqa: E402
     sync_jira_attachments,
     update_atlassian_user_map,
     import_jira_project_map,
+    set_project_last_updated_jira_field,
 )
 from src.lib.config import (  # noqa: E402
     Credentials,
@@ -1332,6 +1334,16 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
                 args.extend(["--owner-gid", owner_gid])
         run_script(export_field_section_review_report.main, args)
 
+    def run_project_last_updated_report() -> None:
+        args = args_report_defaults(log_level)
+        team_gid = _prompt_team_gid_from_lookup(
+            "project last updated",
+            "Team GID to scope the report (blank = all teams)",
+        )
+        if team_gid:
+            args.extend(["--team-gid", team_gid])
+        run_script(export_project_last_updated_report.main, args)
+
     return {
         "1": MenuItem(
             "1",
@@ -1377,6 +1389,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "9",
             "Export project members report (.xlsx)",
             run_project_members_report,
+        ),
+        "a": MenuItem(
+            "a",
+            "Export project last-updated report",
+            run_project_last_updated_report,
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
@@ -1489,6 +1506,20 @@ def args_create_team_project_jira_issues(log_level: str) -> List[str]:
     if confirm("Include projects with 0 tasks?", default=False):
         args.append("--include-empty-projects")
     if confirm("Dry run (resolve fields and print payloads, create nothing)?", default=True):
+        args.append("--dry-run")
+    return args
+
+
+def args_set_project_last_updated_jira_field(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    append_jira_env_flag(args)
+    team_gid = _prompt_team_gid_from_lookup(
+        "project last-updated Jira field",
+        "Team GID to scope the update (blank = all teams)",
+    )
+    if team_gid:
+        args.extend(["--team-gid", team_gid])
+    if confirm("Dry run (print payloads, update nothing)?", default=True):
         args.append("--dry-run")
     return args
 
@@ -1607,6 +1638,11 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
             "11",
             "Pull 'Asana Migration Decision' from Jira (project-level)",
             lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level)),
+        ),
+        "12": MenuItem(
+            "12",
+            "Set project 'Last working day' field on Jira issues",
+            lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level)),
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }

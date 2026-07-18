@@ -774,6 +774,10 @@ def build_team_project_rows(
                 "Project Status": "Archived" if bool(row["archived"]) else "Active",
                 "Project Count (Asana)": "",
                 "Task Count (Asana)": str(int(row["actual_task_count"] or 0)),
+                # The project's most recent task update (MAX task modified_at),
+                # formatted YYYY-MM-DD for the Jira "Last working day" date field.
+                # Kept in sync with scripts.atlassian.set_project_last_updated_jira_field.
+                "Last Working Day": format_report_date(row["last_task_updated_at"]),
                 "Labels": _label_for_last_active(row["last_task_updated_at"]),
                 "Instructions": instructions,
                 "Description": render_blocks_text(description_blocks),
@@ -812,6 +816,7 @@ CSV_COLUMNS = [
     ("Labels", "Owner Source"),
     ("Labels", "Labels"),
     ("Labels", "Project Type"),
+    ("Last Working Day", "Last Working Day"),
     ("Instructions", "Instructions"),
     ("Description", "Description"),
 ]
