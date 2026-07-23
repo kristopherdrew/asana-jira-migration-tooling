@@ -819,3 +819,29 @@ class ProfileSessionTest(TestCase):
             self.assertEqual(
                 (project_root / ".asana_jira_active").read_text(encoding="utf-8").strip(), "acme"
             )
+
+
+class MenuSortingTest(TestCase):
+    def test_menu_sort_key_orders_digits_letters_back_quit(self) -> None:
+        keys = ["b", "9", "a", "1", "q", "2"]
+        self.assertEqual(
+            sorted(keys, key=interactive_cli._menu_sort_key),
+            ["1", "2", "9", "a", "b", "q"],
+        )
+
+    def test_print_menu_renders_mixed_digit_and_letter_menu(self) -> None:
+        menu = {
+            "1": interactive_cli.MenuItem("1", "One", lambda: None),
+            "9": interactive_cli.MenuItem("9", "Nine", lambda: None),
+            "a": interactive_cli.MenuItem("a", "Letter A", lambda: None),
+            "b": interactive_cli.MenuItem("b", "Back", lambda: None),
+            "q": interactive_cli.MenuItem("q", "Quit", lambda: None),
+        }
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            interactive_cli.print_menu("Reports", menu)
+        lines = [line for line in buffer.getvalue().splitlines() if line.startswith("[")]
+        self.assertEqual(
+            lines,
+            ["[1] One", "[9] Nine", "[a] Letter A", "[b] Back", "[q] Quit"],
+        )

@@ -1648,9 +1648,24 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
     }
 
 
+def _menu_sort_key(k: str) -> tuple:
+    """Order menu keys: numeric first (numerically), then other letters, then Back, then Quit.
+
+    Every tuple element is compared only against the same type, so a mixed digit/letter
+    menu (e.g. keys "1".."9", "a", "b", "q") never triggers a str-vs-int comparison.
+    """
+    if k == "q":
+        return (3, 0, "")
+    if k == "b":
+        return (2, 0, "")
+    if k.isdigit():
+        return (0, int(k), "")
+    return (1, 0, k)
+
+
 def print_menu(title: str, menu: Dict[str, MenuItem]) -> None:
     print(f"\n=== {title} ===")
-    for key in sorted(menu, key=lambda k: (k == "q", float("inf") if k == "q" else float("inf") if k == "b" else int(k) if k.isdigit() else k)):
+    for key in sorted(menu, key=_menu_sort_key):
         item = menu[key]
         print(f"[{item.key}] {item.label}")
 
