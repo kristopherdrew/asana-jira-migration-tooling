@@ -15,7 +15,8 @@ with the dependency-free :mod:`src.lib.xlsx_writer`:
 
 * **Overview** — generated-at, source DB, scope applied, and a Tab→Rows index.
 * **Projects** — one row per in-scope project (team, Atlassian-aware owner +
-  effective team admin, task/section/custom-field rollups, archived flag).
+  effective team admin, task/section/custom-field rollups, archived flag, and
+  the project's migrated Jira Task key).
 * **Project Members** — one row per (project, member) membership record with an
   Atlassian-aware member column (from the ``project_members`` table).
 * **Member Summary** — one row per member: project count + a ``;``-joined list
@@ -33,8 +34,10 @@ with the dependency-free :mod:`src.lib.xlsx_writer`:
   across the scope: how many projects/teams use it and total tasks.
 
 Scope with ``--team-gid`` and/or ``--owner-gid`` to focus on one admin's set of
-projects; omit both for the whole workspace. The workbook is named after the
-scope — ``<Team> Migration Review.xlsx`` (or the owner name, else
+projects, or ``--jira-keys`` to pick out just the projects behind a list of
+migrated Jira Task keys; omit all for the whole workspace. The workbook is named
+after the scope — ``<Team> Migration Review.xlsx`` (or the owner name, else
+``Selected Projects Migration Review.xlsx`` for a Jira-key scope, else
 ``Workspace Migration Review.xlsx``) unless ``--filename`` overrides it.
 """
 
@@ -106,6 +109,16 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Optional project-owner user GID to limit the report to one owner's projects.",
     )
     parser.add_argument(
+        "--jira-keys",
+        action="append",
+        default=None,
+        help=(
+            "Optional list of migrated Jira Task keys (comma/space separated, or "
+            "repeat the flag) to limit the report to just the projects those keys "
+            "map to."
+        ),
+    )
+    parser.add_argument(
         "--workspace-gid",
         help="Optional Asana workspace GID used to build project URLs.",
     )
@@ -123,8 +136,54 @@ def _bool_to_text(value: Optional[int]) -> str:
     return "true" if bool(value) else "false"
 
 
+def _normalize_jira_keys(raw: Optional[Iterable[str]]) -> List[str]:
+    """Flatten comma/space-separated, possibly-repeated key inputs into a list.
+
+    Keys are stripped, uppercased (Jira keys are always uppercase), de-duplicated
+    while preserving order, and blanks dropped.
+    """
+    if not raw:
+        return []
+    keys: List[str] = []
+    seen = set()
+    for chunk in raw:
+        for token in re.split(r"[,\s]+", chunk or ""):
+            key = token.strip().upper()
+            if key and key not in seen:
+                seen.add(key)
+                keys.append(key)
+    return keys
+
+
+def _resolve_project_gids_from_jira_keys(
+    connection, keys: List[str]
+) -> Tuple[List[str], List[str]]:
+    """Map migrated Jira Task keys to project GIDs via team_project_jira_mappings.
+
+    Returns ``(matched_project_gids, unmatched_keys)``. Matching is
+    case-insensitive; keys with no ``kind='project'`` mapping are reported back.
+    """
+    if not keys:
+        return [], []
+    placeholders = ", ".join("?" for _ in keys)
+    query = (
+        "SELECT asana_gid AS project_gid, UPPER(jira_key) AS jira_key "
+        "FROM team_project_jira_mappings "
+        f"WHERE kind = 'project' AND UPPER(jira_key) IN ({placeholders})"
+    )
+    found: Dict[str, str] = {}
+    for row in connection.execute(query, keys).fetchall():
+        found[row["jira_key"]] = row["project_gid"]
+    matched = [found[key] for key in keys if key in found]
+    unmatched = [key for key in keys if key not in found]
+    return matched, unmatched
+
+
 def _scope_clause(
-    team_gid: Optional[str], owner_gid: Optional[str], alias: str = "p"
+    team_gid: Optional[str],
+    owner_gid: Optional[str],
+    project_gids: Optional[List[str]] = None,
+    alias: str = "p",
 ) -> Tuple[str, List[str]]:
     """Return a `` AND ...`` SQL fragment + params to scope on projects ``alias``."""
     clauses: List[str] = []
@@ -135,14 +194,27 @@ def _scope_clause(
     if owner_gid:
         clauses.append(f"{alias}.owner_gid = ?")
         params.append(owner_gid)
+    if project_gids is not None:
+        # An explicit (possibly empty) list scopes to exactly those projects; an
+        # empty list means "no project matched" and must match nothing rather
+        # than falling through to the whole workspace.
+        if project_gids:
+            placeholders = ", ".join("?" for _ in project_gids)
+            clauses.append(f"{alias}.gid IN ({placeholders})")
+            params.extend(project_gids)
+        else:
+            clauses.append("1 = 0")
     fragment = ("" if not clauses else " AND " + " AND ".join(clauses))
     return fragment, params
 
 
 def _resolve_scope_name(
-    connection, team_gid: Optional[str], owner_gid: Optional[str]
+    connection,
+    team_gid: Optional[str],
+    owner_gid: Optional[str],
+    jira_keys: Optional[List[str]] = None,
 ) -> str:
-    """Human name for the scope: the team name, else the owner name, else Workspace."""
+    """Human name for the scope: team, else owner, else selected projects, else Workspace."""
     if team_gid:
         row = connection.execute(
             "SELECT name FROM teams WHERE gid = ?", (team_gid,)
@@ -157,6 +229,8 @@ def _resolve_scope_name(
         if row and row["name"]:
             return row["name"]
         return f"Owner {owner_gid}"
+    if jira_keys:
+        return "Selected Projects"
     return "Workspace"
 
 
@@ -206,6 +280,7 @@ def _projects_sheet(
             uo.email AS owner_email,
             uoa.atlassian_status AS owner_atlassian_status,
             pjd.decision AS jira_migration_decision,
+            tpm.jira_key AS jira_key,
             COALESCE(tc.task_count, 0) AS task_count,
             COALESCE(sc.section_count, 0) AS section_count,
             COALESCE(fc.field_count, 0) AS field_count
@@ -214,6 +289,8 @@ def _projects_sheet(
         LEFT JOIN users uo ON uo.gid = p.owner_gid
         LEFT JOIN user_atlassian_accounts uoa ON uoa.user_gid = p.owner_gid
         LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid
+        LEFT JOIN team_project_jira_mappings tpm
+            ON tpm.asana_gid = p.gid AND tpm.kind = 'project'
         LEFT JOIN section_counts sc ON sc.project_gid = p.gid
         LEFT JOIN task_counts tc ON tc.project_gid = p.gid
         LEFT JOIN field_counts fc ON fc.project_gid = p.gid
@@ -225,6 +302,7 @@ def _projects_sheet(
         "project_name",
         "project_url",
         "jira_migration_decision",
+        "jira_key",
         "archived",
         "owner_name",
         "owner_email",
@@ -247,6 +325,7 @@ def _projects_sheet(
                 row["project_name"] or "",
                 build_project_url(workspace_gid, row["project_gid"]),
                 row["jira_migration_decision"] or "",
+                row["jira_key"] or "",
                 _bool_to_text(row["archived"]),
                 row["owner_name"] or "",
                 row["owner_email"] or "",
@@ -704,9 +783,10 @@ def build_review_sheets(
     workspace_gid: Optional[str] = None,
     team_gid: Optional[str] = None,
     owner_gid: Optional[str] = None,
+    project_gids: Optional[List[str]] = None,
 ) -> List[Tuple[str, List[list]]]:
     """Build the data tabs (each a ``(title, rows)`` with a header row first)."""
-    scope, params = _scope_clause(team_gid, owner_gid)
+    scope, params = _scope_clause(team_gid, owner_gid, project_gids)
     membership_rows = _membership_rows(connection, scope, params)
     return [
         _projects_sheet(connection, workspace_gid, scope, params),
@@ -727,12 +807,14 @@ def _build_overview(
     team_gid: Optional[str],
     owner_gid: Optional[str],
     generated_at: str,
+    jira_keys: Optional[List[str]] = None,
 ) -> Tuple[str, List[list]]:
     scope_label = ", ".join(
         part
         for part in (
             f"team_gid={team_gid}" if team_gid else "",
             f"owner_gid={owner_gid}" if owner_gid else "",
+            f"jira_keys={len(jira_keys)}" if jira_keys else "",
         )
         if part
     ) or "whole workspace"
@@ -755,24 +837,52 @@ def export_field_section_review_report(
     filename: Optional[str] = None,
     team_gid: Optional[str] = None,
     owner_gid: Optional[str] = None,
+    jira_keys: Optional[List[str]] = None,
     workspace_gid: Optional[str] = None,
 ) -> Path:
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    jira_keys = _normalize_jira_keys(jira_keys)
+
     with database.connect() as connection:
         database.initialize(connection)
         resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
-        report_title = f"{_resolve_scope_name(connection, team_gid, owner_gid)} Migration Review"
+        project_gids: Optional[List[str]] = None
+        if jira_keys:
+            project_gids, unmatched = _resolve_project_gids_from_jira_keys(
+                connection, jira_keys
+            )
+            if unmatched:
+                logger.warning(
+                    "No project-level Jira mapping for %s key(s): %s",
+                    len(unmatched),
+                    ", ".join(unmatched),
+                )
+            if not project_gids:
+                logger.warning(
+                    "None of the supplied Jira keys mapped to a project; "
+                    "the report will be empty."
+                )
+        report_title = (
+            f"{_resolve_scope_name(connection, team_gid, owner_gid, jira_keys)}"
+            " Migration Review"
+        )
         data_sheets = build_review_sheets(
-            connection, resolved_workspace_gid, team_gid, owner_gid
+            connection, resolved_workspace_gid, team_gid, owner_gid, project_gids
         )
 
     output_path = output_dir / (filename or f"{_safe_filename(report_title)}.xlsx")
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     overview = _build_overview(
-        data_sheets, report_title, database_path, team_gid, owner_gid, generated_at
+        data_sheets,
+        report_title,
+        database_path,
+        team_gid,
+        owner_gid,
+        generated_at,
+        jira_keys,
     )
     write_workbook(output_path, [overview] + data_sheets)
 
@@ -800,6 +910,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         filename=args.filename,
         team_gid=args.team_gid,
         owner_gid=args.owner_gid,
+        jira_keys=args.jira_keys,
         workspace_gid=args.workspace_gid or load_credentials(DEFAULT_CONFIG_ROOT).workspace_gid,
     )
     logger.info("Field & section review report completed: %s", output_path)

@@ -122,9 +122,9 @@ Optional flags:
 ### Field & Section Migration Review Report (.xlsx)
 A standalone multi-tab `.xlsx` built for the migration-scoping conversations with Team Admins and Project Owners. It lays out, per project, how each project actually uses **Sections** and **Custom Fields** — down to individual enum options and task counts — plus two cross-project "catalog" tabs that surface differently-named-but-same-purpose fields and sections side-by-side, so the team can decide a sensible Jira status/field model. "Status" is intentionally not a separate dimension: in Asana it is an outcome of how Sections and (enum) Custom Fields are used, which this report exposes.
 
-Scope it to one admin's set of projects with `--team-gid` and/or `--owner-gid` (the owner is the project `owner_gid`); omit both for the whole workspace. The workbook is named after the scope — `<Team> Migration Review.xlsx` (or the owner name when owner-scoped, else `Workspace Migration Review.xlsx`) unless `--filename` overrides it. The tabs are:
+Scope it to one admin's set of projects with `--team-gid` and/or `--owner-gid` (the owner is the project `owner_gid`), or to just the projects behind a set of migrated Jira Task keys with `--jira-keys`; omit all for the whole workspace. The workbook is named after the scope — `<Team> Migration Review.xlsx` (or the owner name when owner-scoped, `Selected Projects Migration Review.xlsx` when Jira-key-scoped, else `Workspace Migration Review.xlsx`) unless `--filename` overrides it. The tabs are:
 - **Overview** — generation time, source DB, the scope applied, and a Tab→Rows index. Its title cell is the scope name + `Migration Review`.
-- **Projects** — one row per in-scope project: team, `project_url`, the recorded `jira_migration_decision` (from `project_jira_decisions`; blank until `get_jira_migration_decisions` is run), `archived`, Atlassian-aware project owner (`owner_name`/`owner_email`/`owner_atlassian_status`) and the effective **Team Admin** (resolved via `src/lib/team_analysis.py`: `team_admin`/`team_admin_email`/`team_admin_atlassian_status`/`team_admin_source`), and `task_count`/`section_count`/`custom_field_count` rollups.
+- **Projects** — one row per in-scope project: team, `project_url`, the recorded `jira_migration_decision` (from `project_jira_decisions`; blank until `get_jira_migration_decisions` is run), the project's migrated `jira_key` (the Project→Task issue from `team_project_jira_mappings` where `kind='project'`; blank until the project is created in Jira), `archived`, Atlassian-aware project owner (`owner_name`/`owner_email`/`owner_atlassian_status`) and the effective **Team Admin** (resolved via `src/lib/team_analysis.py`: `team_admin`/`team_admin_email`/`team_admin_atlassian_status`/`team_admin_source`), and `task_count`/`section_count`/`custom_field_count` rollups.
 - **Project Members** — one row per (project, member) membership record (from the `project_members` table): `team_name`, `project_name`, `project_url`, `archived`, an Atlassian-aware member column (`member_name`/`member_email`/`member_atlassian_status`), and `project_gid`/`user_gid`. Shares its builder with the standalone Project Members report.
 - **Member Summary** — one row per member: `member_name`/`member_email`/`member_atlassian_status`, the `project_count` of in-scope projects they belong to, and a `;`-joined `project_names` list (sorted).
 - **Sections** — one row per (project, section): `section_name`, `task_count`, and `completed_task_count` (sections often *are* the de-facto workflow → candidate Jira statuses/board columns).
@@ -143,12 +143,13 @@ Required flags:
 Optional flags:
 - `--team-gid <gid>` to scope the report to one team's projects.
 - `--owner-gid <gid>` to scope the report to one project owner's projects.
+- `--jira-keys <keys>` to scope the report to the projects behind a list of migrated Jira Task keys (comma/space separated, or repeat the flag; case-insensitive). Keys are resolved to projects via `team_project_jira_mappings` (`kind='project'`); keys with no mapping are logged as a warning and, if none resolve, the report is empty.
 - `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
 - `--filename <name>` to override the scope-derived `<Team> Migration Review.xlsx` filename.
 - `--workspace-gid <gid>` to force the workspace used when building project URLs.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
-In the interactive Reports menu, this export first asks whether the review should be team-centric, owner-centric, or whole-workspace, then searches team or project-owner names from the local SQLite snapshot (falling back to a raw GID prompt) for the chosen scope only.
+In the interactive Reports menu, this export first asks whether the review should be team-centric, owner-centric, whole-workspace, or by Jira key(s); the team/owner scopes search names from the local SQLite snapshot (falling back to a raw GID prompt), and the Jira-key scope prompts for a comma/space-separated list of keys.
 
 ### Project Members Report (.xlsx)
 A standalone multi-tab `.xlsx` listing project membership captured from Asana — the `members` array on each project, synced into the `project_members` table by `get_projects`. Scope it to one team's projects with `--team-gid`; omit it for the whole workspace. The tabs are:

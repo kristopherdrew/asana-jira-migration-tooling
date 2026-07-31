@@ -7,6 +7,8 @@ from unittest import TestCase
 
 from src.lib.database import Database
 from scripts.export_field_section_review_report import (
+    _normalize_jira_keys,
+    _resolve_project_gids_from_jira_keys,
     build_review_sheets,
     export_field_section_review_report,
 )
@@ -77,11 +79,22 @@ class ExportFieldSectionReviewReportTest(TestCase):
 
     # ---- sheet access helpers --------------------------------------------
 
-    def _sheets(self, team_gid=None, owner_gid=None):
+    def _jira_mapping(self, project_gid: str, jira_key: str) -> None:
+        self.database.upsert_team_project_jira_mappings(
+            self.connection,
+            [{"asana_gid": project_gid, "kind": "project", "jira_key": jira_key}],
+            SYNC_TIME,
+        )
+
+    def _sheets(self, team_gid=None, owner_gid=None, project_gids=None):
         return {
             title: rows
             for title, rows in build_review_sheets(
-                self.connection, workspace_gid="ws_1", team_gid=team_gid, owner_gid=owner_gid
+                self.connection,
+                workspace_gid="ws_1",
+                team_gid=team_gid,
+                owner_gid=owner_gid,
+                project_gids=project_gids,
             )
         }
 
@@ -240,6 +253,74 @@ class ExportFieldSectionReviewReportTest(TestCase):
 
         owner_scoped = self._as_dicts(self._sheets(owner_gid="u2")["Projects"])
         self.assertEqual([row["project_gid"] for row in owner_scoped], ["proj_2"])
+
+    def test_projects_tab_includes_jira_key(self) -> None:
+        self._team("team_1", "Team One")
+        self._project("proj_1", "Project One", "team_1", owner_gid="u1")
+        self._project("proj_2", "Project Two", "team_1", owner_gid="u1")
+        self._jira_mapping("proj_1", "ATJM-1")
+        self.connection.commit()
+
+        projects = {row["project_gid"]: row for row in self._as_dicts(self._sheets()["Projects"])}
+        self.assertIn("jira_key", projects["proj_1"])
+        self.assertEqual(projects["proj_1"]["jira_key"], "ATJM-1")
+        self.assertEqual(projects["proj_2"]["jira_key"], "")  # no mapping recorded
+
+    def test_normalize_jira_keys(self) -> None:
+        # Splits on commas/whitespace, uppercases, de-dupes preserving order.
+        self.assertEqual(
+            _normalize_jira_keys(["atjm-1, ATJM-2  atjm-1", "atjm-3"]),
+            ["ATJM-1", "ATJM-2", "ATJM-3"],
+        )
+        self.assertEqual(_normalize_jira_keys(None), [])
+        self.assertEqual(_normalize_jira_keys([""]), [])
+
+    def test_resolve_project_gids_from_jira_keys(self) -> None:
+        self._team("team_1", "Team One")
+        self._project("proj_1", "Project One", "team_1")
+        self._project("proj_2", "Project Two", "team_1")
+        self._jira_mapping("proj_1", "ATJM-1")
+        self._jira_mapping("proj_2", "ATJM-2")
+        self.connection.commit()
+
+        # Case-insensitive match; unmatched keys reported separately; order kept.
+        matched, unmatched = _resolve_project_gids_from_jira_keys(
+            self.connection, ["ATJM-2", "ATJM-1", "ATJM-99"]
+        )
+        self.assertEqual(matched, ["proj_2", "proj_1"])
+        self.assertEqual(unmatched, ["ATJM-99"])
+
+    def test_jira_key_scope_filters_projects(self) -> None:
+        self._team("team_1", "Team One")
+        self._project("proj_1", "Project One", "team_1", owner_gid="u1")
+        self._project("proj_2", "Project Two", "team_1", owner_gid="u1")
+        self._jira_mapping("proj_1", "ATJM-1")
+        self._jira_mapping("proj_2", "ATJM-2")
+        self._task("task_1", "proj_1", section=("s1", "Doing"))
+        self._task("task_2", "proj_2", section=("s2", "Doing"))
+        self.connection.commit()
+
+        scoped = self._as_dicts(self._sheets(project_gids=["proj_1"])["Projects"])
+        self.assertEqual([row["project_gid"] for row in scoped], ["proj_1"])
+
+        # An empty match list (no key resolved) must yield nothing, not everything.
+        empty = self._as_dicts(self._sheets(project_gids=[])["Projects"])
+        self.assertEqual(empty, [])
+
+    def test_export_with_jira_keys_names_selected_projects(self) -> None:
+        self._team("team_1", "Team One")
+        self._project("proj_1", "Project One", "team_1", owner_gid="u1")
+        self._jira_mapping("proj_1", "ATJM-1")
+        self.connection.commit()
+
+        output_path = export_field_section_review_report(
+            str(self.db_path),
+            self.workspace / "exports",
+            jira_keys=["atjm-1"],
+            workspace_gid="ws_1",
+        )
+        self.assertEqual(output_path.name, "Selected Projects Migration Review.xlsx")
+        self.assertTrue(output_path.exists())
 
     def test_empty_database_yields_header_only_sheets(self) -> None:
         sheets = self._sheets()
