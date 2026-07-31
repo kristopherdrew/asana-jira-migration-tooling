@@ -849,9 +849,8 @@ def run_task_sync_flow(log_level: str) -> None:
     if not confirm("Add a Service Account to these projects now?", default=True):
         return
 
-    service_user_gid = prompt_required("Service user GID")
     add_args = build_common_args(log_level)
-    add_args.extend(["--user-gid", service_user_gid, "--project-gids", ",".join(missed_project_gids)])
+    add_args.extend(["--project-gids", ",".join(missed_project_gids)])
     run_script(add_service_user_to_projects.main, add_args)
 
     if not confirm("Try fetching tasks from the missed projects now?", default=True):
