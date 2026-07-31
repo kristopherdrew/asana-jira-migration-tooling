@@ -349,3 +349,30 @@ Optional flags:
 - `--database <path>` (defaults to the active profile's DB), `--output-dir <dir>` (default `exports/`), `--filename <name>`, `--log-level <LEVEL>`.
 
 Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials (same as the other Jira scripts).
+
+### Foreign-Migration Coverage Report (.xlsx)
+A **read-only** diagnostic for Asana projects that were migrated into Jira *before* our involvement, by someone else's tooling — so none of our mapping tables (`task_jira_mappings`, `team_project_jira_mappings`, `project_jira_decisions`) were populated for them. It reconciles the local Asana snapshot against the live Jira projects to quantify how much actually made it across (working hypothesis: subtasks were dropped). Writes nothing to Jira, Asana, or the database.
+
+Because no reliable Asana reference survives on the Jira side, matching is **by name**: the normalized Asana task name is matched to the normalized Jira issue summary (`normalize_name` — trim, collapse internal whitespace, casefold), multiset-matched per name so duplicates pair by count. Two built-in groups ship as defaults — `POPS` (a flat union of 7 Asana projects) and `PROJ24` (`Project 24`) — identified by project **GID** (all-digit) so they resolve regardless of name drift; overridable via `--group`. Each identifier in a group may be a GID or a project name.
+
+```bash
+python3 -m scripts.atlassian.report_migration_coverage --prod
+```
+
+For each group it resolves the source Asana projects (a GID is looked up directly; a name is matched trimmed; an identifier matching 0 or, for a name, >1 projects is logged as a warning), pulls their tasks via `task_projects` (union deduped by task GID, `hierarchy_depth` → top-level vs subtask, plus `completed`), then pages every issue in the Jira project (`project = "<KEY>" ORDER BY key ASC`, fields `issuetype`/`summary`/`status`/`parent`, via `nextPageToken`). Reconciliation yields matched / missing-in-Jira / extra-in-Jira sets.
+
+The workbook (`exports/migration_coverage_<timestamp>.xlsx`) has seven tabs:
+- **Overview** — generation time, source DB, Jira base URL, match strategy, and per-group headline counts (Asana tasks, Jira issues, matched, missing, extra, match rate %).
+- **Asana Baseline** — one row per source project (total / top-level / subtask / completed / open) plus a per-group deduped-union subtotal.
+- **Jira Inventory** — per group, live issue counts by issue type × subtask flag, with a group total.
+- **Reconciliation Summary** — per group: Asana total, Jira total, matched, missing (split top-level/subtask and completed/open), extra, match rate %.
+- **Per-Project Coverage** — one row per source project scored *independently* against the whole group's Jira pool (tasks / top-level / subtask / completed / open / matched / missing / rate). This is the trustworthy per-project view: the group-level `matched` on the other tabs is deflated by flat-pool multiset collisions (generic `Action:`/`Milestone:` names competing for the same issue), whereas here each project is matched on its own. Because the pool is shared, a Jira issue can satisfy a name in more than one project, so these are per-project estimates and do not sum to the group total.
+- **Missing in Jira** — one row per unmatched Asana task (group, source project, name, top-level/subtask, completed, gid) — the actionable coverage gap.
+- **Extra in Jira** — one row per unmatched Jira issue (group, key, summary, issue type, subtask flag, status).
+
+Optional flags:
+- `--prod` to target production Jira (`JIRA_BASE_URL`); omit for sandbox (`JIRA_SANDBOX_BASE_URL`).
+- `--group "KEY=Name A||Name B"` (repeatable) to override the built-in groups for a future wave.
+- `--database <path>` (defaults to the active profile's DB), `--output-dir <dir>` (default `exports/`), `--filename <name>`, `--log-level <LEVEL>`.
+
+Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials (same as the other Jira scripts). Since matching is name-based, spot-check a few Missing-in-Jira rows directly in Jira to rule out false negatives from renamed tasks.
