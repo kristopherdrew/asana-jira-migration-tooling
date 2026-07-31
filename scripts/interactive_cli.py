@@ -1316,6 +1316,7 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         print("[1] Team-centric (one team's projects)")
         print("[2] Owner-centric (one project owner's projects)")
         print("[3] Whole workspace")
+        print("[4] By Jira key(s) (projects behind migrated Jira Task keys)")
         choice = input("Choice (default 1): ").strip() or "1"
         if choice == "1":
             team_gid = _prompt_team_gid_from_lookup(
@@ -1331,6 +1332,12 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             )
             if owner_gid:
                 args.extend(["--owner-gid", owner_gid])
+        elif choice == "4":
+            jira_keys = input(
+                "Jira Task keys (comma/space separated, e.g. ATJM-1, ATJM-2): "
+            ).strip()
+            if jira_keys:
+                args.extend(["--jira-keys", jira_keys])
         run_script(export_field_section_review_report.main, args)
 
     def run_project_last_updated_report() -> None:
