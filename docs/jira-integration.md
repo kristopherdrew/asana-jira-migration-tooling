@@ -367,7 +367,7 @@ The workbook (`exports/migration_coverage_<timestamp>.xlsx`) has seven tabs:
 - **Jira Inventory** — per group, live issue counts by issue type × subtask flag, with a group total.
 - **Reconciliation Summary** — per group: Asana total, Jira total, matched, missing (split top-level/subtask and completed/open), extra, match rate %.
 - **Per-Project Coverage** — one row per source project scored *independently* against the whole group's Jira pool (tasks / top-level / subtask / completed / open / matched / missing / rate). This is the trustworthy per-project view: the group-level `matched` on the other tabs is deflated by flat-pool multiset collisions (generic `Action:`/`Milestone:` names competing for the same issue), whereas here each project is matched on its own. Because the pool is shared, a Jira issue can satisfy a name in more than one project, so these are per-project estimates and do not sum to the group total.
-- **Missing in Jira** — one row per unmatched Asana task (group, source project, name, top-level/subtask, completed, gid) — the actionable coverage gap.
+- **Missing in Jira** — one row per unmatched Asana task (group, source project, name, top-level/subtask, completed, `created_at`, `modified_at`, parent task [resolved parent name, else parent gid], gid) — the actionable coverage gap.
 - **Extra in Jira** — one row per unmatched Jira issue (group, key, summary, issue type, subtask flag, status).
 
 Optional flags:

@@ -59,7 +59,8 @@ MIGRATION_GROUPS: Dict[str, List[str]] = {
     "PROJ24": ["1205436878144436"],  # Project 24
 }
 
-MISSING_COLUMNS = ["group", "source_project", "task_name", "task_type", "completed", "asana_gid"]
+MISSING_COLUMNS = ["group", "source_project", "task_name", "task_type", "completed",
+                   "created_at", "modified_at", "parent_task", "asana_gid"]
 EXTRA_COLUMNS = ["group", "jira_key", "summary", "issue_type", "is_subtask", "status"]
 
 _WHITESPACE = re.compile(r"\s+")
@@ -161,8 +162,11 @@ def build_asana_group(
             rows = connection.execute(
                 "SELECT t.gid AS gid, t.name AS name, "
                 "COALESCE(t.hierarchy_depth, 0) AS depth, "
-                "COALESCE(t.completed, 0) AS completed "
+                "COALESCE(t.completed, 0) AS completed, "
+                "t.created_at AS created_at, t.modified_at AS modified_at, "
+                "t.parent_gid AS parent_gid, p.name AS parent_name "
                 "FROM task_projects tp JOIN tasks t ON t.gid = tp.task_gid "
+                "LEFT JOIN tasks p ON p.gid = t.parent_gid "
                 "WHERE tp.project_gid = ?",
                 (project_gid,),
             ).fetchall()
@@ -184,6 +188,10 @@ def build_asana_group(
                         "project": name,
                         "is_subtask": is_subtask,
                         "completed": completed,
+                        "created_at": row["created_at"] or "",
+                        "modified_at": row["modified_at"] or "",
+                        "parent_gid": row["parent_gid"] or "",
+                        "parent_name": row["parent_name"] or "",
                     }
             per_project.append(stats)
     return {"per_project": per_project, "tasks": list(tasks.values()), "warnings": warnings}
@@ -360,10 +368,13 @@ def _missing_sheet(group_results: Sequence[dict]) -> Tuple[str, List[list]]:
             key=lambda t: (t["is_subtask"], t["project"], t["name"].casefold()),
         )
         for task in ordered:
+            parent = task.get("parent_name") or task.get("parent_gid") or ""
             rows.append([
                 result["jira_key"], task["project"], task["name"],
                 "subtask" if task["is_subtask"] else "top-level",
-                "Yes" if task["completed"] else "No", task["gid"],
+                "Yes" if task["completed"] else "No",
+                task.get("created_at") or "", task.get("modified_at") or "", parent,
+                task["gid"],
             ])
     return ("Missing in Jira", rows)
 

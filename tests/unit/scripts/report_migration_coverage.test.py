@@ -24,6 +24,10 @@ def _asana_task(name, *, gid="g", group="POPS", project="P", is_subtask=False, c
         "project": project,
         "is_subtask": is_subtask,
         "completed": completed,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "modified_at": "2026-02-01T00:00:00.000Z",
+        "parent_gid": "",
+        "parent_name": "",
     }
 
 
@@ -118,12 +122,13 @@ class BuildAsanaGroupTest(TestCase):
             "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
             [("p1", "Alpha Project", "2026-01-01"), ("p2", "Alpha Project", "2026-01-01")],
         )
-        # p1: 1 top-level open, 1 subtask completed. p2 shares t1 (dedup across the group).
+        # p1: 1 top-level open, 1 subtask completed (child of t1). p2 shares t1 (dedup).
         self.connection.executemany(
-            "INSERT INTO tasks (gid, name, completed, hierarchy_depth, synced_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO tasks (gid, name, completed, hierarchy_depth, parent_gid, "
+            "created_at, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                ("t1", "Top task", 0, 0, "2026-01-01"),
-                ("t2", "Sub task", 1, 1, "2026-01-01"),
+                ("t1", "Top task", 0, 0, None, "2026-01-01T00:00:00Z", "2026-03-01T00:00:00Z", "2026-01-01"),
+                ("t2", "Sub task", 1, 1, "t1", "2026-01-02T00:00:00Z", "2026-03-02T00:00:00Z", "2026-01-01"),
             ],
         )
         self.connection.executemany(
@@ -149,6 +154,16 @@ class BuildAsanaGroupTest(TestCase):
     def test_matches_trimmed_name(self) -> None:
         result = build_asana_group(self.connection, "POPS", ["  Alpha Project  "])
         self.assertEqual(len(result["tasks"]), 2)
+
+    def test_carries_dates_and_resolved_parent_name(self) -> None:
+        result = build_asana_group(self.connection, "POPS", ["Alpha Project"])
+        by_gid = {t["gid"]: t for t in result["tasks"]}
+        self.assertEqual(by_gid["t1"]["created_at"], "2026-01-01T00:00:00Z")
+        self.assertEqual(by_gid["t1"]["modified_at"], "2026-03-01T00:00:00Z")
+        self.assertEqual(by_gid["t1"]["parent_name"], "")  # top-level, no parent
+        # Subtask resolves its parent's name via the LEFT JOIN.
+        self.assertEqual(by_gid["t2"]["parent_gid"], "t1")
+        self.assertEqual(by_gid["t2"]["parent_name"], "Top task")
 
     def test_resolves_by_numeric_gid(self) -> None:
         self.connection.execute(
