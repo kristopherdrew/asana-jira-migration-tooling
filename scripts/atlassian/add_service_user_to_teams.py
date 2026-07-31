@@ -20,6 +20,7 @@ from src.lib.config import load_credentials
 from src.lib.database import Database, DEFAULT_DB_PATH, resolve_default_db_path
 from src.lib.http_client import AsanaHttpClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.tasks.users import resolve_service_user_gid
 
 
 DEFAULT_OUTPUT_DIR = "exports"
@@ -43,12 +44,15 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--user-gid",
-        help="Service user GID to add to every team. If omitted, prompt for it.",
+        help=(
+            "Service user GID to add to every team. If omitted, defaults to the token's "
+            "own account (via GET /users/me)."
+        ),
     )
     parser.add_argument(
         "--search-users",
         action="store_true",
-        help="Search the current users in SQLite before prompting for a raw service user GID.",
+        help="Search the current users in SQLite and pick the service user GID interactively.",
     )
     parser.add_argument(
         "--log-level",
@@ -203,6 +207,30 @@ def write_failure_report(output_dir: Path, failed_teams: Sequence[Tuple[str, str
     return output_path
 
 
+def _resolve_service_user_gid(
+    client: AsanaHttpClient,
+    database: Database,
+    connection: sqlite3.Connection,
+    args: argparse.Namespace,
+) -> str:
+    """Pick the service user GID: explicit flag > interactive search > token account."""
+    if args.user_gid:
+        return args.user_gid
+    if args.search_users:
+        return prompt_for_service_user_gid(connection, search_users=True)
+    try:
+        user_gid = resolve_service_user_gid(
+            client, database, connection, datetime.now(timezone.utc)
+        )
+        logger.info("Using token account (gid %s) as the service user.", user_gid)
+        return user_gid
+    except Exception as exc:  # noqa: BLE001 - fall back to the interactive prompt on any failure
+        logger.warning(
+            "Could not resolve the token account via /users/me (%s); prompting instead.", exc
+        )
+        return prompt_for_service_user_gid(connection, search_users=False)
+
+
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
     try:
@@ -220,7 +248,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     with database.connect() as connection:
         database.initialize(connection)
-        user_gid = args.user_gid or prompt_for_service_user_gid(connection, search_users=args.search_users)
+        user_gid = _resolve_service_user_gid(client, database, connection, args)
         success_count, failures = add_service_user_to_teams(connection, client, user_gid)
 
     logger.info("Added service user %s to %s team(s).", user_gid, success_count)

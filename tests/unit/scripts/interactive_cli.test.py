@@ -481,7 +481,6 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_team_report.main)
         self.assertEqual(mock_run_script.call_args_list[0].args[1], ["--log-level", "DEBUG"])
 
-    @patch("scripts.interactive_cli.prompt_required", return_value="service_user_1")
     @patch("scripts.interactive_cli.confirm", side_effect=[True, True])
     @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli.args_get_tasks", return_value=[
@@ -501,7 +500,6 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_args_get_tasks,
         mock_run_script,
         mock_confirm,
-        mock_prompt_required,
     ) -> None:
         result = SimpleNamespace(
             missing_membership_candidates=[
@@ -537,8 +535,6 @@ class IncrementalArgsBuilderTest(TestCase):
             [
                 "--log-level",
                 "INFO",
-                "--user-gid",
-                "service_user_1",
                 "--project-gids",
                 "proj_1,proj_2",
             ],
@@ -559,7 +555,6 @@ class IncrementalArgsBuilderTest(TestCase):
         )
         mock_args_get_tasks.assert_called_once_with("INFO")
         self.assertEqual(mock_confirm.call_count, 2)
-        mock_prompt_required.assert_called_once_with("Service user GID")
 
 
 class TokenMigrationTest(TestCase):

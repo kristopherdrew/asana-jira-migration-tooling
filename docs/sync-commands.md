@@ -71,32 +71,33 @@ Optional flags:
 - `--workers <n>` concurrent workers for the My Tasks GID fetch pass (default 4).
 
 ### Add Service User to Teams
-Adds one service user to every Asana team stored in SQLite using Asana's `addUser` endpoint. When launched interactively, the script can search the current `users` table before falling back to a raw GID entry.
+Adds one service user to every Asana team stored in SQLite using Asana's `addUser` endpoint. By default the service user is resolved automatically as the token's own account (`GET /users/me`) and upserted into the `users` table so it becomes searchable; no prompt is shown. Pass `--user-gid` to override, or `--search-users` to pick from the local `users` table interactively. If `/users/me` cannot be reached, the script falls back to the interactive search/GID prompt.
 ```bash
 python3 -m scripts.add_service_user_to_teams
 ```
 Required flags:
-- (none; uses `data/asana.sqlite` and the resolved credentials by default).
+- (none; uses `data/asana.sqlite`, the resolved credentials, and the token's own account by default).
 
 Optional flags:
 - `--database <path>` to point at a different SQLite snapshot (default `data/asana.sqlite`).
 - `--output-dir <path>` to choose where failure exports are written (default `exports/`).
-- `--user-gid <gid>` to bypass the prompt and use a specific service user.
-- `--search-users` to force the interactive user search flow instead of prompting for a raw GID first.
+- `--user-gid <gid>` to override the token account and use a specific service user.
+- `--search-users` to pick the service user from the local `users` table interactively instead of using the token account.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 If one or more team updates fail, the script writes `service_user_team_add_failures_<timestamp>.csv` into the output directory with the failed team GIDs and the captured error text.
 
 ### Add Service User to Projects
-Adds one service user to a selected list of Asana project GIDs using Asana's `addMembers` endpoint.
+Adds one service user to a selected list of Asana project GIDs using Asana's `addMembers` endpoint. Like the teams script, the service user defaults to the token's own account (`GET /users/me`), upserted into the `users` table; pass `--user-gid` to override, and if `/users/me` fails the script falls back to a raw GID prompt.
 ```bash
-python3 -m scripts.add_service_user_to_projects --user-gid <service_user_gid> --project-gids <gid1,gid2>
+python3 -m scripts.add_service_user_to_projects --project-gids <gid1,gid2>
 ```
 Required flags:
-- `--user-gid <gid>` to identify the service user to add, or omit it to be prompted interactively.
 - One scope selector: `--project-gid <gid>` repeated as needed, or `--project-gids <gid1,gid2>`.
 
 Optional flags:
+- `--database <path>` to point at a different SQLite snapshot (default `data/asana.sqlite`); used to upsert the resolved token account.
+- `--user-gid <gid>` to override the token account and use a specific service user.
 - `--output-dir <path>` to choose where failure exports are written (default `exports/`).
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
@@ -129,7 +130,7 @@ During every run the script:
 - Surfaces progress every ~25 tasks and records a new `synced_at` timestamp for each row.
 - Processes multi-homed tasks for each project to keep every team’s view complete.
 
-During an interactive task sync, the CLI also records any project that had a positive `num_tasks` count from the project metadata pull but produced zero imported task rows. The candidate list is written to `exports/missing_service_user_projects.json`, then the CLI offers to add a service user to those projects and optionally retry the missed project list immediately.
+During an interactive task sync, the CLI also records any project that had a positive `num_tasks` count from the project metadata pull but produced zero imported task rows. The candidate list is written to `exports/missing_service_user_projects.json`, then the CLI offers to add a service user (resolved automatically as the token's own account) to those projects and optionally retry the missed project list immediately.
 
 ### Sync Task Extras
 Pulls task comments and attachment metadata for the selected projects (using the same scope flags as above) and stores them in `task_comments` and `task_attachments` tables. Only human-authored comments (`resource_subtype = comment_added`) are captured; system events are excluded.

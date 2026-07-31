@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from argparse import Namespace
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,8 +12,10 @@ from src.lib.database import Database
 
 
 class FakeClient:
-    def __init__(self, failing_team_gid: str | None = None):
+    def __init__(self, failing_team_gid: str | None = None, me_payload=None, me_error=None):
         self.failing_team_gid = failing_team_gid
+        self.me_payload = me_payload
+        self.me_error = me_error
         self.calls: list[tuple[str, dict]] = []
 
     def post_json(self, endpoint: str, payload: dict) -> dict:
@@ -21,6 +24,12 @@ class FakeClient:
         if team_gid == self.failing_team_gid:
             raise RuntimeError("boom")
         return {"data": {"gid": f"membership_{team_gid}"}}
+
+    def get(self, endpoint: str, params=None) -> dict:
+        self.calls.append((endpoint, params))
+        if self.me_error is not None:
+            raise self.me_error
+        return self.me_payload or {}
 
 
 class AddServiceUserToTeamsTest(TestCase):
@@ -108,3 +117,49 @@ class AddServiceUserToTeamsTest(TestCase):
                 gid = service_user_script.prompt_for_service_user_gid(connection, search_users=True)
 
         self.assertEqual(gid, "user_1")
+
+    def _resolve(self, client, args: Namespace) -> str:
+        self._initialize_database()
+        with self.database.connect() as connection:
+            self.database.initialize(connection)
+            return service_user_script._resolve_service_user_gid(
+                client, self.database, connection, args
+            )
+
+    def test_resolve_uses_explicit_user_gid(self) -> None:
+        client = FakeClient()
+        args = Namespace(user_gid="user_2", search_users=False)
+
+        gid = self._resolve(client, args)
+
+        self.assertEqual(gid, "user_2")
+        self.assertEqual(client.calls, [])  # no /users/me lookup
+
+    def test_resolve_defaults_to_token_account(self) -> None:
+        client = FakeClient(me_payload={"data": {"gid": "svc_1", "name": "Atlassian-Migration"}})
+        args = Namespace(user_gid=None, search_users=False)
+
+        gid = self._resolve(client, args)
+
+        self.assertEqual(gid, "svc_1")
+        self.assertEqual(client.calls[0][0], "/users/me")
+
+    def test_resolve_falls_back_to_prompt_when_me_fails(self) -> None:
+        client = FakeClient(me_error=RuntimeError("network down"))
+        args = Namespace(user_gid=None, search_users=False)
+
+        # Fallback path first asks "Search current users?" (y), then search + pick.
+        with patch("builtins.input", side_effect=["y", "grace", "1"]):
+            gid = self._resolve(client, args)
+
+        self.assertEqual(gid, "user_2")
+
+    def test_resolve_search_users_flag_prompts(self) -> None:
+        client = FakeClient(me_payload={"data": {"gid": "svc_1"}})
+        args = Namespace(user_gid=None, search_users=True)
+
+        with patch("builtins.input", side_effect=["ada", "1"]):
+            gid = self._resolve(client, args)
+
+        self.assertEqual(gid, "user_1")
+        self.assertEqual(client.calls, [])  # search path never calls /users/me

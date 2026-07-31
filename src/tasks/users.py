@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Dict, Generator, Iterable, Optional
+from datetime import datetime
+from typing import TYPE_CHECKING, Dict, Generator, Iterable, Optional
 
 import logging
 
 from src.lib.http_client import AsanaHttpClient, AsanaHttpError
+
+if TYPE_CHECKING:  # pragma: no cover - typing only, avoids import cycle
+    import sqlite3
+
+    from src.lib.database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +51,38 @@ def fetch_user(
     endpoint = f"/users/{user_gid}"
     payload = client.get(endpoint, params=params)
     return payload.get("data", payload)
+
+
+def fetch_current_user(
+    client: AsanaHttpClient,
+    opt_fields: Optional[Iterable[str]] = None,
+) -> Dict:
+    """Return the full user profile for the token's own account (``GET /users/me``)."""
+    fields = ",".join(opt_fields or USER_FIELDS_REQUIRED)
+    params = {"opt_fields": fields}
+    payload = client.get("/users/me", params=params)
+    return payload.get("data", payload)
+
+
+def resolve_service_user_gid(
+    client: AsanaHttpClient,
+    database: "Database",
+    connection: "sqlite3.Connection",
+    synced_at: datetime,
+) -> str:
+    """Resolve the service user as the token's own account and persist it.
+
+    Fetches ``GET /users/me`` and upserts the record into the ``users`` table so
+    the service account (which is often absent from the workspace user list) is
+    searchable afterwards. Returns the resolved GID; raises ``ValueError`` when the
+    API returns no GID.
+    """
+    me = fetch_current_user(client)
+    gid = (me or {}).get("gid")
+    if not gid:
+        raise ValueError("Asana /users/me returned no user GID; the token may be invalid.")
+    database.upsert_user(connection, me, synced_at)
+    return str(gid)
 
 
 def fetch_user_task_list(

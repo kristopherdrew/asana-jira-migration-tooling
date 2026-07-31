@@ -1,10 +1,16 @@
+from datetime import datetime, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase
 
+from src.lib.database import Database
 from src.lib.http_client import AsanaHttpError
 from src.tasks.users import (
     USER_FIELDS_REQUIRED,
+    fetch_current_user,
     fetch_user_task_list,
     fetch_workspace_users,
+    resolve_service_user_gid,
 )
 
 
@@ -79,3 +85,57 @@ class FetchUserTaskListTest(TestCase):
         client = GetClient(payload={"data": {}})
 
         self.assertIsNone(fetch_user_task_list(client, "user_3", "ws_1"))
+
+
+class FetchCurrentUserTest(TestCase):
+    def test_uses_users_me_endpoint_with_required_fields(self) -> None:
+        client = GetClient(payload={"data": {"gid": "me_1", "name": "Bot"}})
+
+        me = fetch_current_user(client)
+
+        self.assertEqual(me["gid"], "me_1")
+        endpoint, params = client.calls[0]
+        self.assertEqual(endpoint, "/users/me")
+        for field in USER_FIELDS_REQUIRED:
+            self.assertIn(field, params["opt_fields"])
+
+
+class ResolveServiceUserGidTest(TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.db_path = Path(self.temp_dir.name) / "asana.sqlite"
+        self.database = Database(str(self.db_path))
+        self.now = datetime.now(timezone.utc)
+
+    def test_resolves_and_upserts_token_account(self) -> None:
+        client = GetClient(
+            payload={
+                "data": {
+                    "gid": "svc_1",
+                    "name": "Atlassian-Migration",
+                    "resource_type": "user",
+                    "email": None,
+                    "is_active": True,
+                }
+            }
+        )
+
+        with self.database.connect() as connection:
+            self.database.initialize(connection)
+            gid = resolve_service_user_gid(client, self.database, connection, self.now)
+            row = connection.execute(
+                "SELECT gid, name FROM users WHERE gid = ?", ("svc_1",)
+            ).fetchone()
+
+        self.assertEqual(gid, "svc_1")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[1], "Atlassian-Migration")
+
+    def test_raises_when_no_gid_returned(self) -> None:
+        client = GetClient(payload={"data": {"name": "No GID"}})
+
+        with self.database.connect() as connection:
+            self.database.initialize(connection)
+            with self.assertRaises(ValueError):
+                resolve_service_user_gid(client, self.database, connection, self.now)

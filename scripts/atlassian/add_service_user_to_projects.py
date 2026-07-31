@@ -16,8 +16,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.lib.config import load_credentials
+from src.lib.database import Database, resolve_default_db_path
 from src.lib.http_client import AsanaHttpClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.tasks.users import resolve_service_user_gid
 
 
 DEFAULT_OUTPUT_DIR = "exports"
@@ -29,8 +31,16 @@ logger = logging.getLogger(__name__)
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--database",
+        default=resolve_default_db_path(),
+        help="Path to the SQLite database (default: data/asana.sqlite).",
+    )
+    parser.add_argument(
         "--user-gid",
-        help="Service user GID to add to each project. If omitted, prompt for it.",
+        help=(
+            "Service user GID to add to each project. If omitted, defaults to the token's "
+            "own account (via GET /users/me)."
+        ),
     )
     parser.add_argument(
         "--project-gid",
@@ -143,7 +153,24 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
     project_gids = resolve_project_gids(args.project_gid, args.project_gids)
-    user_gid = args.user_gid or prompt_required("Service user GID")
+
+    if args.user_gid:
+        user_gid = args.user_gid
+    else:
+        database = Database(db_path=args.database)
+        with database.connect() as connection:
+            database.initialize(connection)
+            try:
+                user_gid = resolve_service_user_gid(
+                    client, database, connection, datetime.now(timezone.utc)
+                )
+                logger.info("Using token account (gid %s) as the service user.", user_gid)
+            except Exception as exc:  # noqa: BLE001 - fall back to the prompt on any failure
+                logger.warning(
+                    "Could not resolve the token account via /users/me (%s); prompting instead.",
+                    exc,
+                )
+                user_gid = prompt_required("Service user GID")
 
     success_count, failures = add_service_user_to_projects(client, user_gid, project_gids)
 
