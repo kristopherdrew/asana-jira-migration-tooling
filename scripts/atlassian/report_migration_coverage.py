@@ -60,7 +60,8 @@ MIGRATION_GROUPS: Dict[str, List[str]] = {
 }
 
 MISSING_COLUMNS = ["group", "source_project", "task_name", "task_type", "completed",
-                   "created_at", "modified_at", "parent_task", "asana_gid"]
+                   "created_at", "modified_at", "parent_task", "assignee_email",
+                   "creator_email", "asana_gid"]
 EXTRA_COLUMNS = ["group", "jira_key", "summary", "issue_type", "is_subtask", "status"]
 
 _WHITESPACE = re.compile(r"\s+")
@@ -164,9 +165,12 @@ def build_asana_group(
                 "COALESCE(t.hierarchy_depth, 0) AS depth, "
                 "COALESCE(t.completed, 0) AS completed, "
                 "t.created_at AS created_at, t.modified_at AS modified_at, "
-                "t.parent_gid AS parent_gid, p.name AS parent_name "
+                "t.parent_gid AS parent_gid, p.name AS parent_name, "
+                "au.email AS assignee_email, cu.email AS creator_email "
                 "FROM task_projects tp JOIN tasks t ON t.gid = tp.task_gid "
                 "LEFT JOIN tasks p ON p.gid = t.parent_gid "
+                "LEFT JOIN users au ON au.gid = t.assignee_gid "
+                "LEFT JOIN users cu ON cu.gid = t.created_by_gid "
                 "WHERE tp.project_gid = ?",
                 (project_gid,),
             ).fetchall()
@@ -192,6 +196,8 @@ def build_asana_group(
                         "modified_at": row["modified_at"] or "",
                         "parent_gid": row["parent_gid"] or "",
                         "parent_name": row["parent_name"] or "",
+                        "assignee_email": row["assignee_email"] or "",
+                        "creator_email": row["creator_email"] or "",
                     }
             per_project.append(stats)
     return {"per_project": per_project, "tasks": list(tasks.values()), "warnings": warnings}
@@ -374,6 +380,7 @@ def _missing_sheet(group_results: Sequence[dict]) -> Tuple[str, List[list]]:
                 "subtask" if task["is_subtask"] else "top-level",
                 "Yes" if task["completed"] else "No",
                 task.get("created_at") or "", task.get("modified_at") or "", parent,
+                task.get("assignee_email") or "", task.get("creator_email") or "",
                 task["gid"],
             ])
     return ("Missing in Jira", rows)

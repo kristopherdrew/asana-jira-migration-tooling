@@ -28,6 +28,8 @@ def _asana_task(name, *, gid="g", group="POPS", project="P", is_subtask=False, c
         "modified_at": "2026-02-01T00:00:00.000Z",
         "parent_gid": "",
         "parent_name": "",
+        "assignee_email": "assignee@x.com",
+        "creator_email": "creator@x.com",
     }
 
 
@@ -122,13 +124,19 @@ class BuildAsanaGroupTest(TestCase):
             "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
             [("p1", "Alpha Project", "2026-01-01"), ("p2", "Alpha Project", "2026-01-01")],
         )
+        self.connection.executemany(
+            "INSERT INTO users (gid, name, email, synced_at) VALUES (?, ?, ?, ?)",
+            [("u1", "Ann Assignee", "ann@x.com", "2026-01-01"),
+             ("u2", "Cara Creator", "cara@x.com", "2026-01-01")],
+        )
         # p1: 1 top-level open, 1 subtask completed (child of t1). p2 shares t1 (dedup).
         self.connection.executemany(
             "INSERT INTO tasks (gid, name, completed, hierarchy_depth, parent_gid, "
-            "created_at, modified_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "assignee_gid, created_by_gid, created_at, modified_at, synced_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                ("t1", "Top task", 0, 0, None, "2026-01-01T00:00:00Z", "2026-03-01T00:00:00Z", "2026-01-01"),
-                ("t2", "Sub task", 1, 1, "t1", "2026-01-02T00:00:00Z", "2026-03-02T00:00:00Z", "2026-01-01"),
+                ("t1", "Top task", 0, 0, None, "u1", "u2", "2026-01-01T00:00:00Z", "2026-03-01T00:00:00Z", "2026-01-01"),
+                ("t2", "Sub task", 1, 1, "t1", None, "u2", "2026-01-02T00:00:00Z", "2026-03-02T00:00:00Z", "2026-01-01"),
             ],
         )
         self.connection.executemany(
@@ -164,6 +172,15 @@ class BuildAsanaGroupTest(TestCase):
         # Subtask resolves its parent's name via the LEFT JOIN.
         self.assertEqual(by_gid["t2"]["parent_gid"], "t1")
         self.assertEqual(by_gid["t2"]["parent_name"], "Top task")
+
+    def test_resolves_assignee_and_creator_emails(self) -> None:
+        result = build_asana_group(self.connection, "POPS", ["Alpha Project"])
+        by_gid = {t["gid"]: t for t in result["tasks"]}
+        self.assertEqual(by_gid["t1"]["assignee_email"], "ann@x.com")
+        self.assertEqual(by_gid["t1"]["creator_email"], "cara@x.com")
+        # Unassigned task -> blank assignee email, creator still resolves.
+        self.assertEqual(by_gid["t2"]["assignee_email"], "")
+        self.assertEqual(by_gid["t2"]["creator_email"], "cara@x.com")
 
     def test_resolves_by_numeric_gid(self) -> None:
         self.connection.execute(
