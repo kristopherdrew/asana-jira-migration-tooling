@@ -52,6 +52,7 @@ from scripts.atlassian import (  # noqa: E402
     add_service_user_to_teams,
     add_service_user_to_projects,
     create_team_project_jira_issues,
+    export_archival_project_jira_csv,
     export_project_to_jira_csv,
     export_team_project_jira_csv,
     get_jira_migration_decisions,
@@ -1220,6 +1221,49 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     return args, allow_merge
 
 
+def args_export_archival_project(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+
+    print("\nSelect export scope:")
+    print("[1] Single project")
+    print("[2] Multiple projects (comma-separated GIDs)")
+    print("[3] All projects in a team")
+    choice = input("Choice (default 1): ").strip() or "1"
+    if choice == "1":
+        project_gid = _prompt_project_gid_from_lookup(
+            "archival export", "Project GID to export"
+        )
+        if not project_gid:
+            raise SystemExit("Project GID is required.")
+        args.extend(["--project-gid", project_gid])
+    elif choice == "2":
+        if confirm("Load project GIDs from a file?", default=False):
+            path = prompt("Path to file with project GIDs (newline or comma separated)", default="")
+            if not path:
+                raise SystemExit("Project GID file is required.")
+            args.extend(["--project-gids-file", path])
+        else:
+            gids = prompt("Project GIDs (comma-separated)", default="")
+            if not gids:
+                raise SystemExit("At least one project GID is required.")
+            args.extend(["--project-gids", gids])
+    else:
+        team_gid = _prompt_team_gid_from_lookup(
+            "archival export", "Team GID whose projects to export"
+        )
+        if not team_gid:
+            raise SystemExit("Team GID is required.")
+        args.extend(["--team-gid", team_gid])
+        scope = prompt("Archived scope (active|archived|all) [all]", default="all")
+        args.extend(["--archived-scope", scope])
+
+    append_jira_env_flag(args)
+    fallback_atl = prompt("Fallback Atlassian account ID for unmapped users (optional)", default="")
+    if fallback_atl:
+        args.extend(["--fallback-atlassian-id", fallback_atl])
+    return args
+
+
 def run_export_project_to_jira(log_level: str) -> None:
     args, allow_merge = args_export_project_to_jira(log_level)
     export_dir: Optional[Path] = None
@@ -1649,6 +1693,11 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
             "12",
             "Set project 'Last working day' field on Jira issues",
             lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level)),
+        ),
+        "13": MenuItem(
+            "13",
+            "Export archival project to Jira CSV (custom fields folded into description)",
+            lambda: run_script(export_archival_project_jira_csv.main, args_export_archival_project(log_level)),
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
