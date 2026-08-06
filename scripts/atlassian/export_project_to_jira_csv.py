@@ -664,6 +664,46 @@ def apply_custom_field_filter(
     return filtered, unmatched
 
 
+def resolve_custom_field_value(
+    meta: Dict[str, object],
+    task_gid: str,
+    single_map: Dict[Tuple[str, str], sqlite3.Row],
+    multi_map: Dict[Tuple[str, str], List[Tuple[Optional[int], str]]],
+    option_map: Dict[Tuple[str, str], str],
+) -> str:
+    """Return the display string for one task's value of a custom field ('' if unset).
+
+    Multi-enum values are joined with ', ' into a single string. The columnar
+    exporter fans multi-enum out into numbered columns via its own path; this
+    helper is the single-string form used when folding fields into a description.
+    """
+
+    field_gid = meta["gid"]
+    key = (task_gid, field_gid)
+    if meta.get("type") == "multi_enum" and meta.get("max_multi", 0):
+        names: List[str] = []
+        for _position, enum_gid in multi_map.get(key, []):
+            option_name = option_map.get((field_gid, enum_gid), "")
+            if option_name:
+                names.append(option_name)
+        return ", ".join(names)
+
+    single = single_map.get(key)
+    if not single:
+        return ""
+    if meta.get("type") in {"enum", "multi_enum"} and single["enum_option_gid"]:
+        return option_map.get((field_gid, single["enum_option_gid"])) or single["display_value"] or ""
+    if single["display_value"]:
+        return single["display_value"]
+    if single["text_value"]:
+        return single["text_value"]
+    if single["number_value"] is not None:
+        return str(single["number_value"])
+    if single["date_value"]:
+        return format_export_datetime(single["date_value"])
+    return ""
+
+
 def sanitize_filename_component(value: str) -> str:
     cleaned = (value or "").strip().replace(" ", "_")
     cleaned = FILENAME_SAFE_PATTERN.sub("_", cleaned)
@@ -1132,7 +1172,14 @@ def build_project_export_data(
     custom_field_filters: Optional[List[str]],
     prompt_for_custom_fields: bool,
     stats_only: bool,
+    user_emails: Optional[Dict[str, str]] = None,
+    fallback_atlassian_id: Optional[str] = None,
+    no_custom_fields: bool = False,
+    add_epics: bool = False,
+    selected_custom_field_ids: Optional[List[str]] = None,
+    selected_custom_field_names: Optional[List[str]] = None,
 ) -> Dict:
+    user_emails = user_emails if user_emails is not None else {}
     project_task_query = """
         WITH RECURSIVE project_tasks AS (
             SELECT t.*
@@ -1580,6 +1627,8 @@ def build_project_export_data(
         "multi_map": multi_map,
         "field_multi_width": field_multi_width,
         "missing_accounts": missing_accounts,
+        "associations": associations,
+        "last_active": last_active,
     }
     return bundle
 
