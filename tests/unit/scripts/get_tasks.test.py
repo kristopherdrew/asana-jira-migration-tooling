@@ -188,6 +188,22 @@ class GetTasksHelpersTest(TestCase):
         )
         self.assertEqual([project["project_gid"] for project in projects], ["proj_default", "proj_other"])
 
+    def test_determine_projects_with_project_gids_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gids_path = Path(tmpdir) / "project_gids.txt"
+            gids_path.write_text("proj_other\nproj_default,\n", encoding="utf-8")
+            projects = determine_projects(
+                connection=self.connection,
+                project_gid=None,
+                project_gids_file=str(gids_path),
+                use_team_picker=False,
+                team_gids=None,
+                all_teams=False,
+                exclude_team_gids=None,
+                team_selector=lambda conn: None,
+            )
+        self.assertEqual([project["project_gid"] for project in projects], ["proj_other", "proj_default"])
+
     @patch("scripts.get_tasks.choose_team")
     def test_determine_projects_with_team_selection(self, mock_choose_team) -> None:
         mock_choose_team.return_value = ("team_1", "Team One")

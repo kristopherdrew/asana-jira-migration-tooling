@@ -358,6 +358,39 @@ def _prompt_user_gid_from_lookup(context: str, fallback_prompt: str) -> str:
     )
 
 
+def _prompt_project_gids_file(context: str) -> str:
+    """Select a likely GID file from the current directory or accept a typed path."""
+    current_dir = Path.cwd()
+    candidates = sorted(
+        (
+            path
+            for path in current_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".txt", ".csv", ".list"}
+        ),
+        key=lambda path: path.name.lower(),
+    )
+    print(f"\nProject GID files in {current_dir}:")
+    if candidates:
+        for index, path in enumerate(candidates, start=1):
+            print(f"[{index}] {path.name}")
+    else:
+        print("  No .txt, .csv, or .list files found.")
+
+    selection = prompt(
+        f"Pick a file number for {context}, or enter a path",
+        default="",
+    )
+    if selection.isdigit() and 1 <= int(selection) <= len(candidates):
+        path = candidates[int(selection) - 1]
+    else:
+        path = Path(selection).expanduser()
+        if not path.is_absolute():
+            path = current_dir / path
+    if not selection or not path.is_file():
+        raise SystemExit(f"Project GID file not found: {selection or '(blank)'}")
+    return str(path.resolve())
+
+
 def confirm(text: str, default: bool = True) -> bool:
     return prompt_bool(text, default=default)
 
@@ -789,6 +822,7 @@ def _strip_task_scope_args(argv: Sequence[str]) -> List[str]:
     scope_flags_with_value = {
         "--project-gid",
         "--project-gids",
+        "--project-gids-file",
         "--team-gids",
         "--exclude-team-gids",
         "--all-teams-state-file",
@@ -918,6 +952,7 @@ def args_get_tasks(log_level: str) -> List[str]:
     print("[1] All teams")
     print("[2] Team lookup (fuzzy search)")
     print("[3] Project GIDs (comma-separated)")
+    print("[4] Project GIDs file")
     choice = input("Choice (default 2): ").strip() or "2"
     if choice == "1":
         args.append("--all-teams")
@@ -933,11 +968,13 @@ def args_get_tasks(log_level: str) -> List[str]:
         if not team_gid:
             raise SystemExit("Team GID is required for team sync.")
         args.extend(["--team-gids", team_gid])
-    else:
+    elif choice == "3":
         project_gids = prompt("Project GIDs (comma-separated)", default="")
         if not project_gids:
             raise SystemExit("At least one project GID is required.")
         args.extend(["--project-gids", project_gids])
+    else:
+        args.extend(["--project-gids-file", _prompt_project_gids_file("task sync")])
 
     print(
         "\nHeads up: task syncs can take a long time (hours on large workspaces). "
@@ -961,9 +998,10 @@ def args_get_task_extras(log_level: str) -> List[str]:
     print("\nSelect task extras scope:")
     print("[1] Team lookup (fuzzy search)")
     print("[2] Project GIDs (comma-separated)")
-    print("[3] All teams")
-    print("[4] Personal tasks (all users)")
-    print("[5] Personal tasks (specific assignees)")
+    print("[3] Project GIDs file")
+    print("[4] All teams")
+    print("[5] Personal tasks (all users)")
+    print("[6] Personal tasks (specific assignees)")
     choice = input("Choice (default 1): ").strip() or "1"
     if choice == "1":
         team_gid = _prompt_team_gid_from_lookup(
@@ -979,14 +1017,16 @@ def args_get_task_extras(log_level: str) -> List[str]:
             raise SystemExit("At least one project GID is required.")
         args.extend(["--project-gids", project_gids])
     elif choice == "3":
-        args.append("--all-teams")
+        args.extend(["--project-gids-file", _prompt_project_gids_file("task extras")])
     elif choice == "4":
+        args.append("--all-teams")
+    elif choice == "5":
         args.append("--personal")
     else:
         args.append("--personal")
         assignees = prompt("Comma-separated user GIDs for personal tasks", default="")
         if not assignees:
-            raise SystemExit("At least one assignee GID is required for option 5.")
+            raise SystemExit("At least one assignee GID is required for option 6.")
         args.extend(["--personal-assignees", assignees])
     return args
 
@@ -996,7 +1036,8 @@ def args_get_project_status_updates(log_level: str) -> List[str]:
     print("\nSelect project status-update scope:")
     print("[1] Team lookup (fuzzy search)")
     print("[2] Project GIDs (comma-separated)")
-    print("[3] All teams")
+    print("[3] Project GIDs file")
+    print("[4] All teams")
     choice = input("Choice (default 1): ").strip() or "1"
     if choice == "1":
         team_gid = _prompt_team_gid_from_lookup(
@@ -1012,6 +1053,8 @@ def args_get_project_status_updates(log_level: str) -> List[str]:
             raise SystemExit("At least one project GID is required.")
         args.extend(["--project-gids", gids])
     elif choice == "3":
+        args.extend(["--project-gids-file", _prompt_project_gids_file("project status updates")])
+    elif choice == "4":
         args.append("--all-teams")
         excluded = prompt("Exclude team GIDs (comma-separated, optional)", default="")
         if excluded:
@@ -1072,6 +1115,7 @@ def args_incremental_updates(log_level: str) -> List[str]:
         print("\nSelect incremental sync scope:")
         print("[1] Team lookup (fuzzy search)")
         print("[2] Project GIDs (comma-separated)")
+        print("[3] Project GIDs file")
         choice = input("Choice (default 1): ").strip() or "1"
         if choice == "1":
             team_gid = _prompt_team_gid_from_lookup(
@@ -1082,11 +1126,16 @@ def args_incremental_updates(log_level: str) -> List[str]:
                 raise SystemExit("Team GID is required.")
             args.extend(["--team-gids", team_gid])
             multi_scope = True
-        else:
+        elif choice == "2":
             project_gids = prompt("Project GIDs (comma-separated)", default="")
             if not project_gids:
                 raise SystemExit("At least one project GID is required.")
             args.extend(["--project-gids", project_gids])
+            multi_scope = True
+        else:
+            args.extend(
+                ["--project-gids-file", _prompt_project_gids_file("incremental sync")]
+            )
             multi_scope = True
 
     if multi_scope:

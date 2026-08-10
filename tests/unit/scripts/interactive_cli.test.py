@@ -177,6 +177,19 @@ class IncrementalArgsBuilderTest(TestCase):
             args = interactive_cli.args_get_task_extras("INFO")
         self.assertEqual(args, ["--log-level", "INFO", "--project-gids", "proj_a, proj_b"])
 
+    def test_task_sync_can_select_project_gids_file_from_current_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            gids_path = Path(tmpdir) / "migration_project_gids.txt"
+            gids_path.write_text("proj_a\nproj_b\n", encoding="utf-8")
+            with patch("scripts.interactive_cli.Path.cwd", return_value=Path(tmpdir)), patch(
+                "builtins.input", side_effect=["4", "1", "5"]
+            ):
+                args = interactive_cli.args_get_tasks("INFO")
+        self.assertEqual(
+            args,
+            ["--log-level", "INFO", "--project-gids-file", str(gids_path.resolve()), "--workers", "5"],
+        )
+
     def test_status_updates_uses_fuzzy_team_lookup(self) -> None:
         with patch(
             "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_99"

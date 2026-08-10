@@ -109,11 +109,12 @@ Recursively fetches tasks (and subtasks) for selected projects, backfilling miss
 python3 -m scripts.get_tasks
 ```
 Required flags:
-- One of `--project-gid <gid>`, `--team`, `--team-gids <gid1,gid2>`, or `--all-teams` (optionally with `--exclude-team-gids <gid1,gid2>`).
+- One of `--project-gid <gid>`, `--project-gids <gid1,gid2>`, `--project-gids-file <path>`, `--team`, `--team-gids <gid1,gid2>`, or `--all-teams` (optionally with `--exclude-team-gids <gid1,gid2>`).
 
 Optional flags:
 - `--project-gid <gid>` – bypasses the default project and syncs only the specified project.
 - `--project-gids <gid1,gid2>` – sync a comma-separated list of projects sequentially.
+- `--project-gids-file <path>` – load project GIDs from a UTF-8 file containing newline- or comma-separated values.
 - `--team` – launches an interactive selector that lists ten teams at a time, sorted first by “never imported” (no task rows present) and then by descending project count. Use `n`/`p` to page, enter the row number to run that team, or `q` to exit.
 - `--team-gids <gid1,gid2>` – syncs the listed teams sequentially without prompting.
 - `--all-teams` – walks every team found in SQLite, skipping any you omit via `--exclude-team-gids <gid1,gid2>`.
@@ -138,11 +139,12 @@ Pulls task comments and attachment metadata for the selected projects (using the
 python3 -m scripts.get_task_extras --team-gids <gid1,gid2>
 ```
 Required flags:
-- One of `--project-gid`, `--project-gids`, `--team`, `--team-gids`, `--all-teams`, or the personal-task flags (`--personal`/`--personal-assignees`).
+- One of `--project-gid`, `--project-gids`, `--project-gids-file`, `--team`, `--team-gids`, `--all-teams`, or the personal-task flags (`--personal`/`--personal-assignees`).
 
 Optional flags (mirror `get_tasks.py`):
 - `--project-gid <gid>` for a single project.
 - `--project-gids <gid1,gid2>` to sync a comma-separated list of projects sequentially.
+- `--project-gids-file <path>` to load newline- or comma-separated project GIDs from a UTF-8 file.
 - `--team` for the interactive picker.
 - `--team-gids <gid1,gid2>` or `--all-teams`/`--exclude-team-gids <gid>` for unattended batches.
 - `--workers <n>` to tune concurrency when fetching stories/attachments (default 5).
@@ -157,10 +159,10 @@ Captures the narrative content that lives on a project itself—status updates a
 python3 -m scripts.get_project_status_updates --project-gid <gid>
 ```
 Required flags:
-- One of `--project-gid`, `--project-gids`, `--team`, `--team-gids`, or `--all-teams`.
+- One of `--project-gid`, `--project-gids`, `--project-gids-file`, `--team`, `--team-gids`, or `--all-teams`.
 
 Optional flags:
-- `--project-gid <gid>` / `--project-gids <gid1,gid2>` for one or more specific projects.
+- `--project-gid <gid>` / `--project-gids <gid1,gid2>` / `--project-gids-file <path>` for one or more specific projects; files accept newline- or comma-separated values.
 - `--team` for the interactive picker, or `--team-gids <gid1,gid2>` / `--all-teams` (+ `--exclude-team-gids <gid>`) for batches.
 - `--workers <n>` to tune per-project fetch concurrency (default 5).
 - `--workspace-gid <gid>` (logging only) and `--log-level <LEVEL>`.
@@ -224,6 +226,6 @@ python3 -m scripts.get_incremental_updates --days-back 3 --all-teams --exclude-t
 ```
 Required flags:
 - `--days-back <n>` to set the lookback window (defaults to 3 if omitted).
-- One scope selector: `--project-gid`, `--project-gids`, `--team`, `--team-gids`, `--all-teams`, or `--personal`/`--personal-assignees`.
+- One scope selector: `--project-gid`, `--project-gids`, `--project-gids-file`, `--team`, `--team-gids`, `--all-teams`, or `--personal`/`--personal-assignees`.
 
-Optional flags mirror the other scripts (`--project-gid`, `--project-gids`, `--team`, `--team-gids`, `--all-teams`, `--exclude-team-gids`, `--workers`, `--page-size`). The summary reports how many tasks, comments, and attachments were analyzed, created/updated, or marked as deleted (with per-team totals and optional per-project detail).
+Optional flags mirror the other scripts (`--project-gid`, `--project-gids`, `--project-gids-file`, `--team`, `--team-gids`, `--all-teams`, `--exclude-team-gids`, `--workers`, `--page-size`). The summary reports how many tasks, comments, and attachments were analyzed, created/updated, or marked as deleted (with per-team totals and optional per-project detail).
