@@ -73,6 +73,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Comma-separated list of project GIDs to sync sequentially.",
     )
     parser.add_argument(
+        "--project-gids-file",
+        help="Path to a newline- or comma-separated project GID file.",
+    )
+    parser.add_argument(
         "--team",
         action="store_true",
         help="Interactively select a team to sync. Overrides the default project list.",
@@ -314,6 +318,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         args.all_teams,
         args.exclude_team_gids,
         args.project_gids,
+        args.project_gids_file,
     )
     try:
         log_level = resolve_log_level(args.log_level)
@@ -343,6 +348,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             connection=connection,
             project_gid=args.project_gid,
             project_gids=args.project_gids,
+            project_gids_file=args.project_gids_file,
             use_team_picker=args.team,
             team_gids=args.team_gids,
             all_teams=args.all_teams,

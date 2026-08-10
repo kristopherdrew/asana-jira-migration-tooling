@@ -303,6 +303,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Comma-separated list of project GIDs to sync sequentially.",
     )
     parser.add_argument(
+        "--project-gids-file",
+        help="Path to a newline- or comma-separated project GID file.",
+    )
+    parser.add_argument(
         "--team",
         action="store_true",
         help="Interactively select a team.",
@@ -913,6 +917,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         args.all_teams,
         args.exclude_team_gids,
         args.project_gids,
+        args.project_gids_file,
     )
 
     credentials = load_credentials(DEFAULT_CONFIG_ROOT)
@@ -929,6 +934,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         args.all_teams
         and not args.project_gid
         and not args.project_gids
+        and not args.project_gids_file
         and not args.team
         and not args.team_gids
     )
@@ -967,6 +973,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             exclude_team_gids=args.exclude_team_gids,
             team_selector=choose_team,
             project_gids=args.project_gids,
+            project_gids_file=args.project_gids_file,
         )
 
         modified_since, effective_days_back, lookback_desc = resolve_modified_since(

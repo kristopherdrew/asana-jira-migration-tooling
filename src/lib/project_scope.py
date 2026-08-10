@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
 
 
@@ -26,6 +27,21 @@ def parse_gid_list(raw: Optional[str]) -> List[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+def read_project_gids_file(path_value: str) -> str:
+    """Read newline- or comma-separated project GIDs and return normalized CSV text."""
+    path = Path(path_value).expanduser()
+    if not path.is_file():
+        raise SystemExit(f"Project GID file not found: {path_value}")
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"Could not read project GID file {path_value}: {exc}") from exc
+    project_gids = ",".join(raw.replace("\r", "\n").splitlines())
+    if not parse_gid_list(project_gids):
+        raise SystemExit(f"No valid project GIDs found in file: {path_value}")
+    return project_gids
+
+
 def validate_scope_args(
     project_gid: Optional[str],
     use_team_picker: bool,
@@ -33,11 +49,13 @@ def validate_scope_args(
     all_teams: bool,
     exclude_team_gids: Optional[str],
     project_gids: Optional[str] = None,
+    project_gids_file: Optional[str] = None,
 ) -> None:
     """Ensure the caller specified exactly one scope source."""
     scope_flags = [
         bool(project_gid),
         bool(project_gids),
+        bool(project_gids_file),
         bool(use_team_picker),
         bool(team_gids),
         bool(all_teams),
@@ -45,12 +63,13 @@ def validate_scope_args(
     if sum(scope_flags) == 0:
         raise SystemExit(
             "No project scope specified. Provide --project-gid, --project-gids, --team, "
-            "--team-gids, or --all-teams."
+            "--project-gids-file, --team-gids, or --all-teams."
         )
     if sum(scope_flags) > 1:
         raise SystemExit(
             "Multiple project scopes specified. Choose only one of "
-            "--project-gid, --project-gids, --team, --team-gids, or --all-teams."
+            "--project-gid, --project-gids, --project-gids-file, --team, "
+            "--team-gids, or --all-teams."
         )
     if exclude_team_gids and not all_teams:
         raise SystemExit("--exclude-team-gids can only be used with --all-teams.")
@@ -90,9 +109,21 @@ def determine_projects(
     team_selector: Callable[[object], Optional[tuple]],
     archived_scope: Optional[str] = None,
     project_gids: Optional[str] = None,
+    project_gids_file: Optional[str] = None,
 ) -> List[ScopeProject]:
     """Resolve the set of projects to process based on CLI scope arguments."""
-    validate_scope_args(project_gid, use_team_picker, team_gids, all_teams, exclude_team_gids, project_gids)
+    validate_scope_args(
+        project_gid,
+        use_team_picker,
+        team_gids,
+        all_teams,
+        exclude_team_gids,
+        project_gids,
+        project_gids_file,
+    )
+
+    if project_gids_file:
+        project_gids = read_project_gids_file(project_gids_file)
 
     if project_gid:
         row = connection.execute(
