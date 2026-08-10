@@ -61,25 +61,42 @@ class IncrementalArgsBuilderTest(TestCase):
         )
 
     def test_project_scope_selected(self) -> None:
-        with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(
+        with patch(
             "builtins.input",
-            side_effect=["n", "2", "n", "1", "proj123"],
+            side_effect=["n", "2", "n", "2", "proj123", "n"],
         ):
             args = interactive_cli.args_incremental_updates("INFO")
         self.assertEqual(
             args,
-            ["--log-level", "INFO", "--days-back", "2", "--project-gid", "proj123"],
+            [
+                "--log-level",
+                "INFO",
+                "--days-back",
+                "2",
+                "--project-gids",
+                "proj123",
+                "--project-breakdown",
+                "no",
+            ],
         )
 
-    def test_team_scope_defaults_to_picker(self) -> None:
-        with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(
-            "builtins.input",
-            side_effect=["", "", "n", "", ""],
-        ):
+    def test_incremental_scope_defaults_to_fuzzy_team_lookup(self) -> None:
+        with patch(
+            "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_a"
+        ), patch("builtins.input", side_effect=["", "", "n", "", "n"]):
             args = interactive_cli.args_incremental_updates("WARNING")
         self.assertEqual(
             args,
-            ["--log-level", "WARNING", "--days-back", "3", "--team", "--project-breakdown", "no"],
+            [
+                "--log-level",
+                "WARNING",
+                "--days-back",
+                "3",
+                "--team-gids",
+                "team_a",
+                "--project-breakdown",
+                "no",
+            ],
         )
 
     def test_create_team_project_jira_issues_include_empty_with_team(self) -> None:
@@ -128,10 +145,10 @@ class IncrementalArgsBuilderTest(TestCase):
             ],
         )
 
-    def test_team_gids_scope_selected(self) -> None:
-        with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(
+    def test_incremental_project_gids_scope_selected(self) -> None:
+        with patch(
             "builtins.input",
-            side_effect=["n", "7", "n", "3", "team1, team2", "n"],
+            side_effect=["n", "7", "n", "2", "proj1, proj2", "n"],
         ):
             args = interactive_cli.args_incremental_updates("ERROR")
         self.assertEqual(
@@ -141,12 +158,31 @@ class IncrementalArgsBuilderTest(TestCase):
                 "ERROR",
                 "--days-back",
                 "7",
-                "--team-gids",
-                "team1, team2",
+                "--project-gids",
+                "proj1, proj2",
                 "--project-breakdown",
                 "no",
             ],
         )
+
+    def test_task_sync_uses_fuzzy_team_lookup_without_legacy_picker(self) -> None:
+        with patch(
+            "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_42"
+        ), patch("builtins.input", side_effect=["2", "8"]):
+            args = interactive_cli.args_get_tasks("INFO")
+        self.assertEqual(args, ["--log-level", "INFO", "--team-gids", "team_42", "--workers", "8"])
+
+    def test_task_extras_accepts_comma_separated_project_gids(self) -> None:
+        with patch("builtins.input", side_effect=["2", "proj_a, proj_b"]):
+            args = interactive_cli.args_get_task_extras("INFO")
+        self.assertEqual(args, ["--log-level", "INFO", "--project-gids", "proj_a, proj_b"])
+
+    def test_status_updates_uses_fuzzy_team_lookup(self) -> None:
+        with patch(
+            "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_99"
+        ), patch("builtins.input", side_effect=["1", "6"]):
+            args = interactive_cli.args_get_project_status_updates("DEBUG")
+        self.assertEqual(args, ["--log-level", "DEBUG", "--team-gids", "team_99", "--workers", "6"])
 
     def test_personal_tasks_assignee_search_picks_user(self) -> None:
         with patch("scripts.interactive_cli._open_sqlite") as mock_open_sqlite, patch(

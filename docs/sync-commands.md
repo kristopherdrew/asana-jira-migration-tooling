@@ -138,10 +138,11 @@ Pulls task comments and attachment metadata for the selected projects (using the
 python3 -m scripts.get_task_extras --team-gids <gid1,gid2>
 ```
 Required flags:
-- One of `--project-gid`, `--team`, `--team-gids`, `--all-teams`, or the personal-task flags (`--personal`/`--personal-assignees`).
+- One of `--project-gid`, `--project-gids`, `--team`, `--team-gids`, `--all-teams`, or the personal-task flags (`--personal`/`--personal-assignees`).
 
 Optional flags (mirror `get_tasks.py`):
 - `--project-gid <gid>` for a single project.
+- `--project-gids <gid1,gid2>` to sync a comma-separated list of projects sequentially.
 - `--team` for the interactive picker.
 - `--team-gids <gid1,gid2>` or `--all-teams`/`--exclude-team-gids <gid>` for unattended batches.
 - `--workers <n>` to tune concurrency when fetching stories/attachments (default 5).
@@ -223,6 +224,6 @@ python3 -m scripts.get_incremental_updates --days-back 3 --all-teams --exclude-t
 ```
 Required flags:
 - `--days-back <n>` to set the lookback window (defaults to 3 if omitted).
-- One scope selector: `--project-gid`, `--team`, `--team-gids`, `--all-teams`, or `--personal`/`--personal-assignees`.
+- One scope selector: `--project-gid`, `--project-gids`, `--team`, `--team-gids`, `--all-teams`, or `--personal`/`--personal-assignees`.
 
-Optional flags mirror the other scripts (`--project-gid`, `--team`, `--team-gids`, `--all-teams`, `--exclude-team-gids`, `--workers`, `--page-size`). The summary reports how many tasks, comments, and attachments were analyzed, created/updated, or marked as deleted (with per-team totals and optional per-project detail).
+Optional flags mirror the other scripts (`--project-gid`, `--project-gids`, `--team`, `--team-gids`, `--all-teams`, `--exclude-team-gids`, `--workers`, `--page-size`). The summary reports how many tasks, comments, and attachments were analyzed, created/updated, or marked as deleted (with per-team totals and optional per-project detail).
