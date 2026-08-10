@@ -916,9 +916,9 @@ def args_get_tasks(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     print("\nSelect task sync scope:")
     print("[1] All teams")
-    print("[2] Single project GID")
-    print("[3] Team interactive picker")
-    choice = input("Choice (default 3): ").strip() or "3"
+    print("[2] Team lookup (fuzzy search)")
+    print("[3] Project GIDs (comma-separated)")
+    choice = input("Choice (default 2): ").strip() or "2"
     if choice == "1":
         args.append("--all-teams")
         if confirm("Resume from last all-team run if progress file exists?", default=True):
@@ -926,15 +926,18 @@ def args_get_tasks(log_level: str) -> List[str]:
         # Allow custom state file?
         # Use default path from get_tasks; advanced users can edit CLI args manually if needed.
     elif choice == "2":
-        project_gid = _prompt_project_gid_from_lookup(
+        team_gid = _prompt_team_gid_from_lookup(
             "task sync",
-            "Project GID to sync",
+            "Team GID to sync",
         )
-        if not project_gid:
-            raise SystemExit("Project GID is required for single-project sync.")
-        args.extend(["--project-gid", project_gid])
+        if not team_gid:
+            raise SystemExit("Team GID is required for team sync.")
+        args.extend(["--team-gids", team_gid])
     else:
-        args.append("--team")
+        project_gids = prompt("Project GIDs (comma-separated)", default="")
+        if not project_gids:
+            raise SystemExit("At least one project GID is required.")
+        args.extend(["--project-gids", project_gids])
 
     print(
         "\nHeads up: task syncs can take a long time (hours on large workspaces). "
@@ -956,22 +959,25 @@ def args_get_tasks(log_level: str) -> List[str]:
 def args_get_task_extras(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     print("\nSelect task extras scope:")
-    print("[1] Single project GID")
-    print("[2] Team interactive picker")
+    print("[1] Team lookup (fuzzy search)")
+    print("[2] Project GIDs (comma-separated)")
     print("[3] All teams")
     print("[4] Personal tasks (all users)")
     print("[5] Personal tasks (specific assignees)")
     choice = input("Choice (default 1): ").strip() or "1"
     if choice == "1":
-        project_gid = _prompt_project_gid_from_lookup(
+        team_gid = _prompt_team_gid_from_lookup(
             "task extras",
-            "Project GID for task extras",
+            "Team GID for task extras",
         )
-        if not project_gid:
-            raise SystemExit("Project GID is required.")
-        args.extend(["--project-gid", project_gid])
+        if not team_gid:
+            raise SystemExit("Team GID is required.")
+        args.extend(["--team-gids", team_gid])
     elif choice == "2":
-        args.append("--team")
+        project_gids = prompt("Project GIDs (comma-separated)", default="")
+        if not project_gids:
+            raise SystemExit("At least one project GID is required.")
+        args.extend(["--project-gids", project_gids])
     elif choice == "3":
         args.append("--all-teams")
     elif choice == "4":
@@ -988,32 +994,28 @@ def args_get_task_extras(log_level: str) -> List[str]:
 def args_get_project_status_updates(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     print("\nSelect project status-update scope:")
-    print("[1] Single project GID")
-    print("[2] Team interactive picker")
+    print("[1] Team lookup (fuzzy search)")
+    print("[2] Project GIDs (comma-separated)")
     print("[3] All teams")
-    print("[4] Multiple project GIDs (comma-separated)")
     choice = input("Choice (default 1): ").strip() or "1"
     if choice == "1":
-        project_gid = _prompt_project_gid_from_lookup(
+        team_gid = _prompt_team_gid_from_lookup(
             "project status updates",
-            "Project GID for status updates",
+            "Team GID for status updates",
         )
-        if not project_gid:
-            raise SystemExit("Project GID is required.")
-        args.extend(["--project-gid", project_gid])
+        if not team_gid:
+            raise SystemExit("Team GID is required.")
+        args.extend(["--team-gids", team_gid])
     elif choice == "2":
-        args.append("--team")
+        gids = prompt("Project GIDs (comma-separated)", default="")
+        if not gids:
+            raise SystemExit("At least one project GID is required.")
+        args.extend(["--project-gids", gids])
     elif choice == "3":
         args.append("--all-teams")
         excluded = prompt("Exclude team GIDs (comma-separated, optional)", default="")
         if excluded:
             args.extend(["--exclude-team-gids", excluded])
-    else:
-        gids = prompt("Project GIDs (comma-separated)", default="")
-        if not gids:
-            raise SystemExit("At least one project GID is required for option 4.")
-        args.extend(["--project-gids", gids])
-
     workers = prompt("Workers (default 5)", default="5")
     if workers:
         args.extend(["--workers", workers])
@@ -1068,26 +1070,23 @@ def args_incremental_updates(log_level: str) -> List[str]:
             args.extend(["--exclude-team-gids", excluded])
     else:
         print("\nSelect incremental sync scope:")
-        print("[1] Single project GID")
-        print("[2] Team interactive picker")
-        print("[3] Team GIDs (comma-separated)")
-        choice = input("Choice (default 2): ").strip() or "2"
+        print("[1] Team lookup (fuzzy search)")
+        print("[2] Project GIDs (comma-separated)")
+        choice = input("Choice (default 1): ").strip() or "1"
         if choice == "1":
-            project_gid = _prompt_project_gid_from_lookup(
+            team_gid = _prompt_team_gid_from_lookup(
                 "incremental sync",
-                "Project GID to sync",
+                "Team GID to sync",
             )
-            if not project_gid:
-                raise SystemExit("Project GID is required for option 1.")
-            args.extend(["--project-gid", project_gid])
-        elif choice == "2":
-            args.append("--team")
+            if not team_gid:
+                raise SystemExit("Team GID is required.")
+            args.extend(["--team-gids", team_gid])
             multi_scope = True
         else:
-            team_gids = prompt("Team GIDs (comma-separated)", default="")
-            if not team_gids:
-                raise SystemExit("At least one team GID is required for option 3.")
-            args.extend(["--team-gids", team_gids])
+            project_gids = prompt("Project GIDs (comma-separated)", default="")
+            if not project_gids:
+                raise SystemExit("At least one project GID is required.")
+            args.extend(["--project-gids", project_gids])
             multi_scope = True
 
     if multi_scope:

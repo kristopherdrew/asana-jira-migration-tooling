@@ -37,6 +37,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Sync a single project by GID instead of using the team filters.",
     )
     parser.add_argument(
+        "--project-gids",
+        help="Comma-separated list of project GIDs to sync sequentially.",
+    )
+    parser.add_argument(
         "--personal",
         action="store_true",
         help="Sync extras for personal tasks (projects flagged as personal_<user_gid>).",
@@ -188,7 +192,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             args.team_gids,
             args.all_teams,
             args.exclude_team_gids,
-            None,
+            args.project_gids,
         )
     try:
         log_level = resolve_log_level(args.log_level)
@@ -258,6 +262,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 all_teams=args.all_teams,
                 exclude_team_gids=args.exclude_team_gids,
                 team_selector=choose_team,
+                project_gids=args.project_gids,
             )
 
         if not projects:
