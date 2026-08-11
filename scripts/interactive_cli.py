@@ -57,6 +57,7 @@ from scripts.atlassian import (  # noqa: E402
     export_team_project_jira_csv,
     get_jira_migration_decisions,
     import_jira_task_keys,
+    search_jira_external_ids,
     sync_jira_attachments,
     update_atlassian_user_map,
     import_jira_project_map,
@@ -1538,6 +1539,25 @@ def args_import_jira_keys(log_level: str) -> List[str]:
     return args
 
 
+def args_search_jira_external_ids(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    append_jira_env_flag(args)
+    jql = prompt_required(
+        'JQL (for example: project = ENG AND "External issue ID" is not EMPTY)',
+    )
+    args.extend(["--jql", jql])
+    external_id_field = prompt_required(
+        "External ID field key (for example: customfield_10001)",
+    )
+    args.extend(["--external-id-field", external_id_field])
+    max_results = prompt("Results per Jira page", default="500")
+    if max_results:
+        args.extend(["--max-results", max_results])
+    if confirm("Dry run (fetch and print mappings, write nothing)?", default=True):
+        args.append("--dry-run")
+    return args
+
+
 def args_import_jira_project_map(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     csv_path = _prompt_csv_file("Jira project association import", "Project association CSV")
@@ -1779,6 +1799,14 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
             "13",
             "Export archival project to Jira CSV (custom fields folded into description)",
             lambda: run_script(export_archival_project_jira_csv.main, args_export_archival_project(log_level)),
+        ),
+        "14": MenuItem(
+            "14",
+            "Search Jira for External IDs (JQL)",
+            lambda: run_script(
+                search_jira_external_ids.main,
+                args_search_jira_external_ids(log_level),
+            ),
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
