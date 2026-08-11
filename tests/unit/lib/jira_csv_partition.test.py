@@ -52,8 +52,8 @@ class JiraCsvPartitionTest(TestCase):
     def test_splits_oversized_synthetic_epic_into_part_epics(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "tasks.csv"
-            rows = [["epic", "epic", "", "-1", "Project Epic"]]
-            rows.extend([f"t{i}", f"t{i}", "epic", "0", f"Task {i}"] for i in range(10))
+            rows = [["epic", "epic", "", "Epic", "Project Epic"]]
+            rows.extend([f"t{i}", f"t{i}", "epic", "Task", f"Task {i}"] for i in range(10))
             write_rows(path, rows)
             parts = partition_project_csv(path, limit=6)
             self.assertEqual([part.issue_count for part in parts], [6, 6])

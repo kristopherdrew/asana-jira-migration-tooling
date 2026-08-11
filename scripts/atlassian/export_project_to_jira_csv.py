@@ -2392,7 +2392,7 @@ def export_project(
             hierarchy_value = "" if depth is None else str(depth)
             jira_parent_gid = task["jira_parent_gid"] or ""
             jira_depth_raw = task["jira_hierarchy_depth"]
-            jira_depth_value = "" if jira_depth_raw is None else str(jira_depth_raw)
+            jira_depth_value = format_jira_hierarchy_depth(jira_depth_raw)
             assignee_gid = task["assignee_gid"]
             if not _is_explicitly_inactive_atlassian_user(user_map, assignee_gid) or not active_creator_fallback:
                 assignee_display_name = format_user_display_name(task["assignee_gid"], task["assignee_name"])
@@ -2803,6 +2803,14 @@ def format_export_datetime(value: Optional[str]) -> str:
     time_part = utc_time.strftime("%I:%M %p")
     time_part = time_part.lstrip("0") or utc_time.strftime("%I:%M %p")
     return f"{date_part} {time_part.lower()}"
+
+
+def format_jira_hierarchy_depth(value: Optional[int]) -> str:
+    """Return the Jira issue-type label represented by a flattened depth."""
+    labels = {-1: "Epic", 0: "Task", 1: "Sub-task"}
+    if value is None:
+        return ""
+    return labels.get(value, str(value))
 
 
 def format_project_entry(name: Optional[str], gid: Optional[str]) -> str:

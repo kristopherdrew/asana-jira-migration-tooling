@@ -33,6 +33,7 @@ from scripts.atlassian.export_project_to_jira_csv import (
     ensure_tasks_suffix,
     extract_profile_gid_overrides,
     format_export_datetime,
+    format_jira_hierarchy_depth,
     format_project_entry,
     format_user_display_name,
     load_project_names,
@@ -262,7 +263,7 @@ def export_archival_project(
             hierarchy_value = "" if depth is None else str(depth)
             jira_parent_gid = task["jira_parent_gid"] or ""
             jira_depth_raw = task["jira_hierarchy_depth"]
-            jira_depth_value = "" if jira_depth_raw is None else str(jira_depth_raw)
+            jira_depth_value = format_jira_hierarchy_depth(jira_depth_raw)
 
             assignee_gid = task["assignee_gid"]
             if not _is_explicitly_inactive_atlassian_user(user_map, assignee_gid) or not active_creator_fallback:

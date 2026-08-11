@@ -121,10 +121,11 @@ def _split_oversized_synthetic_group(
     limit: int,
 ) -> List[List[List[str]]]:
     root = next((row for row in group if row[parent_index] == ""), group[0])
+    depth_value = str(root[depth_index]).strip()
     try:
-        is_synthetic = int(root[depth_index]) < 0
-    except (TypeError, ValueError):
-        is_synthetic = False
+        is_synthetic = int(depth_value) < 0
+    except ValueError:
+        is_synthetic = depth_value.casefold() == "epic"
     if not is_synthetic:
         return [group]
 
