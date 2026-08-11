@@ -495,6 +495,25 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertEqual(mock_run_script.call_args_list[0].args[1], ["--log-level", "DEBUG", "--team-gid", "team_1"])
 
     @patch("scripts.interactive_cli.run_script")
+    @patch(
+        "scripts.interactive_cli._prompt_jira_keys_file",
+        return_value="/tmp/jira_keys.txt",
+    )
+    def test_field_section_review_accepts_jira_keys_file(
+        self,
+        mock_prompt_file,
+        mock_run_script,
+    ) -> None:
+        with patch("builtins.input", side_effect=["4", "2"]):
+            interactive_cli.build_reports_menu("INFO")["2"].handler()
+
+        mock_prompt_file.assert_called_once_with("field & section review")
+        mock_run_script.assert_called_once_with(
+            interactive_cli.export_field_section_review_report.main,
+            ["--log-level", "INFO", "--jira-keys-file", "/tmp/jira_keys.txt"],
+        )
+
+    @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli._open_sqlite")
     @patch("scripts.interactive_cli.prompt", side_effect=["", ""])
     def test_reports_menu_team_memberships_all_teams_when_blank(

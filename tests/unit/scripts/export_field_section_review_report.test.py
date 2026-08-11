@@ -8,6 +8,7 @@ from unittest import TestCase
 from src.lib.database import Database
 from scripts.export_field_section_review_report import (
     _normalize_jira_keys,
+    _read_jira_keys_file,
     _resolve_project_gids_from_jira_keys,
     build_review_sheets,
     export_field_section_review_report,
@@ -274,6 +275,14 @@ class ExportFieldSectionReviewReportTest(TestCase):
         )
         self.assertEqual(_normalize_jira_keys(None), [])
         self.assertEqual(_normalize_jira_keys([""]), [])
+
+    def test_read_jira_keys_file_accepts_newlines_spaces_and_commas(self) -> None:
+        path = self.workspace / "jira_keys.txt"
+        path.write_text("atjm-1\nATJM-2, atjm-3\n", encoding="utf-8")
+        self.assertEqual(
+            _normalize_jira_keys([_read_jira_keys_file(str(path))]),
+            ["ATJM-1", "ATJM-2", "ATJM-3"],
+        )
 
     def test_resolve_project_gids_from_jira_keys(self) -> None:
         self._team("team_1", "Team One")

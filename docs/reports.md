@@ -144,12 +144,13 @@ Optional flags:
 - `--team-gid <gid>` to scope the report to one team's projects.
 - `--owner-gid <gid>` to scope the report to one project owner's projects.
 - `--jira-keys <keys>` to scope the report to the projects behind a list of migrated Jira Task keys (comma/space separated, or repeat the flag; case-insensitive). Keys are resolved to projects via `team_project_jira_mappings` (`kind='project'`); keys with no mapping are logged as a warning and, if none resolve, the report is empty.
+- `--jira-keys-file <path>` to load Jira Task keys from a UTF-8 file containing comma-, space-, or newline-separated values.
 - `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
 - `--filename <name>` to override the scope-derived `<Team> Migration Review.xlsx` filename.
 - `--workspace-gid <gid>` to force the workspace used when building project URLs.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
-In the interactive Reports menu, this export first asks whether the review should be team-centric, owner-centric, whole-workspace, or by Jira key(s); the team/owner scopes search names from the local SQLite snapshot (falling back to a raw GID prompt), and the Jira-key scope prompts for a comma/space-separated list of keys.
+In the interactive Reports menu, this export first asks whether the review should be team-centric, owner-centric, whole-workspace, or by Jira key(s); the team/owner scopes search names from the local SQLite snapshot (falling back to a raw GID prompt). The Jira-key scope accepts pasted comma/space-separated keys or searches the current directory for a selectable `.txt`, `.csv`, or `.list` file, with a manually entered path as a fallback.
 
 ### Project Members Report (.xlsx)
 A standalone multi-tab `.xlsx` listing project membership captured from Asana — the `members` array on each project, synced into the `project_members` table by `get_projects`. Scope it to one team's projects with `--team-gid`; omit it for the whole workspace. The tabs are:

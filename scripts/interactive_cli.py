@@ -358,8 +358,8 @@ def _prompt_user_gid_from_lookup(context: str, fallback_prompt: str) -> str:
     )
 
 
-def _prompt_project_gids_file(context: str) -> str:
-    """Select a likely GID file from the current directory or accept a typed path."""
+def _prompt_list_file(context: str, item_label: str) -> str:
+    """Select a likely list file from the current directory or accept a typed path."""
     current_dir = Path.cwd()
     candidates = sorted(
         (
@@ -369,7 +369,7 @@ def _prompt_project_gids_file(context: str) -> str:
         ),
         key=lambda path: path.name.lower(),
     )
-    print(f"\nProject GID files in {current_dir}:")
+    print(f"\n{item_label} files in {current_dir}:")
     if candidates:
         for index, path in enumerate(candidates, start=1):
             print(f"[{index}] {path.name}")
@@ -387,8 +387,16 @@ def _prompt_project_gids_file(context: str) -> str:
         if not path.is_absolute():
             path = current_dir / path
     if not selection or not path.is_file():
-        raise SystemExit(f"Project GID file not found: {selection or '(blank)'}")
+        raise SystemExit(f"{item_label} file not found: {selection or '(blank)'}")
     return str(path.resolve())
+
+
+def _prompt_project_gids_file(context: str) -> str:
+    return _prompt_list_file(context, "Project GID")
+
+
+def _prompt_jira_keys_file(context: str) -> str:
+    return _prompt_list_file(context, "Jira key")
 
 
 def confirm(text: str, default: bool = True) -> bool:
@@ -1425,11 +1433,24 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             if owner_gid:
                 args.extend(["--owner-gid", owner_gid])
         elif choice == "4":
-            jira_keys = input(
-                "Jira Task keys (comma/space separated, e.g. ATJM-1, ATJM-2): "
-            ).strip()
-            if jira_keys:
+            print("\nProvide Jira keys:")
+            print("[1] Paste Jira keys (comma/space separated)")
+            print("[2] Jira keys file")
+            jira_scope = input("Choice (default 1): ").strip() or "1"
+            if jira_scope == "1":
+                jira_keys = input(
+                    "Jira Task keys (comma/space separated, e.g. ATJM-1, ATJM-2): "
+                ).strip()
+                if not jira_keys:
+                    raise SystemExit("At least one Jira key is required.")
                 args.extend(["--jira-keys", jira_keys])
+            else:
+                args.extend(
+                    [
+                        "--jira-keys-file",
+                        _prompt_jira_keys_file("field & section review"),
+                    ]
+                )
         run_script(export_field_section_review_report.main, args)
 
     def run_project_last_updated_report() -> None:

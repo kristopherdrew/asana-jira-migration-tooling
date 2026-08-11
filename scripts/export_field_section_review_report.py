@@ -34,8 +34,8 @@ with the dependency-free :mod:`src.lib.xlsx_writer`:
   across the scope: how many projects/teams use it and total tasks.
 
 Scope with ``--team-gid`` and/or ``--owner-gid`` to focus on one admin's set of
-projects, or ``--jira-keys`` to pick out just the projects behind a list of
-migrated Jira Task keys; omit all for the whole workspace. The workbook is named
+projects, or ``--jira-keys`` / ``--jira-keys-file`` to pick out just the projects
+behind a list of migrated Jira Task keys; omit all for the whole workspace. The workbook is named
 after the scope — ``<Team> Migration Review.xlsx`` (or the owner name, else
 ``Selected Projects Migration Review.xlsx`` for a Jira-key scope, else
 ``Workspace Migration Review.xlsx``) unless ``--filename`` overrides it.
@@ -119,6 +119,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--jira-keys-file",
+        help="Optional UTF-8 file containing comma-, space-, or newline-separated Jira Task keys.",
+    )
+    parser.add_argument(
         "--workspace-gid",
         help="Optional Asana workspace GID used to build project URLs.",
     )
@@ -153,6 +157,19 @@ def _normalize_jira_keys(raw: Optional[Iterable[str]]) -> List[str]:
                 seen.add(key)
                 keys.append(key)
     return keys
+
+
+def _read_jira_keys_file(path_value: str) -> str:
+    path = Path(path_value).expanduser()
+    if not path.is_file():
+        raise SystemExit(f"Jira keys file not found: {path_value}")
+    try:
+        contents = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SystemExit(f"Could not read Jira keys file {path_value}: {exc}") from exc
+    if not _normalize_jira_keys([contents]):
+        raise SystemExit(f"No valid Jira keys found in file: {path_value}")
+    return contents
 
 
 def _resolve_project_gids_from_jira_keys(
@@ -898,6 +915,9 @@ def export_field_section_review_report(
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
+    jira_keys = list(args.jira_keys or [])
+    if args.jira_keys_file:
+        jira_keys.append(_read_jira_keys_file(args.jira_keys_file))
     try:
         log_level = resolve_log_level(args.log_level)
     except ValueError as exc:  # noqa: BLE001
@@ -910,7 +930,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         filename=args.filename,
         team_gid=args.team_gid,
         owner_gid=args.owner_gid,
-        jira_keys=args.jira_keys,
+        jira_keys=jira_keys,
         workspace_gid=args.workspace_gid or load_credentials(DEFAULT_CONFIG_ROOT).workspace_gid,
     )
     logger.info("Field & section review report completed: %s", output_path)
