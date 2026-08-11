@@ -299,6 +299,7 @@ def organize_outputs(output_dir: Path) -> None:
         "link_modifications": ["*_tasks_link_modifications.*", "*_link_modifications.*"],
         "section_counts": ["*_section_counts.csv"],
         "user_associations": ["*_user_associations.csv"],
+        "manifests": ["*_tasks_manifest.csv"],
     }
 
     for folder, patterns in categories.items():

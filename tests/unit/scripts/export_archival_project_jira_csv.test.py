@@ -5,12 +5,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
 from src.lib.database import Database
 from scripts.atlassian.export_archival_project_jira_csv import (
     ARCHIVAL_FIELDS_HEADING,
     build_archival_description,
     export_archival_project,
+    main,
 )
 
 
@@ -222,6 +224,79 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         # Subtask inherits the parent's section.
         self.assertEqual(by_gid["task_2"][header.index("Section")], "Backlog")
         self.assertEqual(by_gid["task_2"][header.index("parent_gid")], "task_1")
+
+    def test_adds_project_epic_and_reparents_top_level_tasks(self) -> None:
+        header, by_gid = self._run_export()
+        epic_gid = "proj_1::archival::epic"
+        self.assertEqual(by_gid[epic_gid][header.index("task_name")], "Archive Me")
+        self.assertEqual(by_gid[epic_gid][header.index("jira_hierarchy_depth")], "Epic")
+        self.assertEqual(by_gid["task_1"][header.index("jira_hierarchy_depth")], "Task")
+        self.assertEqual(by_gid["task_2"][header.index("jira_hierarchy_depth")], "Sub-task")
+        self.assertEqual(by_gid["task_1"][header.index("jira_parent_gid")], epic_gid)
+        self.assertEqual(by_gid["task_2"][header.index("jira_parent_gid")], "task_1")
+
+    def test_main_writes_consolidated_export_and_organizes_outputs(self) -> None:
+        output_dir = self.workspace / "organized"
+        argv = [
+            "--project-gid",
+            "proj_1",
+            "--database",
+            str(self.db_path),
+            "--output-dir",
+            str(output_dir),
+            "--filename",
+            "archive.csv",
+        ]
+        with patch(
+            "scripts.atlassian.export_archival_project_jira_csv.load_credentials"
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ):
+            main(argv)
+
+        task_files = sorted((output_dir / "tasks").glob("*.csv"))
+        self.assertEqual(len(task_files), 2)
+        consolidated = next(path for path in task_files if path.name.startswith("_Consolidated-"))
+        with consolidated.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(len(rows), 3)
+        self.assertIn("proj_1::archival::epic", {row["External issue ID"] for row in rows})
+        self.assertEqual(len(list((output_dir / "manifests").glob("*_manifest.csv"))), 1)
+        self.assertTrue((output_dir / "link_modifications").is_dir())
+        self.assertTrue((output_dir / "section_counts").is_dir())
+        self.assertTrue((output_dir / "user_associations").is_dir())
+
+    def test_main_skips_empty_project_and_still_finalizes_batch(self) -> None:
+        self.connection.execute(
+            "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
+            ("proj_empty", "Empty Archive", self.sync_time.isoformat()),
+        )
+        self.connection.commit()
+        output_dir = self.workspace / "mixed-batch"
+        argv = [
+            "--project-gids",
+            "proj_1,proj_empty",
+            "--database",
+            str(self.db_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+        with patch(
+            "scripts.atlassian.export_archival_project_jira_csv.load_credentials"
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ), self.assertLogs(
+            "scripts.atlassian.export_archival_project_jira_csv", level="WARNING"
+        ) as logs:
+            main(argv)
+
+        task_files = list((output_dir / "tasks").glob("*.csv"))
+        self.assertEqual(len(task_files), 2)
+        self.assertTrue(any(path.name.startswith("_Consolidated-") for path in task_files))
+        self.assertEqual(len(list((output_dir / "manifests").glob("*_manifest.csv"))), 1)
+        self.assertIn("Empty Archive (proj_empty)", "\n".join(logs.output))
 
     def test_populated_fields_folded_into_description(self) -> None:
         header, by_gid = self._run_export()

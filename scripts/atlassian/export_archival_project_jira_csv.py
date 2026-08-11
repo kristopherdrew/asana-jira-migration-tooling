@@ -40,6 +40,7 @@ from scripts.atlassian.export_project_to_jira_csv import (
     load_user_display_names,
     load_user_emails,
     normalize_jira_base_url,
+    organize_outputs,
     parse_iso_datetime,
     parse_project_list,
     prefer_html_text_with_links,
@@ -65,6 +66,10 @@ from scripts.merge_project_exports import merge_csv_files
 logger = logging.getLogger(__name__)
 
 ARCHIVAL_FIELDS_HEADING = "--- Asana Fields ---"
+
+
+class NoTasksFoundError(SystemExit):
+    """Raised when an explicitly selected project has no exportable tasks."""
 
 
 def build_archival_description(
@@ -157,7 +162,7 @@ def export_archival_project(
         bundle = _bundle()
         tasks = [dict(row) for row in bundle["tasks"]]
         if not tasks:
-            raise SystemExit(f"No tasks found for project {project_gid}.")
+            raise NoTasksFoundError(f"No tasks found for project {project_gid}.")
 
         if _needs_flattened_refresh(tasks):
             logger.info(
@@ -412,6 +417,34 @@ def export_archival_project(
                     row.extend([""] * (max_comments - len(comments)))
             rows.append(row)
 
+        # Archival migrations always receive a synthetic project epic so every
+        # top-level task can be imported with its Jira parent in the same CSV.
+        epic_gid = f"{project_gid}::archival::epic"
+        epic_row = [""] * len(header)
+        epic_values = {
+            "current_project": current_project_display,
+            "jira_project_name": jira_project_map.get(project_gid, {}).get("jira_project_name", ""),
+            "jira_project_key": jira_project_map.get(project_gid, {}).get("jira_project_key", ""),
+            "jira_project_type": "software",
+            "task_gid": epic_gid,
+            JIRA_TASK_ID_FIELD_NAME: epic_gid,
+            "hierarchy_depth": "-1",
+            "jira_hierarchy_depth": "Epic",
+            "task_name": project_name or project_gid,
+            "projects": current_project_display,
+            "modified_section": "Open",
+            "notes": f"Synthetic epic for archived Asana project {project_name or project_gid}.",
+        }
+        for column, value in epic_values.items():
+            if column in header:
+                epic_row[header.index(column)] = value
+        jira_parent_index = header.index("jira_parent_gid")
+        jira_depth_index = header.index("jira_hierarchy_depth")
+        for row in rows:
+            if not row[jira_parent_index] and row[jira_depth_index] == "Task":
+                row[jira_parent_index] = epic_gid
+        rows.insert(0, epic_row)
+
         # Prune empty columns while preserving the identity/hierarchy columns Jira needs.
         if rows:
             required_columns = {
@@ -542,16 +575,26 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         raise SystemExit("--filename can only be used when exporting a single project.")
 
     task_parts: List[CsvPart] = []
+    skipped_empty_projects: List[tuple[str, str]] = []
     for project_gid, project_name in projects:
         logger.info("Starting archival export for project %s (%s)", project_name, project_gid)
-        output_path = export_archival_project(
-            args.database,
-            project_gid,
-            output_dir,
-            jira_base_url,
-            filename=args.filename,
-            fallback_atlassian_id=args.fallback_atlassian_id,
-        )
+        try:
+            output_path = export_archival_project(
+                args.database,
+                project_gid,
+                output_dir,
+                jira_base_url,
+                filename=args.filename,
+                fallback_atlassian_id=args.fallback_atlassian_id,
+            )
+        except NoTasksFoundError:
+            skipped_empty_projects.append((project_gid, project_name))
+            logger.warning(
+                "Skipping archival project %s (%s): no tasks found.",
+                project_name,
+                project_gid,
+            )
+            continue
         if output_path:
             logger.info("Exported archival project %s (%s) to %s", project_name, project_gid, output_path)
             project_parts = partition_project_csv(output_path)
@@ -567,7 +610,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                     ),
                 )
 
-    if task_parts and len(projects) > 1:
+    if task_parts:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
         batches = pack_csv_parts(task_parts)
         consolidated_parts: List[CsvPart] = []
@@ -590,6 +633,14 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         manifest_path = output_dir / f"_Consolidated-{timestamp}_archival_tasks_manifest.csv"
         write_partition_manifest(manifest_path, task_parts, consolidated_parts)
         logger.info("Wrote archival Jira CSV partition manifest to %s", manifest_path)
+
+    organize_outputs(output_dir)
+    if skipped_empty_projects:
+        logger.warning(
+            "Skipped %s archival project(s) with no tasks: %s",
+            len(skipped_empty_projects),
+            ", ".join(f"{name} ({gid})" for gid, name in skipped_empty_projects),
+        )
 
 
 if __name__ == "__main__":
