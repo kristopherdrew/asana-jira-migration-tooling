@@ -229,3 +229,5 @@ Required flags:
 - One scope selector: `--project-gid`, `--project-gids`, `--project-gids-file`, `--team`, `--team-gids`, `--all-teams`, or `--personal`/`--personal-assignees`.
 
 Optional flags mirror the other scripts (`--project-gid`, `--project-gids`, `--project-gids-file`, `--team`, `--team-gids`, `--all-teams`, `--exclude-team-gids`, `--workers`, `--page-size`). The summary reports how many tasks, comments, and attachments were analyzed, created/updated, or marked as deleted (with per-team totals and optional per-project detail).
+
+For multi-project scopes, projects that return HTTP 404 because they were deleted or are no longer accessible are logged and skipped so the remaining projects can finish. Other API errors still stop the run.

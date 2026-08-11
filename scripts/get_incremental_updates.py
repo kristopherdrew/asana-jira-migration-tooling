@@ -440,7 +440,11 @@ def extract_memberships(task_payload: Dict) -> List[Dict[str, Optional[str]]]:
     return results
 
 
-def collect_task_summaries(iterable: Iterable[Dict]) -> List[Dict]:
+def collect_task_summaries(
+    iterable: Iterable[Dict],
+    *,
+    log_api_errors: bool = True,
+) -> List[Dict]:
     seen: Set[str] = set()
     summaries: List[Dict] = []
     try:
@@ -451,9 +455,46 @@ def collect_task_summaries(iterable: Iterable[Dict]) -> List[Dict]:
             seen.add(gid)
             summaries.append(item)
     except AsanaHttpError as err:
-        logger.error("Failed to search for modified tasks: %s", err.body or err)
+        if log_api_errors:
+            logger.error("Failed to search for modified tasks: %s", err.body or err)
         raise
     return summaries
+
+
+def collect_project_modified_summaries(
+    client: AsanaHttpClient,
+    project_gid: str,
+    project_name: str,
+    modified_since: Optional[str],
+    page_size: int,
+) -> Optional[List[Dict]]:
+    """Collect one project's changes, skipping projects Asana no longer recognizes."""
+    try:
+        return collect_task_summaries(
+            fetch_project_modified_tasks(
+                client,
+                project_gid,
+                modified_since,
+                page_size,
+            ),
+            log_api_errors=False,
+        )
+    except AsanaHttpError as err:
+        if err.status != 404:
+            logger.error(
+                "Failed to search project %s (%s) for modified tasks: %s",
+                project_name,
+                project_gid,
+                err.body or err,
+            )
+            raise
+        logger.warning(
+            "[%s] Skipping project %s: Asana does not recognize the project GID "
+            "(it may have been deleted or become inaccessible).",
+            project_name,
+            project_gid,
+        )
+        return None
 
 
 def scope_max_modified(
@@ -1020,13 +1061,17 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 if team_gid and team_gid in excluded_team_gids:
                     continue
                 project_gid = project["project_gid"]
-                project_name = project["project_name"]
+                project_name = project["project_name"] or project_gid
                 label = f"[{project.get('team_name') or 'Project'}] "
-                summaries = collect_task_summaries(
-                    fetch_project_modified_tasks(
-                        client, project_gid, modified_since, args.page_size
-                    )
+                summaries = collect_project_modified_summaries(
+                    client,
+                    project_gid,
+                    project_name,
+                    modified_since,
+                    args.page_size,
                 )
+                if summaries is None:
+                    continue
                 process_tasks(
                     summaries,
                     label=label,

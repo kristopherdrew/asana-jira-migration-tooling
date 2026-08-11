@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from src.lib.database import Database
 from src.lib.http_client import AsanaHttpError
 from scripts.get_incremental_updates import (
+    collect_project_modified_summaries,
     collect_workspace_summaries,
     ensure_memberships,
     fetch_workspace_modified_tasks,
@@ -177,6 +178,34 @@ class GetIncrementalUpdatesMembershipTest(TestCase):
                 modified_since="2025-11-01",
                 page_size=50,
                 projects=[{"project_gid": "proj-alpha"}],
+            )
+
+    def test_collect_project_modified_summaries_skips_404(self) -> None:
+        client = _MappingClient({}, error_on={None: 404})
+
+        with self.assertLogs("scripts.get_incremental_updates", level="WARNING") as logs:
+            summaries = collect_project_modified_summaries(
+                client,
+                project_gid="proj-deleted",
+                project_name="Deleted Project",
+                modified_since="2025-11-01",
+                page_size=50,
+            )
+
+        self.assertIsNone(summaries)
+        self.assertIn("Deleted Project", "\n".join(logs.output))
+        self.assertIn("proj-deleted", "\n".join(logs.output))
+
+    def test_collect_project_modified_summaries_propagates_non_404(self) -> None:
+        client = _MappingClient({}, error_on={None: 500})
+
+        with self.assertRaises(AsanaHttpError):
+            collect_project_modified_summaries(
+                client,
+                project_gid="proj-alpha",
+                project_name="Alpha Project",
+                modified_since="2025-11-01",
+                page_size=50,
             )
 
 
