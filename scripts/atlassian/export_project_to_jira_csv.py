@@ -26,6 +26,12 @@ from src.lib.attachments import jira_unique_attachment_name
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.jira_csv_partition import (
+    CsvPart,
+    pack_csv_parts,
+    partition_project_csv,
+    write_partition_manifest,
+)
 
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
@@ -288,7 +294,7 @@ def organize_outputs(output_dir: Path) -> None:
     """Group exported files into subfolders by type to reduce clutter."""
     categories = {
         "skipped_tasks": ["*_skipped_tasks.csv"],
-        "tasks": ["*_tasks.csv"],
+        "tasks": ["*_tasks.csv", "*_tasks_part_*.csv"],
         "tasks_field_counts": ["*_tasks_field_counts.csv"],
         "link_modifications": ["*_tasks_link_modifications.*", "*_link_modifications.*"],
         "section_counts": ["*_section_counts.csv"],
@@ -3118,7 +3124,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     reuse_custom_fields = project_count > 1 and not args.stats_only and not args.no_custom_fields
     skipped_log: List[Dict[str, str]] = []
     per_project_skipped: Dict[str, List[Dict[str, str]]] = defaultdict(list)
-    task_files: List[Path] = []
+    task_parts: List[CsvPart] = []
     field_count_files: List[Path] = []
     link_mod_files: List[Path] = []
     section_files: List[Path] = []
@@ -3220,7 +3226,18 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
         if output_path:
             if not args.stats_only and output_path.exists():
-                task_files.append(output_path)
+                project_parts = partition_project_csv(output_path)
+                task_parts.extend(project_parts)
+                if len(project_parts) > 1:
+                    logger.info(
+                        "Split project %s into %s Jira CSV parts: %s",
+                        project_name,
+                        len(project_parts),
+                        ", ".join(
+                            f"{part.path.name} ({part.issue_count:,} issues)"
+                            for part in project_parts
+                        ),
+                    )
             section_file = output_path.with_name(f"{output_path.stem}_section_counts.csv")
             if section_file.exists():
                 section_files.append(section_file)
@@ -3270,14 +3287,34 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             logger.info("Wrote per-project skipped-task report to %s", project_path)
 
     consolidated_timestamp: Optional[str] = None
-    if task_files or field_count_files or link_mod_files or section_files or user_assoc_files:
+    if task_parts or field_count_files or link_mod_files or section_files or user_assoc_files:
         timestamp = time.strftime('%Y%m%d-%H%M')
         consolidated_timestamp = timestamp
 
-        if task_files:
-            consolidated_tasks = output_dir / f"_Consolidated-{timestamp}_tasks.csv"
-            merge_csv_files(task_files, consolidated_tasks, source_column="project", strip_suffix=None)
-            logger.info("Wrote consolidated tasks to %s", consolidated_tasks)
+        if task_parts:
+            consolidated_batches = pack_csv_parts(task_parts)
+            consolidated_parts: List[CsvPart] = []
+            for number, batch in enumerate(consolidated_batches, start=1):
+                suffix = (
+                    f"_part_{number:03d}" if len(consolidated_batches) > 1 else ""
+                )
+                consolidated_tasks = output_dir / f"_Consolidated-{timestamp}_tasks{suffix}.csv"
+                merge_csv_files(
+                    [part.path for part in batch],
+                    consolidated_tasks,
+                    source_column="project",
+                    strip_suffix=None,
+                )
+                issue_count = sum(part.issue_count for part in batch)
+                consolidated_parts.append(CsvPart(consolidated_tasks, issue_count))
+                logger.info(
+                    "Wrote consolidated tasks to %s (%s issues)",
+                    consolidated_tasks,
+                    f"{issue_count:,}",
+                )
+            manifest_path = output_dir / f"_Consolidated-{timestamp}_tasks_manifest.csv"
+            write_partition_manifest(manifest_path, task_parts, consolidated_parts)
+            logger.info("Wrote Jira CSV partition manifest to %s", manifest_path)
 
         if field_count_files:
             consolidated_fc = output_dir / f"_Consolidated-{timestamp}_tasks_field_counts.csv"

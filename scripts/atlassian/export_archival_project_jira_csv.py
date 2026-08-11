@@ -53,6 +53,13 @@ from scripts.atlassian.export_project_to_jira_csv import (
 from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.jira_csv_partition import (
+    CsvPart,
+    pack_csv_parts,
+    partition_project_csv,
+    write_partition_manifest,
+)
+from scripts.merge_project_exports import merge_csv_files
 
 logger = logging.getLogger(__name__)
 
@@ -533,6 +540,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     if args.filename and len(projects) > 1:
         raise SystemExit("--filename can only be used when exporting a single project.")
 
+    task_parts: List[CsvPart] = []
     for project_gid, project_name in projects:
         logger.info("Starting archival export for project %s (%s)", project_name, project_gid)
         output_path = export_archival_project(
@@ -545,6 +553,42 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         )
         if output_path:
             logger.info("Exported archival project %s (%s) to %s", project_name, project_gid, output_path)
+            project_parts = partition_project_csv(output_path)
+            task_parts.extend(project_parts)
+            if len(project_parts) > 1:
+                logger.info(
+                    "Split archival project %s into %s Jira CSV parts: %s",
+                    project_name,
+                    len(project_parts),
+                    ", ".join(
+                        f"{part.path.name} ({part.issue_count:,} issues)"
+                        for part in project_parts
+                    ),
+                )
+
+    if task_parts and len(projects) > 1:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+        batches = pack_csv_parts(task_parts)
+        consolidated_parts: List[CsvPart] = []
+        for number, batch in enumerate(batches, start=1):
+            suffix = f"_part_{number:03d}" if len(batches) > 1 else ""
+            consolidated_path = output_dir / f"_Consolidated-{timestamp}_archival_tasks{suffix}.csv"
+            merge_csv_files(
+                [part.path for part in batch],
+                consolidated_path,
+                source_column="project",
+                strip_suffix=None,
+            )
+            issue_count = sum(part.issue_count for part in batch)
+            consolidated_parts.append(CsvPart(consolidated_path, issue_count))
+            logger.info(
+                "Wrote consolidated archival tasks to %s (%s issues)",
+                consolidated_path,
+                f"{issue_count:,}",
+            )
+        manifest_path = output_dir / f"_Consolidated-{timestamp}_archival_tasks_manifest.csv"
+        write_partition_manifest(manifest_path, task_parts, consolidated_parts)
+        logger.info("Wrote archival Jira CSV partition manifest to %s", manifest_path)
 
 
 if __name__ == "__main__":
