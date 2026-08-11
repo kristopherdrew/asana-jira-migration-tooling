@@ -13,7 +13,7 @@ import shlex
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
 
 # Ensure project root is on sys.path so imports work when run directly.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -358,18 +358,23 @@ def _prompt_user_gid_from_lookup(context: str, fallback_prompt: str) -> str:
     )
 
 
-def _prompt_list_file(context: str, item_label: str) -> str:
-    """Select a likely list file from the current directory or accept a typed path."""
-    current_dir = Path.cwd()
+def _prompt_list_file(
+    context: str,
+    item_label: str,
+    suffixes: Optional[Set[str]] = None,
+) -> str:
+    """Select a matching file from the repository root or accept a typed path."""
+    search_dir = PROJECT_ROOT
+    allowed_suffixes = suffixes or {".txt", ".csv", ".list"}
     candidates = sorted(
         (
             path
-            for path in current_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in {".txt", ".csv", ".list"}
+            for path in search_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in allowed_suffixes
         ),
         key=lambda path: path.name.lower(),
     )
-    print(f"\n{item_label} files in {current_dir}:")
+    print(f"\n{item_label} files in {search_dir}:")
     if candidates:
         for index, path in enumerate(candidates, start=1):
             print(f"[{index}] {path.name}")
@@ -385,7 +390,7 @@ def _prompt_list_file(context: str, item_label: str) -> str:
     else:
         path = Path(selection).expanduser()
         if not path.is_absolute():
-            path = current_dir / path
+            path = search_dir / path
     if not selection or not path.is_file():
         raise SystemExit(f"{item_label} file not found: {selection or '(blank)'}")
     return str(path.resolve())
@@ -397,6 +402,10 @@ def _prompt_project_gids_file(context: str) -> str:
 
 def _prompt_jira_keys_file(context: str) -> str:
     return _prompt_list_file(context, "Jira key")
+
+
+def _prompt_csv_file(context: str, item_label: str) -> str:
+    return _prompt_list_file(context, item_label, {".csv"})
 
 
 def confirm(text: str, default: bool = True) -> bool:
@@ -1206,10 +1215,9 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
         args.extend(["--project-gid", project_gid])
     elif choice == "2":
         if confirm("Load project GIDs from a file?", default=False):
-            path = prompt("Path to file with project GIDs (newline or comma separated)", default="")
-            if not path:
-                raise SystemExit("Project GID file is required.")
-            args.extend(["--project-gids-file", path])
+            args.extend(
+                ["--project-gids-file", _prompt_project_gids_file("Jira CSV export")]
+            )
         else:
             gids = prompt("Project GIDs (comma-separated)", default="")
             if not gids:
@@ -1294,10 +1302,9 @@ def args_export_archival_project(log_level: str) -> List[str]:
         args.extend(["--project-gid", project_gid])
     elif choice == "2":
         if confirm("Load project GIDs from a file?", default=False):
-            path = prompt("Path to file with project GIDs (newline or comma separated)", default="")
-            if not path:
-                raise SystemExit("Project GID file is required.")
-            args.extend(["--project-gids-file", path])
+            args.extend(
+                ["--project-gids-file", _prompt_project_gids_file("archival Jira CSV export")]
+            )
         else:
             gids = prompt("Project GIDs (comma-separated)", default="")
             if not gids:
@@ -1520,9 +1527,7 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
 def args_import_jira_keys(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    csv_path = prompt("Path to Jira export CSV (with Issue key + External issue ID)", default="")
-    if not csv_path:
-        raise SystemExit("CSV path is required.")
+    csv_path = _prompt_csv_file("Jira task-key import", "Jira export CSV")
     args.extend(["--csv", csv_path])
     task_column = prompt("Task ID column name", default="External issue ID")
     if task_column:
@@ -1535,9 +1540,7 @@ def args_import_jira_keys(log_level: str) -> List[str]:
 
 def args_import_jira_project_map(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    csv_path = prompt("Path to Jira project association CSV (project_gid,project_name,project_key)", default="")
-    if not csv_path:
-        raise SystemExit("CSV path is required.")
+    csv_path = _prompt_csv_file("Jira project association import", "Project association CSV")
     args.extend(["--csv", csv_path])
     return args
 
@@ -1583,26 +1586,35 @@ def args_clear_export_ids(log_level: str) -> List[str]:
 
 def args_update_user_map(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    csv_path = prompt(
-        "CSV with gid,atlassianAccountId[,atlassianEmail,atlassianStatus] "
-        "(template: Sample Data/atlassian_user_map_template.csv)",
-        default="",
+    csv_path = _prompt_csv_file(
+        "Atlassian user-map update",
+        "Atlassian user-map CSV",
     )
-    if not csv_path:
-        raise SystemExit("CSV path is required.")
     args.extend(["--csv", csv_path])
     return args
 
 
 def args_sync_attachments(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    project_gids = prompt("Project GID(s) to sync attachments for (comma-separated allowed)", default="")
-    if not project_gids:
-        raise SystemExit("At least one project GID is required.")
-    if "," in project_gids:
-        args.extend(["--project-gids", project_gids])
+    print("\nProvide attachment-sync project scope:")
+    print("[1] Project GID(s) (comma-separated)")
+    print("[2] Project GIDs file")
+    choice = input("Choice (default 1): ").strip() or "1"
+    if choice == "2":
+        args.extend(
+            ["--project-gids-file", _prompt_project_gids_file("Jira attachment sync")]
+        )
     else:
-        args.extend(["--project-gid", project_gids])
+        project_gids = prompt(
+            "Project GID(s) to sync attachments for (comma-separated allowed)",
+            default="",
+        )
+        if not project_gids:
+            raise SystemExit("At least one project GID is required.")
+        if "," in project_gids:
+            args.extend(["--project-gids", project_gids])
+        else:
+            args.extend(["--project-gid", project_gids])
     append_jira_env_flag(args)
     if confirm("Dry run (no uploads)?", default=True):
         args.append("--dry-run")

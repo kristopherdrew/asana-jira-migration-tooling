@@ -74,6 +74,10 @@ profiles/
 data/
 exports/
 
+# Local CSV data and migration inputs
+
+*.csv
+
 # Common Python files
 
 __pycache__/

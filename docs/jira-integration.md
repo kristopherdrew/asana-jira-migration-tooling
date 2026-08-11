@@ -6,6 +6,8 @@ Jira-bound scripts read `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` from the reso
 
 ← Back to [README](../README.md)
 
+When an Atlassian CLI menu action accepts an input file, its picker lists matching files from the repository root regardless of the directory used to launch the CLI. Project-GID lists accept `.txt`, `.csv`, or `.list`; Jira key imports, Atlassian user maps, and Jira project associations list `.csv` files. A relative or absolute path can still be entered manually.
+
 ### Update Atlassian User Map
 Maintains the `user_atlassian_accounts` lookup table that translates Asana user GIDs into Atlassian account IDs, emails, and user status so Jira exports can resolve comment authors. There are two ways to populate it.
 
@@ -304,9 +306,11 @@ Downloads every attachment referenced by the tasks in a project and uploads thos
 python3 -m scripts.sync_jira_attachments --project-gid <gid>
 # or, against production
 python3 -m scripts.sync_jira_attachments --project-gids <gid1,gid2,...> --prod
+# or load newline-/comma-separated project GIDs from a file
+python3 -m scripts.sync_jira_attachments --project-gids-file <path>
 ```
 Required flags:
-- One scope selector: `--project-gid <gid>` or `--project-gids <gid1,gid2,...>`.
+- One scope selector: `--project-gid <gid>`, `--project-gids <gid1,gid2,...>`, or `--project-gids-file <path>`.
 
 Optional flags:
 - `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).

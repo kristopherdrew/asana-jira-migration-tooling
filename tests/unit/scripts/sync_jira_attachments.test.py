@@ -68,6 +68,18 @@ class SyncJiraAttachmentsTest(TestCase):
             atlassian_token="jira-token",
         )
 
+    def test_resolve_project_gids_from_file(self) -> None:
+        gids_path = self.workspace / "projects.csv"
+        gids_path.write_text("proj_a\nproj_b, proj_a\n", encoding="utf-8")
+        self.assertEqual(
+            sync_script.resolve_project_gids(None, None, str(gids_path)),
+            ["proj_a", "proj_b"],
+        )
+
+    def test_resolve_project_gids_rejects_multiple_scope_sources(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "Choose only one"):
+            sync_script.resolve_project_gids("proj_a", None, "projects.csv")
+
     def test_collect_attachment_jobs_returns_jobs(self) -> None:
         jobs = sync_script.collect_attachment_jobs(self.connection, self.project_gid)
         self.assertEqual(len(jobs), 1)

@@ -27,6 +27,7 @@ from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.project_scope import read_project_gids_file
 from src.lib.attachments import jira_unique_attachment_name
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Comma-separated list of Asana project GIDs to sync attachments for (processed sequentially).",
     )
     parser.add_argument(
+        "--project-gids-file",
+        help="Path to a newline- or comma-separated project GID file.",
+    )
+    parser.add_argument(
         "--prod",
         action="store_true",
         help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
@@ -78,8 +83,19 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def resolve_project_gids(single: Optional[str], multiple: Optional[str]) -> List[str]:
+def resolve_project_gids(
+    single: Optional[str],
+    multiple: Optional[str],
+    project_gids_file: Optional[str] = None,
+) -> List[str]:
+    scopes = [bool(single), bool(multiple), bool(project_gids_file)]
+    if sum(scopes) > 1:
+        raise SystemExit(
+            "Choose only one of --project-gid, --project-gids, or --project-gids-file."
+        )
     project_gids: List[str] = []
+    if project_gids_file:
+        multiple = read_project_gids_file(project_gids_file)
     if multiple:
         project_gids.extend([gid.strip() for gid in multiple.split(",") if gid.strip()])
     if single and single.strip():
@@ -95,7 +111,10 @@ def resolve_project_gids(single: Optional[str], multiple: Optional[str]) -> List
         normalized.append(gid)
 
     if not normalized:
-        raise SystemExit("Provide at least one project gid via --project-gid or --project-gids.")
+        raise SystemExit(
+            "Provide at least one project gid via --project-gid, --project-gids, "
+            "or --project-gids-file."
+        )
     return normalized
 
 
@@ -485,7 +504,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    project_gids = resolve_project_gids(args.project_gid, args.project_gids)
+    project_gids = resolve_project_gids(
+        args.project_gid,
+        args.project_gids,
+        args.project_gids_file,
+    )
     # Create a dedicated attachment export folder per run when using the default exports/ path.
     output_root = Path(args.output_dir)
     if output_root == Path(DEFAULT_OUTPUT_DIR):
