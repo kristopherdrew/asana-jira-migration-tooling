@@ -214,6 +214,44 @@ class IncrementalArgsBuilderTest(TestCase):
             ],
         )
 
+    def test_search_jira_external_ids_builds_sandbox_dry_run_args(self) -> None:
+        with patch(
+            "builtins.input",
+            side_effect=[
+                'project = ENG AND "External issue ID" is not EMPTY',
+                "customfield_10001",
+                "250",
+                "y",
+            ],
+        ):
+            args = interactive_cli.args_search_jira_external_ids("DEBUG")
+
+        self.assertEqual(
+            args,
+            [
+                "--log-level",
+                "DEBUG",
+                "--jql",
+                'project = ENG AND "External issue ID" is not EMPTY',
+                "--external-id-field",
+                "customfield_10001",
+                "--max-results",
+                "250",
+                "--dry-run",
+            ],
+        )
+
+    def test_search_jira_external_ids_uses_production_session(self) -> None:
+        interactive_cli._session.use_prod = True
+        with patch(
+            "builtins.input",
+            side_effect=["project = ENG", "customfield_10001", "500", "n"],
+        ):
+            args = interactive_cli.args_search_jira_external_ids("INFO")
+
+        self.assertIn("--prod", args)
+        self.assertNotIn("--dry-run", args)
+
     def test_user_and_project_map_imports_use_root_csv_picker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
