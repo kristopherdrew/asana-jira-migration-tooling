@@ -267,6 +267,44 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertTrue((output_dir / "section_counts").is_dir())
         self.assertTrue((output_dir / "user_associations").is_dir())
 
+    def test_export_id_records_tasks_and_skips_them_on_rerun(self) -> None:
+        output_dir = self.workspace / "export-id"
+        skipped_log = []
+        first_path = export_archival_project(
+            str(self.db_path),
+            "proj_1",
+            output_dir,
+            self.jira_base_url,
+            filename="first.csv",
+            export_id="archive-wave",
+            skipped_log=skipped_log,
+        )
+        self.assertIsNotNone(first_path)
+
+        second_path = export_archival_project(
+            str(self.db_path),
+            "proj_1",
+            output_dir,
+            self.jira_base_url,
+            filename="second.csv",
+            export_id="archive-wave",
+            skipped_log=skipped_log,
+        )
+        self.assertIsNone(second_path)
+        self.assertEqual(
+            [entry["task_gid"] for entry in skipped_log],
+            ["task_1", "task_2"],
+        )
+        recorded = list(
+            self.connection.execute(
+                "SELECT task_gid, project_gid FROM exported_tasks "
+                "WHERE export_id = ? ORDER BY task_gid",
+                ("archive-wave",),
+            )
+        )
+        self.assertEqual([row["task_gid"] for row in recorded], ["task_1", "task_2"])
+        self.assertEqual({row["project_gid"] for row in recorded}, {"proj_1"})
+
     def test_main_skips_empty_project_and_still_finalizes_batch(self) -> None:
         self.connection.execute(
             "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",

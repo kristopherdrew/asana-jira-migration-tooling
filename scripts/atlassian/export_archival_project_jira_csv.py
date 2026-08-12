@@ -30,6 +30,7 @@ from scripts.atlassian.export_project_to_jira_csv import (
     _build_active_creator_fallback,
     _is_explicitly_inactive_atlassian_user,
     build_project_export_data,
+    current_utc_time,
     ensure_tasks_suffix,
     extract_profile_gid_overrides,
     format_export_datetime,
@@ -129,6 +130,8 @@ def export_archival_project(
     jira_base_url: str,
     filename: Optional[str] = None,
     fallback_atlassian_id: Optional[str] = None,
+    export_id: Optional[str] = None,
+    skipped_log: Optional[List[Dict[str, str]]] = None,
 ) -> Optional[Path]:
     jira_base_url = normalize_jira_base_url(jira_base_url)
     if not jira_base_url:
@@ -172,6 +175,42 @@ def export_archival_project(
             database.rebuild_flattened_task_hierarchy(connection)
             bundle = _bundle()
             tasks = [dict(row) for row in bundle["tasks"]]
+
+        if export_id:
+            exported_task_projects = database.get_exported_task_projects(connection, export_id)
+            if exported_task_projects:
+                logger.info(
+                    "Found %s previously exported task(s) for export_id %s; they will be skipped.",
+                    len(exported_task_projects),
+                    export_id,
+                )
+            retained_tasks = []
+            for task in tasks:
+                gid = task["gid"]
+                if gid in exported_task_projects:
+                    if skipped_log is not None:
+                        existing_project_gid = exported_task_projects.get(gid) or ""
+                        skipped_log.append(
+                            {
+                                "task_gid": gid,
+                                "skipped_project": project_names.get(project_gid, project_gid),
+                                "existing_project": project_names.get(
+                                    existing_project_gid, existing_project_gid
+                                ),
+                                "export_id": export_id,
+                            }
+                        )
+                    continue
+                retained_tasks.append(task)
+            tasks = retained_tasks
+            if not tasks:
+                logger.info(
+                    "All tasks for archival project %s are already recorded for export_id %s; "
+                    "skipping export.",
+                    project_gid,
+                    export_id,
+                )
+                return None
 
         field_meta = bundle["field_meta"]
         single_map = bundle["single_map"]
@@ -511,6 +550,20 @@ def export_archival_project(
             project_name or project_gid,
             last_active,
         )
+        if export_id:
+            recorded = database.record_exported_tasks(
+                connection,
+                export_id,
+                (task["gid"] for task in tasks),
+                project_gid,
+                current_utc_time(),
+            )
+            logger.info(
+                "Recorded %s archival task(s) for export_id %s after exporting project %s.",
+                recorded,
+                export_id,
+                project_gid,
+            )
         return output_path
     finally:
         connection.close()
@@ -537,6 +590,13 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--fallback-atlassian-id",
         help="Atlassian account id to use when a user has no mapped Atlassian account.",
+    )
+    parser.add_argument(
+        "--export-id",
+        help=(
+            "Optional identifier used to record exported tasks and skip tasks already exported "
+            "with the same identifier."
+        ),
     )
     parser.add_argument("--prod", action="store_true", help="Resolve the production Jira base URL (default: sandbox).")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
@@ -576,6 +636,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     task_parts: List[CsvPart] = []
     skipped_empty_projects: List[tuple[str, str]] = []
+    skipped_log: List[Dict[str, str]] = []
     for project_gid, project_name in projects:
         logger.info("Starting archival export for project %s (%s)", project_name, project_gid)
         try:
@@ -586,6 +647,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 jira_base_url,
                 filename=args.filename,
                 fallback_atlassian_id=args.fallback_atlassian_id,
+                export_id=args.export_id,
+                skipped_log=skipped_log,
             )
         except NoTasksFoundError:
             skipped_empty_projects.append((project_gid, project_name))
@@ -609,6 +672,19 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                         for part in project_parts
                     ),
                 )
+
+    if skipped_log:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+        skipped_path = output_dir / f"_Consolidated-{timestamp}_archival_skipped_tasks.csv"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with skipped_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=["task_gid", "skipped_project", "existing_project", "export_id"],
+            )
+            writer.writeheader()
+            writer.writerows(skipped_log)
+        logger.info("Wrote archival skipped-task report to %s", skipped_path)
 
     if task_parts:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")

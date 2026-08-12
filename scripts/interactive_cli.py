@@ -1325,6 +1325,9 @@ def args_export_archival_project(log_level: str) -> List[str]:
     fallback_atl = prompt("Fallback Atlassian account ID for unmapped users (optional)", default="")
     if fallback_atl:
         args.extend(["--fallback-atlassian-id", fallback_atl])
+    export_id = prompt("Export ID to record/skip previously exported tasks (optional)", default="")
+    if export_id:
+        args.extend(["--export-id", export_id])
     return args
 
 
