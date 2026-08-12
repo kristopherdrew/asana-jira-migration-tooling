@@ -3,6 +3,7 @@ from unittest import TestCase
 from src.lib.asana_urls import (
     build_portfolio_url,
     build_project_url,
+    build_task_url,
     build_team_url,
     build_user_task_list_url,
     build_user_url,
@@ -21,6 +22,14 @@ class BuildUrlTest(TestCase):
         )
         self.assertEqual(build_project_url("ws", None), "")
         self.assertEqual(build_project_url(None, "proj"), "")
+
+    def test_build_task_url(self) -> None:
+        self.assertEqual(
+            build_task_url("ws", "task"),
+            "https://app.asana.com/1/ws/task/task",
+        )
+        self.assertEqual(build_task_url("ws", None), "")
+        self.assertEqual(build_task_url(None, "task"), "")
 
     def test_build_portfolio_url(self) -> None:
         self.assertEqual(
