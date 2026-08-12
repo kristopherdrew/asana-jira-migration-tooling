@@ -36,6 +36,8 @@ from scripts import (  # noqa: E402
     merge_project_exports,
     export_users,
     export_team_report,
+    download_asana_attachments,
+    upload_jira_attachments,
 )
 from scripts import (  # noqa: E402
     export_project_details_report,
@@ -1647,6 +1649,44 @@ def args_sync_attachments(log_level: str) -> List[str]:
     return args
 
 
+def args_download_attachment_archive(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    print("\nProvide Asana-hosted attachment archive scope:")
+    print("[1] All active Asana-hosted attachments")
+    print("[2] Project GID(s)")
+    print("[3] Project GIDs file")
+    choice = input("Choice (default 1): ").strip() or "1"
+    if choice == "1":
+        args.append("--all")
+    elif choice == "2":
+        gids = prompt("Project GID(s), comma-separated", default="")
+        if not gids:
+            raise SystemExit("At least one project GID is required.")
+        args.extend(["--project-gids" if "," in gids else "--project-gid", gids])
+    elif choice == "3":
+        args.extend(["--project-gids-file", _prompt_project_gids_file("attachment archive")])
+    else:
+        raise SystemExit("Invalid attachment archive scope.")
+    archive_root = prompt("Archive root directory", default="attachment_archives")
+    archive_id = prompt("Archive/wave ID (blank = timestamped default)", default="")
+    args.extend(["--archive-root", archive_root])
+    if archive_id:
+        args.extend(["--archive-id", archive_id])
+    return args
+
+
+def args_upload_attachment_archive(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    manifest = prompt("Attachment archive manifest.json path", default="")
+    if not manifest:
+        raise SystemExit("An attachment archive manifest is required.")
+    args.extend(["--manifest", manifest])
+    append_jira_env_flag(args)
+    if confirm("Dry run (resolve destinations without Jira uploads)?", default=True):
+        args.append("--dry-run")
+    return args
+
+
 def args_create_team_project_jira_issues(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     jira_project_key = prompt("Target Jira project key (e.g. MIG)", default="")
@@ -1812,6 +1852,22 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
             lambda: run_script(
                 search_jira_external_ids.main,
                 args_search_jira_external_ids(log_level),
+            ),
+        ),
+        "15": MenuItem(
+            "15",
+            "Download durable Asana attachment archive",
+            lambda: run_script(
+                download_asana_attachments.main,
+                args_download_attachment_archive(log_level),
+            ),
+        ),
+        "16": MenuItem(
+            "16",
+            "Upload local attachment archive to Jira",
+            lambda: run_script(
+                upload_jira_attachments.main,
+                args_upload_attachment_archive(log_level),
             ),
         ),
         "b": MenuItem("b", "Back", lambda: None),

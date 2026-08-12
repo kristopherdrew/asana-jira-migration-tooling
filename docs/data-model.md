@@ -631,6 +631,75 @@ Maps Asana user GID → Atlassian account id/email/status so Jira exports can re
 
 ## Jira / Atlassian mapping
 
+#### `attachment_archives`
+
+Durable local extraction waves for delayed Asana-to-Jira attachment migration.
+
+- **Source:** Derived from active Asana-hosted rows in task_attachments and local archive output.
+- **Populated by:** `scripts/download_asana_attachments.py`
+- **Written by:** `create_archive`
+- **Write semantics:** Upsert by archive_id; completion totals and manifest checksum are refreshed on resume.
+
+| Column | Type | PK |
+|---|---|---|
+| `archive_id` | TEXT | ✓ |
+| `workspace_gid` | TEXT |  |
+| `archive_path` | TEXT |  |
+| `scope_json` | TEXT |  |
+| `status` | TEXT |  |
+| `attachment_count` | INTEGER |  |
+| `total_bytes` | INTEGER |  |
+| `manifest_sha256` | TEXT |  |
+| `created_at` | TEXT |  |
+| `completed_at` | TEXT |  |
+
+#### `attachment_archive_files`
+
+Per-file local path, byte count, checksum, and verification state for an archive wave.
+
+- **Source:** Downloaded bytes plus task_attachments source metadata.
+- **Populated by:** `scripts/download_asana_attachments.py`
+- **Written by:** `create_archive`
+- **Write semantics:** Upsert by (archive_id, attachment_gid); resumable and checksum verified.
+- **Foreign keys:** attachment_gid → task_attachments(gid); archive_id → attachment_archives(archive_id)
+
+| Column | Type | PK |
+|---|---|---|
+| `archive_id` | TEXT | ✓ |
+| `attachment_gid` | TEXT | ✓ |
+| `task_gid` | TEXT |  |
+| `original_name` | TEXT |  |
+| `jira_name` | TEXT |  |
+| `relative_path` | TEXT |  |
+| `expected_size` | INTEGER |  |
+| `actual_size` | INTEGER |  |
+| `sha256` | TEXT |  |
+| `status` | TEXT |  |
+| `downloaded_at` | TEXT |  |
+| `last_verified_at` | TEXT |  |
+| `error` | TEXT |  |
+
+#### `attachment_jira_uploads`
+
+Per-destination delivery state for archived files uploaded to Jira work items.
+
+- **Source:** Archive manifest joined to current task_jira_mappings and Jira attachment API responses.
+- **Populated by:** `scripts/upload_jira_attachments.py`
+- **Written by:** `upload_archive`
+- **Write semantics:** Upsert by (archive_id, attachment_gid, jira_key); records retries and Jira attachment IDs.
+- **Foreign keys:** archive_id → attachment_archive_files(archive_id); attachment_gid → attachment_archive_files(attachment_gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `archive_id` | TEXT | ✓ |
+| `attachment_gid` | TEXT | ✓ |
+| `jira_key` | TEXT | ✓ |
+| `jira_attachment_id` | TEXT |  |
+| `uploaded_size` | INTEGER |  |
+| `status` | TEXT |  |
+| `uploaded_at` | TEXT |  |
+| `error` | TEXT |  |
+
 #### `task_jira_mappings`
 
 Maps Asana task GID ↔ Jira issue key.

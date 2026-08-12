@@ -73,6 +73,7 @@ profiles/
 
 data/
 exports/
+attachment_archives/
 
 # Local CSV data and migration inputs
 

@@ -66,11 +66,21 @@ Records `team_project_jira_mappings` so re-runs skip what exists.
   and requeued. Errored items stay unmapped so a later re-run picks them up.
 - Writes `team_project_jira_create_<ts>.csv` with per-row status.
 
-## C. Attachments (after issues exist + keys/mappings are stored)
-`python3 -m scripts.sync_jira_attachments --project-gid <gid> --jira-base-url <url>`
-(or `--project-gids a,b`). Downloads Asana attachments and uploads them to the Jira issues in
-`task_jira_mappings`, matching the `!filename!` markers. Always `--dry-run` first. Tune with
-`--max-workers` / `--throttle-seconds`; already-present files are `skipped-existing`.
+## C. Attachments
+For delayed migration, archive active Asana-hosted files while source access is available;
+Jira mappings are not required yet:
+`python3 -m scripts.download_asana_attachments --all --archive-id <wave>`.
+Verify after copying or before upload with
+`python3 -m scripts.download_asana_attachments --verify-manifest <archive>/manifest.json`.
+After issues exist and keys/mappings are stored, preview and upload from the archive:
+`python3 -m scripts.upload_jira_attachments --manifest <archive>/manifest.json --dry-run`,
+then rerun without `--dry-run` (and with `--prod` when appropriate). The uploader resolves
+current `task_jira_mappings`, so extraction and delivery may be months apart.
+
+For immediate one-step migration, the legacy
+`python3 -m scripts.sync_jira_attachments --project-gid <gid>` path remains available. It
+downloads and uploads in one run. Always `--dry-run` first; tune with `--max-workers` /
+`--throttle-seconds`; already-present files are `skipped-existing`.
 
 ## D. Re-runs & cleanup
 - **Clear task→key mappings** before re-importing a wave:

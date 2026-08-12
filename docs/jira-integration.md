@@ -302,7 +302,58 @@ When `--stats-only` is supplied, the script prints summary information to stdout
 
 Task-centric user columns pair the human-readable details with Atlassian IDs and Atlassian emails (e.g., `assignee`, `assignee_email`, `assignee_atlassian_id`, `assignee_atlassian_email`, and the same quartet for `creator`). The export also surfaces scheduling and scope metadata (`current_project`, aggregated `projects`, `start_on`, `start_at`, `created_at`, `due_date`, `actual_time_minutes`) and includes semicolon-separated `Tags` columns. Every export also writes a companion `<filename>_field_counts.csv` listing each detected custom field, how many tasks populated it, and whether it was included in the primary CSV.
 
-### Sync Jira Attachments
+### Download Durable Asana Attachment Archives
+
+Downloads only active, Asana-hosted task attachments into a portable, resumable local
+archive. This phase does not require Jira mappings, so it can be completed alongside the
+CSV extraction even when attachment uploads will be deferred for months.
+
+```bash
+python3 -m scripts.download_asana_attachments --all --archive-id wave-2026-08
+python3 -m scripts.download_asana_attachments --project-gids <gid1,gid2> --archive-id wave-2026-08
+python3 -m scripts.download_asana_attachments --verify-manifest attachment_archives/wave-2026-08/manifest.json
+```
+
+Scope must be supplied with exactly one of `--all`, `--project-gid`, `--project-gids`,
+or `--project-gids-file`. `--task-gid` can further narrow that scope. `--archive-root`
+defaults to the git-ignored `attachment_archives/` directory, `--archive-id` names the
+immutable migration wave, and `--workers` controls concurrent Asana downloads (default 4).
+
+Each archive contains the file payloads plus `manifest.json`, `manifest.csv`, and
+`checksums.sha256`. Files are first written as `.part`, validated against Asana's recorded
+size, hashed with SHA-256, and atomically renamed. Re-running the same archive ID resumes
+valid files and retries incomplete ones. The database records wave state in
+`attachment_archives` and per-file state in `attachment_archive_files`; paths inside the
+manifest are relative so the archive can be moved or restored on another machine.
+
+The archive directory contains potentially sensitive customer data and must be copied to
+approved encrypted storage for long-term retention. A local project copy is not a backup.
+Run `--verify-manifest` after every copy and immediately before a delayed Jira upload.
+
+### Upload a Local Attachment Archive to Jira
+
+Verifies every archived file, resolves each Asana Task GID through the database's current
+`task_jira_mappings`, and uploads the file to every mapped Jira work item. Jira keys do not
+need to exist when the archive is created.
+
+```bash
+python3 -m scripts.upload_jira_attachments \
+  --manifest attachment_archives/wave-2026-08/manifest.json \
+  --dry-run
+
+python3 -m scripts.upload_jira_attachments \
+  --manifest attachment_archives/wave-2026-08/manifest.json \
+  --prod
+```
+
+`--database` selects the current mapping database; `--prod` targets production Jira,
+otherwise sandbox is used. `--workers` and `--throttle-seconds` control Jira request rate.
+Every run writes `reports/jira_upload_<timestamp>.csv` inside the archive. Per-destination
+results are persisted in `attachment_jira_uploads`, including the Jira attachment ID and
+returned size when available. Missing mappings are reported without blocking other files,
+and Jira files with the generated `filename__attachment_gid.ext` name are skipped.
+
+### Direct Sync Jira Attachments
 Downloads every attachment referenced by the tasks in a project and uploads those files to the Jira issues linked via `task_jira_mappings`, keeping filenames consistent with the `!filename!` markers embedded in notes/comments.
 ```bash
 python3 -m scripts.sync_jira_attachments --project-gid <gid>
