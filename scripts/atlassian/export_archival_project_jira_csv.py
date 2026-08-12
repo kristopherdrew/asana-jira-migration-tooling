@@ -54,6 +54,7 @@ from scripts.atlassian.export_project_to_jira_csv import (
     write_user_association_report,
 )
 from src.lib.config import load_credentials, resolve_jira_base_url
+from src.lib.asana_urls import build_project_url, build_task_url, infer_workspace_gid
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.jira_csv_partition import (
@@ -123,6 +124,31 @@ def build_default_filename(project_name: Optional[str]) -> str:
     return f"{base}-{stamp}_archival_tasks.csv"
 
 
+def build_epic_description(
+    project_name: str,
+    associations: Dict[str, Counter],
+    user_display_names: Dict[str, str],
+    user_emails: Dict[str, str],
+) -> str:
+    """Describe the archival project and list its task collaborators."""
+
+    collaborators: List[str] = []
+    for user_gid in associations:
+        display_name = (user_display_names.get(user_gid) or "").strip()
+        if not display_name:
+            display_name = f"unknown_user {user_gid}"
+        email = (user_emails.get(user_gid) or "").strip()
+        collaborators.append(f"{display_name} <{email}>" if email else display_name)
+    collaborators.sort(key=str.casefold)
+
+    lines = [f"Synthetic epic for archived Asana project {project_name}.", "", "Collaborators:"]
+    if collaborators:
+        lines.extend(f"- {collaborator}" for collaborator in collaborators)
+    else:
+        lines.append("- None recorded")
+    return "\n".join(lines)
+
+
 def export_archival_project(
     database_path: str,
     project_gid: str,
@@ -132,6 +158,7 @@ def export_archival_project(
     fallback_atlassian_id: Optional[str] = None,
     export_id: Optional[str] = None,
     skipped_log: Optional[List[Dict[str, str]]] = None,
+    workspace_gid: Optional[str] = None,
 ) -> Optional[Path]:
     jira_base_url = normalize_jira_base_url(jira_base_url)
     if not jira_base_url:
@@ -234,6 +261,15 @@ def export_archival_project(
         ).fetchone()
         project_name = project_row["name"] if project_row else None
         current_project_display = format_project_entry(project_name, project_gid)
+        resolved_workspace_gid = workspace_gid or next(
+            (
+                (task.get("workspace_gid") or "").strip()
+                for task in tasks
+                if (task.get("workspace_gid") or "").strip()
+            ),
+            None,
+        ) or infer_workspace_gid(connection)
+        project_asana_link = build_project_url(resolved_workspace_gid, project_gid)
 
         active_creator_fallback = _build_active_creator_fallback(
             tasks, user_map, user_display_names, user_emails, fallback_atlassian_id
@@ -253,6 +289,8 @@ def export_archival_project(
             "jira_project_name",
             "jira_project_key",
             "jira_project_type",
+            "Asana Project Link",
+            "Asana Task Link",
             "task_gid",
             JIRA_TASK_ID_FIELD_NAME,
             "parent_gid",
@@ -406,6 +444,8 @@ def export_archival_project(
                 jira_proj.get("jira_project_name", ""),
                 jira_proj.get("jira_project_key", ""),
                 "software",
+                project_asana_link,
+                build_task_url(resolved_workspace_gid, task["gid"]),
                 task["gid"],
                 task["gid"],
                 task["parent_gid"] or "",
@@ -465,6 +505,8 @@ def export_archival_project(
             "jira_project_name": jira_project_map.get(project_gid, {}).get("jira_project_name", ""),
             "jira_project_key": jira_project_map.get(project_gid, {}).get("jira_project_key", ""),
             "jira_project_type": "software",
+            "Asana Project Link": project_asana_link,
+            "Asana Task Link": "",
             "task_gid": epic_gid,
             JIRA_TASK_ID_FIELD_NAME: epic_gid,
             "hierarchy_depth": "-1",
@@ -472,7 +514,12 @@ def export_archival_project(
             "task_name": project_name or project_gid,
             "projects": current_project_display,
             "modified_section": "Open",
-            "notes": f"Synthetic epic for archived Asana project {project_name or project_gid}.",
+            "notes": build_epic_description(
+                project_name or project_gid,
+                associations,
+                user_display_names,
+                user_emails,
+            ),
         }
         for column, value in epic_values.items():
             if column in header:
@@ -496,6 +543,8 @@ def export_archival_project(
                 "jira_project_name",
                 "jira_project_key",
                 "jira_project_type",
+                "Asana Project Link",
+                "Asana Task Link",
                 "notes",
             }
             columns_to_keep: List[int] = []
@@ -598,6 +647,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
             "with the same identifier."
         ),
     )
+    parser.add_argument(
+        "--workspace-gid",
+        help="Workspace GID used to build the Asana project link when it cannot be inferred.",
+    )
     parser.add_argument("--prod", action="store_true", help="Resolve the production Jira base URL (default: sandbox).")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(list(argv) if argv is not None else None)
@@ -649,6 +702,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 fallback_atlassian_id=args.fallback_atlassian_id,
                 export_id=args.export_id,
                 skipped_log=skipped_log,
+                workspace_gid=args.workspace_gid,
             )
         except NoTasksFoundError:
             skipped_empty_projects.append((project_gid, project_name))

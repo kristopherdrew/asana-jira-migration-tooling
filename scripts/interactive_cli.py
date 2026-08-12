@@ -1328,6 +1328,9 @@ def args_export_archival_project(log_level: str) -> List[str]:
     export_id = prompt("Export ID to record/skip previously exported tasks (optional)", default="")
     if export_id:
         args.extend(["--export-id", export_id])
+    workspace_gid = prompt("Workspace GID for Asana project links (optional; inferred by default)", default="")
+    if workspace_gid:
+        args.extend(["--workspace-gid", workspace_gid])
     return args
 
 

@@ -198,6 +198,7 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
             output_dir,
             self.jira_base_url,
             filename="archive_proj_1.csv",
+            workspace_gid="5153924692276",
         )
         self.assertIsNotNone(csv_path)
         with csv_path.open("r", newline="", encoding="utf-8") as handle:
@@ -234,6 +235,29 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertEqual(by_gid["task_2"][header.index("jira_hierarchy_depth")], "Sub-task")
         self.assertEqual(by_gid["task_1"][header.index("jira_parent_gid")], epic_gid)
         self.assertEqual(by_gid["task_2"][header.index("jira_parent_gid")], "task_1")
+
+    def test_adds_project_link_to_every_issue_and_collaborators_to_epic(self) -> None:
+        header, by_gid = self._run_export()
+        expected_link = "https://app.asana.com/1/5153924692276/project/proj_1"
+        self.assertEqual(
+            {row[header.index("Asana Project Link")] for row in by_gid.values()},
+            {expected_link},
+        )
+        self.assertEqual(
+            by_gid["task_1"][header.index("Asana Task Link")],
+            "https://app.asana.com/1/5153924692276/task/task_1",
+        )
+        self.assertEqual(
+            by_gid["task_2"][header.index("Asana Task Link")],
+            "https://app.asana.com/1/5153924692276/task/task_2",
+        )
+        self.assertEqual(
+            by_gid["proj_1::archival::epic"][header.index("Asana Task Link")],
+            "",
+        )
+        epic_notes = by_gid["proj_1::archival::epic"][header.index("notes")]
+        self.assertIn("Collaborators:\n- Alice Reviewer <alice@example.com>", epic_notes)
+        self.assertNotIn("creator_count", epic_notes)
 
     def test_main_writes_consolidated_export_and_organizes_outputs(self) -> None:
         output_dir = self.workspace / "organized"
