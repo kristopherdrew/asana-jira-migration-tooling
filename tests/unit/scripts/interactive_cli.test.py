@@ -283,7 +283,7 @@ class IncrementalArgsBuilderTest(TestCase):
             return_value="/repo/projects.csv",
         ), patch(
             "builtins.input",
-            side_effect=["2", "y", "", "n", "n", "", "", "2", "y", ""],
+            side_effect=["2", "y", "", "n", "n", "", "", "2", "y", "", ""],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
             archival_args = interactive_cli.args_export_archival_project("INFO")
