@@ -79,8 +79,8 @@ The SQLite schema is documented in [docs/data-model.md](docs/data-model.md) (per
 - Follow Conventional Commits (e.g., `feat(tasks): add recurring scheduling`). Scope names should align with the `src/` folder touched.
 - Link the relevant Asana task in the commit when there is one.
 - Describe changes plainly, enumerate tests executed (`python3 -m unittest ...`), and attach logs or exports when relevant.
-- When a prompt-driven change is completed, ask whether the user wants the changes committed.
-- If you ask, include a suggested Conventional Commit message.
-- Do not create a commit unless the user explicitly approves it.
-- When the user requests or approves a commit, also push it to the remote in the same step (commit **and** push together) unless they say otherwise.
+- Whenever a script is added or adjusted, offer to commit and push the changes.
+- If the user accepts that offer, provide the proposed Conventional Commit message(s) and wait for final confirmation of the message(s).
+- The user's final confirmation of the proposed commit message(s) authorizes both the commit and push; no further confirmation or verification is required before performing them, unless the user says otherwise.
+- Do not create a commit or push until that final commit-message confirmation is received.
 - Keep new script shebangs aligned with the interpreter standard (`#!/usr/bin/env python3`).
