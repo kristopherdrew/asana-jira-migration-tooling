@@ -209,7 +209,7 @@ class JiraClient:
                 names.add(filename)
         return names
 
-    def upload_attachment(self, jira_key: str, filename: str, file_path) -> None:
+    def upload_attachment(self, jira_key: str, filename: str, file_path) -> Optional[Dict]:
         boundary = f"----AsanaSyncBoundary{time.time_ns()}"
         encoded_key = parse.quote(jira_key)
         path = f"/rest/api/3/issue/{encoded_key}/attachments"
@@ -220,7 +220,14 @@ class JiraClient:
         with open(file_path, "rb") as handle:
             file_bytes = handle.read()
         body = self._build_multipart(boundary, filename, file_bytes)
-        self._request("POST", path, headers=headers, data=body)
+        payload = self._request("POST", path, headers=headers, data=body)
+        try:
+            entries = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+            return entries[0]
+        return None
 
     @staticmethod
     def _build_multipart(boundary: str, filename: str, file_bytes: bytes) -> bytes:

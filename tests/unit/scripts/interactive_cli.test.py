@@ -277,6 +277,26 @@ class IncrementalArgsBuilderTest(TestCase):
             ["--log-level", "INFO", "--project-gids-file", "/repo/projects.csv", "--dry-run"],
         )
 
+    def test_attachment_archive_download_and_upload_args(self) -> None:
+        with patch("builtins.input", side_effect=["1", "/secure/archives", "wave-01"]):
+            download_args = interactive_cli.args_download_attachment_archive("INFO")
+        self.assertEqual(
+            download_args,
+            [
+                "--log-level", "INFO", "--all", "--archive-root",
+                "/secure/archives", "--archive-id", "wave-01",
+            ],
+        )
+        with patch("builtins.input", side_effect=["/secure/archives/wave-01/manifest.json", "y"]):
+            upload_args = interactive_cli.args_upload_attachment_archive("INFO")
+        self.assertEqual(
+            upload_args,
+            [
+                "--log-level", "INFO", "--manifest",
+                "/secure/archives/wave-01/manifest.json", "--dry-run",
+            ],
+        )
+
     def test_regular_and_archival_exports_use_project_gid_file_picker(self) -> None:
         with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(
             "scripts.interactive_cli._prompt_project_gids_file",

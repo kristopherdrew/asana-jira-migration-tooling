@@ -235,6 +235,58 @@ CREATE TABLE IF NOT EXISTS task_attachments (
 );
 """
 
+ATTACHMENT_ARCHIVES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS attachment_archives (
+    archive_id TEXT PRIMARY KEY,
+    workspace_gid TEXT,
+    archive_path TEXT NOT NULL,
+    scope_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    attachment_count INTEGER DEFAULT 0,
+    total_bytes INTEGER DEFAULT 0,
+    manifest_sha256 TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+"""
+
+ATTACHMENT_ARCHIVE_FILES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS attachment_archive_files (
+    archive_id TEXT NOT NULL,
+    attachment_gid TEXT NOT NULL,
+    task_gid TEXT NOT NULL,
+    original_name TEXT,
+    jira_name TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    expected_size INTEGER,
+    actual_size INTEGER,
+    sha256 TEXT,
+    status TEXT NOT NULL,
+    downloaded_at TEXT,
+    last_verified_at TEXT,
+    error TEXT,
+    PRIMARY KEY (archive_id, attachment_gid),
+    FOREIGN KEY (archive_id) REFERENCES attachment_archives(archive_id),
+    FOREIGN KEY (attachment_gid) REFERENCES task_attachments(gid)
+);
+"""
+
+ATTACHMENT_JIRA_UPLOADS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS attachment_jira_uploads (
+    archive_id TEXT NOT NULL,
+    attachment_gid TEXT NOT NULL,
+    jira_key TEXT NOT NULL,
+    jira_attachment_id TEXT,
+    uploaded_size INTEGER,
+    status TEXT NOT NULL,
+    uploaded_at TEXT,
+    error TEXT,
+    PRIMARY KEY (archive_id, attachment_gid, jira_key),
+    FOREIGN KEY (archive_id, attachment_gid)
+        REFERENCES attachment_archive_files(archive_id, attachment_gid)
+);
+"""
+
 JIRA_PROJECT_MAPPINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS jira_project_mappings (
     project_gid TEXT PRIMARY KEY,
@@ -700,6 +752,9 @@ class Database:
         connection.executescript(TASK_FOLLOWERS_SCHEMA)
         connection.executescript(TASK_COMMENTS_SCHEMA)
         connection.executescript(TASK_ATTACHMENTS_SCHEMA)
+        connection.executescript(ATTACHMENT_ARCHIVES_SCHEMA)
+        connection.executescript(ATTACHMENT_ARCHIVE_FILES_SCHEMA)
+        connection.executescript(ATTACHMENT_JIRA_UPLOADS_SCHEMA)
         connection.executescript(TASK_JIRA_MAPPINGS_SCHEMA)
         connection.executescript(JIRA_PROJECT_MAPPINGS_SCHEMA)
         connection.executescript(TAG_SCHEMA)
