@@ -1063,6 +1063,18 @@ class LifecycleMenuTest(TestCase):
         for menu in menus:
             self.assertEqual(list(menu), [item.key for item in menu.values()])
 
+    def test_token_migration_is_only_in_advanced_recovery(self) -> None:
+        client_menu = interactive_cli.build_client_environment_menu()
+        advanced_menu = interactive_cli.build_advanced_recovery_menu("INFO")
+        token_label = "Migrate tokens from env file to macOS Keychain"
+
+        self.assertNotIn(token_label, [item.label for item in client_menu.values()])
+        self.assertEqual(advanced_menu["5"].label, token_label)
+
+        with patch("scripts.interactive_cli.run_token_migration") as mock_migrate:
+            advanced_menu["5"].handler()
+        mock_migrate.assert_called_once_with(interactive_cli.PROJECT_ROOT)
+
     @patch("scripts.interactive_cli.args_get_project_status_updates", return_value=["status"])
     @patch("scripts.interactive_cli.args_get_task_extras", return_value=["extras"])
     @patch("scripts.interactive_cli.run_script")
