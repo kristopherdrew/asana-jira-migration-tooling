@@ -55,7 +55,12 @@ from scripts.atlassian.export_project_to_jira_csv import (
     write_link_modifications_report,
     write_user_association_report,
 )
-from src.lib.config import load_credentials, resolve_jira_base_url
+from src.lib.config import (
+    load_credentials,
+    resolve_credentials_path,
+    resolve_jira_base_url,
+    resolve_jira_site,
+)
 from src.lib.asana_urls import build_project_url, build_task_url, infer_workspace_gid
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -65,6 +70,16 @@ from src.lib.jira_csv_partition import (
     pack_csv_parts,
     partition_project_csv,
     write_partition_manifest,
+)
+from src.lib.jira_client import JiraClient
+from src.lib.jira_csv_import_config import (
+    load_archive_import_settings,
+    normalize_fields,
+    normalize_resolutions,
+    render_archive_import_config,
+    review_archive_import_settings,
+    save_archive_import_settings,
+    write_archive_import_config,
 )
 from scripts.merge_project_exports import merge_csv_files
 
@@ -666,6 +681,16 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--prod", action="store_true", help="Resolve the production Jira base URL (default: sandbox).")
     parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
+    parser.add_argument(
+        "--generate-jira-config",
+        action="store_true",
+        help="Interactively review mappings and write a Jira CSV importer configuration for each final CSV.",
+    )
+    parser.add_argument(
+        "--configure-jira-import",
+        action="store_true",
+        help="Reconfigure saved Archive importer mappings (implies --generate-jira-config).",
+    )
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(list(argv) if argv is not None else None)
 
@@ -678,8 +703,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         raise SystemExit(str(exc)) from exc
     configure_logging(log_level)
 
+    credentials = load_credentials()
     try:
-        jira_base_url = normalize_jira_base_url(resolve_jira_base_url(load_credentials(), prod=args.prod, site_key=args.jira_site))
+        jira_base_url = normalize_jira_base_url(
+            resolve_jira_base_url(credentials, prod=args.prod, site_key=args.jira_site)
+        )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     if not jira_base_url:
@@ -773,10 +801,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             writer.writerows(skipped_log)
         logger.info("Wrote archival skipped-task report to %s", skipped_path)
 
+    consolidated_parts: List[CsvPart] = []
     if task_parts:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
         batches = pack_csv_parts(task_parts)
-        consolidated_parts: List[CsvPart] = []
         for number, batch in enumerate(batches, start=1):
             suffix = f"_part_{number:03d}" if len(batches) > 1 else ""
             consolidated_path = output_dir / f"_Consolidated-{timestamp}_archival_tasks{suffix}.csv"
@@ -796,6 +824,39 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         manifest_path = output_dir / f"_Consolidated-{timestamp}_archival_tasks_manifest.csv"
         write_partition_manifest(manifest_path, task_parts, consolidated_parts)
         logger.info("Wrote archival Jira CSV partition manifest to %s", manifest_path)
+
+    if (args.generate_jira_config or args.configure_jira_import) and consolidated_parts:
+        if not credentials.atlassian_username or not credentials.atlassian_token:
+            raise SystemExit(
+                "ATLASSIAN_USERNAME and ATLASSIAN_TOKEN are required to discover Jira CSV mappings."
+            )
+        selected_site_key = "production_jira" if args.prod and not args.jira_site else args.jira_site
+        selected_site = resolve_jira_site(credentials, selected_site_key)
+        client = JiraClient(
+            base_url=jira_base_url,
+            username=credentials.atlassian_username,
+            token=credentials.atlassian_token,
+            skip_ssl_verification=credentials.skip_ssl_verification,
+        )
+        fields = normalize_fields(client.get_fields())
+        resolutions = normalize_resolutions(client.get_resolutions())
+        env_path = resolve_credentials_path()
+        saved_settings = load_archive_import_settings(env_path, selected_site.key)
+        preview_path = consolidated_parts[0].path
+        reviewed = review_archive_import_settings(
+            saved_settings,
+            fields,
+            resolutions,
+            selected_site.name,
+            lambda settings: render_archive_import_config(preview_path, settings),
+            force_configure=args.configure_jira_import,
+        )
+        if reviewed:
+            export_settings, reusable_settings = reviewed
+            save_archive_import_settings(env_path, selected_site.key, reusable_settings)
+            for part in consolidated_parts:
+                config_path = write_archive_import_config(part.path, export_settings)
+                logger.info("Wrote Jira CSV importer configuration to %s", config_path)
 
     organize_outputs(output_dir)
     if skipped_empty_projects:

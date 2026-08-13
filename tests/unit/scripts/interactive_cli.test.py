@@ -309,7 +309,7 @@ class IncrementalArgsBuilderTest(TestCase):
             return_value="/repo/projects.csv",
         ), patch(
             "builtins.input",
-            side_effect=["2", "y", "", "n", "n", "", "", "2", "y", "", "", ""],
+            side_effect=["2", "y", "", "n", "n", "", "", "2", "y", "", "", "", ""],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
             archival_args = interactive_cli.args_export_archival_project("INFO")
@@ -322,11 +322,20 @@ class IncrementalArgsBuilderTest(TestCase):
     def test_archival_export_accepts_inline_task_gids(self) -> None:
         with patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "", ""],
+            side_effect=["4", "n", "task_1,task_2", "", "", "", ""],
         ):
             args = interactive_cli.args_export_archival_project("INFO")
         self.assertIn("--task-gids", args)
         self.assertIn("task_1,task_2", args)
+
+    def test_archival_export_can_request_importer_configuration(self) -> None:
+        with patch(
+            "builtins.input",
+            side_effect=["4", "n", "task_1", "", "", "", "y", "n"],
+        ):
+            args = interactive_cli.args_export_archival_project("INFO")
+        self.assertIn("--generate-jira-config", args)
+        self.assertNotIn("--configure-jira-import", args)
 
     def test_regular_export_accepts_inline_task_gids(self) -> None:
         with patch(
@@ -350,7 +359,7 @@ class IncrementalArgsBuilderTest(TestCase):
             return_value="/repo/missing-task-gids.txt",
         ), patch(
             "builtins.input",
-            side_effect=["4", "y", "", "n", "n", "", "", "4", "y", "", "", ""],
+            side_effect=["4", "y", "", "n", "n", "", "", "4", "y", "", "", "", ""],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
             archival_args = interactive_cli.args_export_archival_project("INFO")

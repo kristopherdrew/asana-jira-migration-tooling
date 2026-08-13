@@ -429,6 +429,14 @@ def write_credentials_file(path: str | Path, credentials: Credentials) -> Path:
     """
     env_path = Path(path).expanduser()
     env_path.parent.mkdir(parents=True, exist_ok=True)
+    preserved_archive_csv_settings: List[str] = []
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            body = stripped[7:].strip() if stripped.startswith("export ") else stripped
+            key = body.split("=", 1)[0].strip() if "=" in body else ""
+            if re.fullmatch(r"JIRA_SITE_[A-Z0-9_]+_CSV_ARCHIVE_[A-Z0-9_]+", key):
+                preserved_archive_csv_settings.append(line)
 
     use_keychain = keychain.is_available()
     if use_keychain:
@@ -460,6 +468,7 @@ def write_credentials_file(path: str | Path, credentials: Credentials) -> Path:
             prefix = f"JIRA_SITE_{site.key.upper()}"
             lines.append(_format_env_assignment(f"{prefix}_NAME", site.name))
             lines.append(_format_env_assignment(f"{prefix}_URL", site.base_url.rstrip("/")))
+    lines.extend(preserved_archive_csv_settings)
 
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
@@ -633,6 +642,45 @@ def write_profile_default_jira_site(env_path: str | Path, site_key: str) -> None
     else:
         lines.append(replacement)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def read_profile_values(env_path: str | Path, keys: Iterable[str]) -> Dict[str, str]:
+    """Read selected non-secret profile assignments without environment overrides."""
+    path = Path(env_path).expanduser()
+    try:
+        data = _load_env_file(path)
+    except (OSError, ValueError):
+        return {}
+    return {key: data[key] for key in keys if key in data and data[key] != ""}
+
+
+def write_profile_values(
+    env_path: str | Path,
+    values: Dict[str, Optional[str]],
+) -> None:
+    """Upsert or remove non-secret profile assignments while preserving other lines.
+
+    A ``None`` value removes the assignment. Empty strings remain valid persisted
+    values, although callers normally use ``None`` when clearing a setting.
+    """
+    path = Path(env_path).expanduser()
+    lines = path.read_text(encoding="utf-8").splitlines()
+    pending = dict(values)
+    rewritten: List[str] = []
+    for line in lines:
+        stripped = line.strip()
+        body = stripped[7:].strip() if stripped.startswith("export ") else stripped
+        key = body.split("=", 1)[0].strip() if "=" in body else ""
+        if key not in pending:
+            rewritten.append(line)
+            continue
+        value = pending.pop(key)
+        if value is not None:
+            rewritten.append(_format_env_assignment(key, value))
+    for key, value in pending.items():
+        if value is not None:
+            rewritten.append(_format_env_assignment(key, value))
+    path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
 
 
 def write_profile_jira_sites(

@@ -1487,6 +1487,10 @@ def args_export_archival_project(log_level: str) -> List[str]:
     workspace_gid = prompt("Workspace GID for Asana project links (optional; inferred by default)", default="")
     if workspace_gid:
         args.extend(["--workspace-gid", workspace_gid])
+    if confirm("Generate Jira CSV importer configuration files?", default=False):
+        args.append("--generate-jira-config")
+        if confirm("Reconfigure all saved Archive importer mappings?", default=False):
+            args.append("--configure-jira-import")
     return args
 
 

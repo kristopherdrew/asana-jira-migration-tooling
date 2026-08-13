@@ -130,6 +130,22 @@ class JiraClient:
         site; raises ``JiraApiError`` (e.g. 401/403) when they do not."""
         return self._request_json("GET", "/rest/api/3/myself")
 
+    def get_fields(self) -> List[Dict[str, object]]:
+        """Return Jira's system and custom field catalog."""
+        data = self._request_json("GET", "/rest/api/3/field")
+        if isinstance(data, list):
+            return [field for field in data if isinstance(field, dict)]
+        values = data.get("values", []) if isinstance(data, dict) else []
+        return [field for field in values if isinstance(field, dict)]
+
+    def get_resolutions(self) -> List[Dict[str, object]]:
+        """Return the Jira site's available resolutions."""
+        data = self._request_json("GET", "/rest/api/3/resolution")
+        if isinstance(data, list):
+            return [resolution for resolution in data if isinstance(resolution, dict)]
+        values = data.get("values", []) if isinstance(data, dict) else []
+        return [resolution for resolution in values if isinstance(resolution, dict)]
+
     # ------------------------------------------------------------------
     # Issue creation + create metadata
     # ------------------------------------------------------------------

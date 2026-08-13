@@ -217,6 +217,25 @@ class LoadCredentialsTest(TestCase):
             write_profile_default_jira_site(env_path, "production_jira")
             self.assertIn("JIRA_DEFAULT_SITE=production_jira", env_path.read_text(encoding="utf-8"))
 
+    def test_credentials_rewrite_preserves_archive_csv_site_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            env_path.write_text(
+                "export JIRA_SITE_SANDBOX_JIRA_CSV_ARCHIVE_SECTION_FIELD_ID=customfield_123\n",
+                encoding="utf-8",
+            )
+            credentials = Credentials(
+                token="asana-token",
+                workspace_gid="workspace",
+                skip_ssl_verification=False,
+            )
+            with patch("src.lib.config.keychain.is_available", return_value=False):
+                write_credentials_file(env_path, credentials)
+            self.assertIn(
+                "JIRA_SITE_SANDBOX_JIRA_CSV_ARCHIVE_SECTION_FIELD_ID=customfield_123",
+                env_path.read_text(encoding="utf-8"),
+            )
+
     def test_resolve_jira_base_url_missing_url_raises(self) -> None:
         creds = Credentials(token="t", workspace_gid="w", skip_ssl_verification=False)
         with self.assertRaises(ValueError):
