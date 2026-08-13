@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Repair the ``Project (Asana)`` field on already-created personal-project Jira issues.
+"""Repair the configured Asana project-link field on personal-project Jira issues.
 
 Personal task trackers were originally exported with a synthetic
 ``https://app.asana.com/1/<ws>/project/personal_<user_gid>`` URL that 404s because
@@ -98,7 +98,7 @@ def _clear_value(schema: Dict[str, object]) -> object:
     """Return the value that clears a Jira field of this schema type.
 
     Array fields clear with ``[]``; everything else (the string/url custom field
-    ``Project (Asana)`` uses) clears with ``null``."""
+    ``Asana Project Link`` uses) clears with ``null``."""
     return [] if str(schema.get("type")) == "array" else None
 
 
@@ -264,7 +264,7 @@ def update_personal_project_jira_urls(
             if not assume_yes:
                 action_desc = "clear then update" if clear_first else "update"
                 answer = input(
-                    f"About to {action_desc} Project (Asana) on {len(pending)} issue(s) in {jira_project_key}. Continue? [y/N] "
+                    f"About to {action_desc} Asana Project Link on {len(pending)} issue(s) in {jira_project_key}. Continue? [y/N] "
                 ).strip().lower()
                 if answer not in {"y", "yes"}:
                     raise SystemExit("Aborted by user.")

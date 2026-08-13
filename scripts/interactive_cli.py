@@ -54,6 +54,7 @@ from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
     add_service_user_to_teams,
     add_service_user_to_projects,
+    create_jira_import_fields,
     create_team_project_jira_issues,
     export_archival_project_jira_csv,
     export_project_to_jira_csv,
@@ -1868,6 +1869,17 @@ def args_create_team_project_jira_issues(log_level: str) -> List[str]:
     return args
 
 
+def args_create_jira_import_fields(log_level: str, field_set: str = "import") -> List[str]:
+    args = build_common_args(log_level)
+    args.extend(["--field-set", field_set])
+    append_jira_env_flag(args)
+    if confirm("Dry run (inspect fields, create nothing)?", default=True):
+        args.append("--dry-run")
+    else:
+        args.append("--yes")
+    return args
+
+
 def args_set_project_last_updated_jira_field(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     append_jira_env_flag(args)
@@ -2225,11 +2237,13 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
         run_script(export_team_project_jira_csv.main, args)
 
     return {
-        "1": MenuItem("1", "Update Atlassian user mappings", lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level))),
-        "2": MenuItem("2", "Export Team -> Epic / Project -> Task CSV", run_team_project_export),
-        "3": MenuItem("3", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
-        "4": MenuItem("4", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
-        "5": MenuItem("5", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "1": MenuItem("1", "Create Jira fields for task-import mappings", lambda: run_script(create_jira_import_fields.main, args_create_jira_import_fields(log_level, "import"))),
+        "2": MenuItem("2", "Create Jira fields for Team/Project tracking", lambda: run_script(create_jira_import_fields.main, args_create_jira_import_fields(log_level, "tracking"))),
+        "3": MenuItem("3", "Update Atlassian user mappings", lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level))),
+        "4": MenuItem("4", "Export Team -> Epic / Project -> Task CSV", run_team_project_export),
+        "5": MenuItem("5", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
+        "6": MenuItem("6", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
+        "7": MenuItem("7", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

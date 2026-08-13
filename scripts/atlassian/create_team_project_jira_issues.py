@@ -55,17 +55,17 @@ ASSIGNEE_DROPPED_MESSAGE = "assignee dropped (user not assignable)"
 # named differently. Standard fields (summary, description, assignee, labels,
 # parent) are handled separately and are not listed here.
 DEFAULT_FIELD_MAP: Dict[str, str] = {
-    "Team URL": "Team (Asana)",
-    "Project URL": "Project (Asana)",
+    "Team URL": "Asana Team Link",
+    "Project URL": "Asana Project Link",
     "Instructions": "Testing Instructions",
     "Project Status": "Asana Current Project Status",
     "Project Count (Asana)": "Project Count (Asana)",
-    "Task Count (Asana)": "Task Count (Asana)",
+    "Task Count (Asana)": "Asana Task Count",
     # Each project's most recent task-update date (YYYY-MM-DD) is set at creation
-    # on the "Last working day" date field. The standalone
+    # on the "Asana Last Working Day" date field. The standalone
     # set_project_last_updated_jira_field.py updates this same field on existing
-    # issues (default id customfield_11475).
-    "Last Working Day": "customfield_11475",
+    # issues.
+    "Last Working Day": "Asana Last Working Day",
 }
 
 REPORT_FIELDNAMES = ["kind", "asana_gid", "summary", "jira_key", "status", "message"]

@@ -181,7 +181,7 @@ Optional flags:
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 ### Create Team/Project Jira Issues (Direct API)
-A direct alternative to the CSV import above: instead of generating a CSV for the Jira import wizard, this creates the same Team→Epic and Project→Task hierarchy by POSTing to the Jira Cloud REST API. It reuses the exact row-building logic of `export_team_project_jira_csv` (same owner resolution, descriptions, and `No Team` epic), then for each row resolves issue-type and custom-field IDs via `createmeta`, creates all Epics first, captures their real Jira keys, and links each Task to its team's Epic via `parent`. Standard fields map directly (`summary`; `description` as ADF; `assignee` by Atlassian accountId when the (effective) owner's account is active — for Tasks the owner is the *effective* owner: the project owner when their Atlassian account is active, otherwise the project's top active task creator, matching how Epics resolve their effective admin; `labels` from the owner source (`project_owner`/`task_creator`/…) + last-active label + project type (`personal_project`/`team_project`), spaces stripped); the remaining columns map to Jira custom fields resolved by field name (override the column→field-name map with `--field-map`): by default `Team URL`→`Team (Asana)`, `Project URL`→`Project (Asana)`, `Instructions`→`Testing Instructions`, `Project Status`→`Asana Current Project Status`, plus `Project Count (Asana)` (Epics) and `Task Count (Asana)` (Epics and Tasks), and `Last Working Day`→`customfield_11475` (the project's last task-update date, Tasks only). Any mapped field must exist on the relevant Jira create screen (`Project Count (Asana)` on Epic; `Task Count (Asana)` on Epic + Task; `customfield_11475` on Task) or its value is warned-and-skipped. To update the "Last working day" date on **already-created** issues (rather than at creation), use [Set Project "Last Working Day" Field](#set-project-last-working-day-field). Created issues are recorded in the `team_project_jira_mappings` table, so re-runs skip anything already created (no duplicates). Requires `ATLASSIAN_USERNAME`/`ATLASSIAN_TOKEN` in the resolved credentials.
+A direct alternative to the CSV import above: instead of generating a CSV for the Jira import wizard, this creates the same Team→Epic and Project→Task hierarchy by POSTing to the Jira Cloud REST API. It reuses the exact row-building logic of `export_team_project_jira_csv`, resolves issue types and fields through `createmeta`, creates Epics first, and links each Project Task to its team's Epic. The default configuration resolves the setup fields by name: `Team URL`→`Asana Team Link`, `Project URL`→`Asana Project Link`, `Project Status`→`Asana Current Project Status`, `Task Count (Asana)`→`Asana Task Count`, and `Last Working Day`→`Asana Last Working Day`. `--field-map` can override these defaults. A mapped field must be on the relevant Jira create screen or its value is warned-and-skipped. Created issues are recorded in `team_project_jira_mappings`, so re-runs skip existing mappings. Requires `ATLASSIAN_USERNAME`/`ATLASSIAN_TOKEN` in the resolved credentials.
 ```bash
 # Preview the payloads without creating anything (sandbox)
 python3 -m scripts.create_team_project_jira_issues --jira-project-key MIG --dry-run
@@ -219,19 +219,19 @@ Also available under Interactive CLI **Prepare Jira** ("Preview or create Team/P
 A run report CSV (`team_project_jira_create_<timestamp>.csv`) records each entry's `kind`, `asana_gid`, `summary`, resulting `jira_key`, `status` (`created`, `skipped-existing`, `skipped-limit`, `dry-run`, or `error`), and a `message` (e.g. the assignee-dropped note or the error detail).
 
 ### Update Personal-Project Jira URLs (Repair)
-A one-time, in-place repair for personal-project Jira issues created before My Tasks links were available: those carry a dead synthetic `…/project/personal_<user_gid>` URL in their `Project (Asana)` field. After `get_users` captures each owner's My Tasks GID, this script rebuilds the corrected `https://app.asana.com/0/<user_task_list_gid>/list` value and PUTs it onto the existing issues (`PUT /rest/api/3/issue/{key}`), preserving comments, attachments, and history — no delete/recreate.
+A one-time, in-place repair for personal-project Jira issues created before My Tasks links were available: those carry a dead synthetic `…/project/personal_<user_gid>` URL in their configured project-link field. The default mapping now targets `Asana Project Link`. After `get_users` captures each owner's My Tasks GID, this script rebuilds the corrected `https://app.asana.com/0/<user_task_list_gid>/list` value and PUTs it onto the existing issues, preserving comments, attachments, and history.
 ```bash
 python3 -m scripts.atlassian.update_personal_project_jira_urls \
   --prod --jira-project-key MIG --dry-run
 ```
-It targets personal-project Task rows that already have an Asana→Jira mapping and resolves the `Project (Asana)` field via the Task `createmeta`. Rows that resolve to a real My Tasks link are updated; rows where no proper link can be generated have the field **cleared** (`null`) so the dead synthetic URL is removed rather than left in place. Unmapped personal projects are reported `skipped-unmapped`.
+It targets personal-project Task rows that already have an Asana→Jira mapping and resolves `Asana Project Link` via the Task `createmeta`. Rows that resolve to a real My Tasks link are updated; rows where no proper link can be generated have the field **cleared** (`null`) so the dead synthetic URL is removed rather than left in place. Unmapped personal projects are reported `skipped-unmapped`.
 
 Required flags:
 - `--jira-project-key <key>` (and `--prod` to target production; omit for the sandbox `JIRA_SANDBOX_BASE_URL`).
 
 Optional flags:
 - `--task-issue-type <name>` issue type the project issues use (default `Task`).
-- `--field-map <path>` JSON overriding the column→Jira field map (default `Project URL`→`Project (Asana)`).
+- `--field-map <path>` JSON overriding the column→Jira field map (default `Project URL`→`Asana Project Link`).
 - `--workers <n>` concurrent update workers (default 4); `--limit <n>` caps updates this run.
 - `--clear-first` run in two passes — clear the field on every in-scope issue, then set the new values — so no stale value survives even if the set pass misses an issue.
 - `--dry-run` print the PUT payloads without updating; `--yes` skip the confirmation prompt.
@@ -478,3 +478,21 @@ Optional flags:
 - `--database <path>` (defaults to the active profile's DB), `--output-dir <dir>` (default `exports/`), `--filename <name>`, `--log-level <LEVEL>`.
 
 Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials (same as the other Jira scripts). Since matching is name-based, spot-check a few Missing-in-Jira rows directly in Jira to rule out false negatives from renamed tasks.
+### Create Standard Jira Import Fields
+
+`python3 -m scripts.atlassian.create_jira_import_fields`
+
+Creates one explicitly selected field set; the two sets are never created together.
+
+- `--field-set import` creates the task-import mapping fields: **Asana Section** (short text), **Asana Project Link** (URL), and **Asana Task Link** (URL).
+- `--field-set tracking` creates the Team/Project tracking fields: **Asana Project Link** and **Asana Team Link** (URL), **Asana Task Count** (number), **Asana Last Working Day** (date), **Asana Current Project Status** (single select: Active, Archived), and **Asana Migration Decision** (single select: Migrate - Active, Migrate - Production Read Only, Migrate - Archive, Migrate - Abandon).
+
+The command is safe to re-run: it retains exact-name fields with the expected Jira type, creates only missing fields/options, and stops when a same-name field has the wrong type or duplicate names make the destination ambiguous. The Prepare Jira interface exposes the two sets as separate actions. Jira administrator permission is required.
+
+Flags:
+
+- `--dry-run` lists existing and missing fields without creating anything.
+- `--field-set import|tracking` selects exactly one field set (default: `import`).
+- `--jira-site <key>` targets a named Jira site from the active profile; `--prod` remains the legacy production selector.
+- `--yes` skips the standalone confirmation prompt.
+- `--log-level <level>` controls logging verbosity.

@@ -29,12 +29,13 @@ EPIC_FIELDS = {
     "Description": {"fieldId": "description", "schema": {"type": "doc"}},
     "Assignee": {"fieldId": "assignee", "schema": {"type": "user"}},
     "Labels": {"fieldId": "labels", "schema": {"type": "array", "items": "string"}},
-    "Team (Asana)": {"fieldId": "customfield_10001", "schema": {"type": "string"}},
-    "Project (Asana)": {"fieldId": "customfield_10002", "schema": {"type": "string"}},
+    "Asana Team Link": {"fieldId": "customfield_10001", "schema": {"type": "string"}},
+    "Asana Project Link": {"fieldId": "customfield_10002", "schema": {"type": "string"}},
     "Testing Instructions": {"fieldId": "customfield_10003", "schema": {"type": "doc"}},
     "Asana Current Project Status": {"fieldId": "customfield_10005", "schema": {"type": "option"}},
     "Project Count (Asana)": {"fieldId": "customfield_10010", "schema": {"type": "number"}},
-    "Task Count (Asana)": {"fieldId": "customfield_10011", "schema": {"type": "number"}},
+    "Asana Task Count": {"fieldId": "customfield_10011", "schema": {"type": "number"}},
+    "Asana Last Working Day": {"fieldId": "customfield_11475", "schema": {"type": "date"}},
 }
 TASK_FIELDS = dict(EPIC_FIELDS, Parent={"fieldId": "parent", "schema": {"type": "issuelink"}})
 
@@ -109,14 +110,14 @@ class LoadFieldMapTest(TestCase):
             path.write_text('{"Team URL": "Asana Team URL"}', encoding="utf-8")
             field_map = load_field_map(str(path))
         self.assertEqual(field_map["Team URL"], "Asana Team URL")
-        self.assertEqual(field_map["Project URL"], "Project (Asana)")  # default preserved
+        self.assertEqual(field_map["Project URL"], "Asana Project Link")  # default preserved
         # The last-updated date folds into creation via the "Last working day" field.
-        self.assertEqual(field_map["Last Working Day"], "customfield_11475")
+        self.assertEqual(field_map["Last Working Day"], "Asana Last Working Day")
 
 
 class FieldRefResolutionTest(TestCase):
     def test_resolve_by_name_and_id(self) -> None:
-        self.assertEqual(_resolve_field_def(EPIC_FIELDS, "Team (Asana)")["fieldId"], "customfield_10001")
+        self.assertEqual(_resolve_field_def(EPIC_FIELDS, "Asana Team Link")["fieldId"], "customfield_10001")
         self.assertEqual(_resolve_field_def(EPIC_FIELDS, "customfield_10001")["fieldId"], "customfield_10001")
         self.assertIsNone(_resolve_field_def(EPIC_FIELDS, "nope"))
         self.assertIsNone(_resolve_field_def(EPIC_FIELDS, ""))
@@ -160,8 +161,8 @@ class InteractiveFieldMapTest(TestCase):
             input_func=lambda *_: next(answers),
         )
         self.assertEqual(result["Team URL"], "customfield_10002")  # id taken verbatim
-        self.assertEqual(result["Project URL"], "Project (Asana)")  # blank keeps default name
-        self.assertEqual(result["Task Count (Asana)"], "Task Count (Asana)")
+        self.assertEqual(result["Project URL"], "Asana Project Link")  # blank keeps default name
+        self.assertEqual(result["Task Count (Asana)"], "Asana Task Count")
 
     def test_maybe_save_writes_file(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -323,7 +324,7 @@ class BuildIssuePayloadTest(TestCase):
         self.assertEqual(payload["fields"]["description"], override)
 
     def test_missing_custom_field_is_skipped(self) -> None:
-        fields_without_team_url = {k: v for k, v in EPIC_FIELDS.items() if k != "Team (Asana)"}
+        fields_without_team_url = {k: v for k, v in EPIC_FIELDS.items() if k != "Asana Team Link"}
         payload = build_issue_payload(
             self._epic_row(),
             project_key="MIG",

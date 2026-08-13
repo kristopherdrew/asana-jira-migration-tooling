@@ -15,7 +15,7 @@ from scripts.atlassian.update_personal_project_jira_urls import (
 
 TASK_FIELDS = {
     "Summary": {"fieldId": "summary", "schema": {"type": "string"}},
-    "Project (Asana)": {"fieldId": "customfield_10002", "schema": {"type": "string"}},
+    "Asana Project Link": {"fieldId": "customfield_10002", "schema": {"type": "string"}},
 }
 ISSUE_TYPES = [{"id": "10001", "name": "Task"}]
 

@@ -138,6 +138,40 @@ class JiraClient:
         values = data.get("values", []) if isinstance(data, dict) else []
         return [field for field in values if isinstance(field, dict)]
 
+    def create_custom_field(self, payload: Dict[str, object]) -> Dict[str, object]:
+        """Create a site-wide Jira custom field via ``POST /rest/api/3/field``."""
+        return self._request_json("POST", "/rest/api/3/field", payload=payload)
+
+    def get_custom_field_contexts(self, field_id: str) -> List[Dict[str, object]]:
+        """Return the contexts configured for a custom field."""
+        encoded = parse.quote(field_id, safe="")
+        data = self._request_json("GET", f"/rest/api/3/field/{encoded}/context")
+        return [item for item in data.get("values", []) if isinstance(item, dict)]
+
+    def get_custom_field_options(self, field_id: str, context_id: str) -> List[Dict[str, object]]:
+        """Return the options configured in one custom-field context."""
+        encoded_field = parse.quote(field_id, safe="")
+        encoded_context = parse.quote(str(context_id), safe="")
+        path = f"/rest/api/3/field/{encoded_field}/context/{encoded_context}/option"
+        data = self._request_json("GET", path)
+        return [item for item in data.get("values", []) if isinstance(item, dict)]
+
+    def create_custom_field_options(
+        self,
+        field_id: str,
+        context_id: str,
+        options: List[str],
+    ) -> Dict[str, object]:
+        """Add select-list options to one custom-field context."""
+        encoded_field = parse.quote(field_id, safe="")
+        encoded_context = parse.quote(str(context_id), safe="")
+        path = f"/rest/api/3/field/{encoded_field}/context/{encoded_context}/option"
+        return self._request_json(
+            "POST",
+            path,
+            payload={"options": [{"value": value} for value in options]},
+        )
+
     def get_resolutions(self) -> List[Dict[str, object]]:
         """Return the Jira site's available resolutions."""
         data = self._request_json("GET", "/rest/api/3/resolution")

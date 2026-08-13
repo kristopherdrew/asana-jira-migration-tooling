@@ -57,6 +57,37 @@ class CreateIssueTest(TestCase):
             ["/rest/api/3/field", "/rest/api/3/resolution"],
         )
 
+    def test_create_custom_field_posts_payload(self) -> None:
+        client = _RecordingClient([b'{"id":"customfield_10001","name":"Asana Section"}'])
+        payload = {"name": "Asana Section", "type": "textfield"}
+        result = client.create_custom_field(payload)
+        self.assertEqual(result["id"], "customfield_10001")
+        self.assertEqual(client.calls[0]["method"], "POST")
+        self.assertEqual(client.calls[0]["path"], "/rest/api/3/field")
+        self.assertEqual(json.loads(client.calls[0]["data"].decode("utf-8")), payload)
+
+    def test_custom_field_context_and_option_endpoints(self) -> None:
+        client = _RecordingClient([
+            b'{"values":[{"id":"10000"}]}',
+            b'{"values":[{"id":"1","value":"Active"}]}',
+            b'{"options":[{"id":"2","value":"Archived"}]}',
+        ])
+        self.assertEqual(client.get_custom_field_contexts("customfield_1")[0]["id"], "10000")
+        self.assertEqual(client.get_custom_field_options("customfield_1", "10000")[0]["value"], "Active")
+        client.create_custom_field_options("customfield_1", "10000", ["Archived"])
+        self.assertEqual(
+            [call["path"] for call in client.calls],
+            [
+                "/rest/api/3/field/customfield_1/context",
+                "/rest/api/3/field/customfield_1/context/10000/option",
+                "/rest/api/3/field/customfield_1/context/10000/option",
+            ],
+        )
+        self.assertEqual(
+            json.loads(client.calls[2]["data"].decode("utf-8")),
+            {"options": [{"value": "Archived"}]},
+        )
+
 
 class JiraApiErrorTest(TestCase):
     def test_status_and_body_are_accessible(self) -> None:
