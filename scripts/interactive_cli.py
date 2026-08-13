@@ -419,8 +419,9 @@ def _prompt_list_file(
     item_label: str,
     suffixes: Optional[Set[str]] = None,
 ) -> str:
-    """Select a matching file from the repository root or accept a typed path."""
-    search_dir = PROJECT_ROOT
+    """Select a matching file from ``inputs/`` or accept a typed path."""
+    search_dir = PROJECT_ROOT / "inputs"
+    search_dir.mkdir(parents=True, exist_ok=True)
     allowed_suffixes = suffixes or {".txt", ".csv", ".list"}
     candidates = sorted(
         (
@@ -454,6 +455,10 @@ def _prompt_list_file(
 
 def _prompt_project_gids_file(context: str) -> str:
     return _prompt_list_file(context, "Project GID")
+
+
+def _prompt_task_gids_file(context: str) -> str:
+    return _prompt_list_file(context, "Task GID")
 
 
 def _prompt_jira_keys_file(context: str) -> str:
@@ -1384,16 +1389,18 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
         allow_merge = True
     elif choice == "4":
         if confirm("Load task GIDs from a file?", default=False):
-            path = prompt("Task GIDs file path", default="")
-            if not path:
-                raise SystemExit("Task GIDs file path is required.")
-            args.extend(["--task-gids-file", path])
+            args.extend(
+                ["--task-gids-file", _prompt_task_gids_file("Jira CSV export")]
+            )
         else:
             gids = prompt("Task GIDs (comma-separated)", default="")
             if not gids:
                 raise SystemExit("At least one task GID is required.")
             args.extend(["--task-gids", gids])
-        allow_merge = True
+        # The exporter already consolidates task-scoped projects and organizes
+        # their outputs. The wrapper's legacy merge would run afterward against
+        # files that have already moved into subdirectories.
+        allow_merge = False
     else:
         raise SystemExit(f"Invalid export scope choice: {choice}")
 
@@ -1460,10 +1467,9 @@ def args_export_archival_project(log_level: str) -> List[str]:
         args.extend(["--archived-scope", scope])
     elif choice == "4":
         if confirm("Load task GIDs from a file?", default=False):
-            path = prompt("Task GIDs file path", default="")
-            if not path:
-                raise SystemExit("Task GIDs file path is required.")
-            args.extend(["--task-gids-file", path])
+            args.extend(
+                ["--task-gids-file", _prompt_task_gids_file("archival Jira CSV export")]
+            )
         else:
             gids = prompt("Task GIDs (comma-separated)", default="")
             if not gids:

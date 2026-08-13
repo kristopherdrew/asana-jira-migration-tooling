@@ -75,6 +75,11 @@ data/
 exports/
 attachment_archives/
 
+# Local command input files (keep the directory, ignore its contents)
+
+inputs/*
+!inputs/.gitkeep
+
 # Local CSV data and migration inputs
 
 *.csv

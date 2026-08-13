@@ -22,6 +22,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 
 from scripts.merge_project_exports import merge_csv_files, merge_field_counts, merge_link_mods
+from src.lib.asana_urls import build_project_url, build_task_url, infer_workspace_gid
 from src.lib.attachments import jira_unique_attachment_name
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.config import load_credentials, resolve_jira_base_url
@@ -1727,6 +1728,8 @@ def export_project(
                 pt.actual_time_minutes,
                 pt.notes,
                 pt.html_notes,
+                pt.permalink_url,
+                pt.workspace_gid,
                 thf.flattened_parent_gid AS jira_parent_gid,
                 thf.flattened_depth AS jira_hierarchy_depth,
                 pt.hierarchy_depth,
@@ -1864,6 +1867,7 @@ def export_project(
             """
             SELECT
                 name,
+                permalink_url,
                 num_tasks,
                 num_incomplete_tasks,
                 num_completed_tasks,
@@ -2335,6 +2339,8 @@ def export_project(
             "jira_project_name",
             "jira_project_key",
             "jira_project_type",
+            "Asana Project Link",
+            "Asana Task Link",
             "task_gid",
             JIRA_TASK_ID_FIELD_NAME,
             "parent_gid",
@@ -2384,6 +2390,17 @@ def export_project(
         header.extend(["Comment"] * max_comments)
 
         rows: List[List[str]] = []
+        resolved_workspace_gid = next(
+            (
+                (task.get("workspace_gid") or "").strip()
+                for task in tasks
+                if (task.get("workspace_gid") or "").strip()
+            ),
+            None,
+        ) or infer_workspace_gid(connection)
+        project_asana_link = build_project_url(resolved_workspace_gid, project_gid) or (
+            (current_project_row["permalink_url"] or "") if current_project_row else ""
+        )
         parent_lookup_local = {row["gid"]: row["parent_gid"] for row in tasks if row["gid"]}
 
         def _sort_task_key(task: dict) -> tuple:
@@ -2528,11 +2545,20 @@ def export_project(
                 modified_section = primary_section
 
             jira_proj = jira_project_map.get(project_gid, {})
+            is_synthetic_epic = task.get("hierarchy_depth") == -1
+            task_workspace_gid = task.get("workspace_gid") or resolved_workspace_gid
+            task_asana_link = "" if is_synthetic_epic else (
+                build_task_url(task_workspace_gid, task["gid"])
+                or task.get("permalink_url")
+                or ""
+            )
             row = [
                 current_project_display,
                 jira_proj.get("jira_project_name", ""),
                 jira_proj.get("jira_project_key", ""),
                 "software",
+                project_asana_link,
+                task_asana_link,
                 task["gid"],
                 task["gid"],
                 task["parent_gid"] or "",
@@ -2625,6 +2651,8 @@ def export_project(
                 "jira_project_name",
                 "jira_project_key",
                 "jira_project_type",
+                "Asana Project Link",
+                "Asana Task Link",
             }
             columns_to_keep: List[int] = []
             for index, name in enumerate(header):
