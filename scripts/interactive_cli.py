@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import builtins
 import json
 import logging
 import os
@@ -151,6 +152,30 @@ class CliSession:
 
 # Set once in main(); read by the args builders and DB helpers below.
 _session: Optional[CliSession] = None
+
+
+class CliExit(Exception):
+    """Signal a user-requested graceful exit from any interactive prompt."""
+
+
+def _with_exit_hint(text: str) -> str:
+    """Make the global quit action visible without duplicating existing hints."""
+    if "q to quit" in text.lower() or "'q' to quit" in text.lower():
+        return text
+    if text.endswith(": "):
+        return f"{text[:-2]} (q to quit): "
+    return f"{text} (q to quit)"
+
+
+def input(text: str) -> str:
+    """Read a prompt, treating ``q``, Ctrl-C, and Ctrl-D as global exits."""
+    try:
+        value = builtins.input(_with_exit_hint(text))
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise CliExit from exc
+    if value.strip().lower() == "q":
+        raise CliExit
+    return value
 
 
 def db_path_for_env(env_path: Path) -> Path:
@@ -567,8 +592,8 @@ def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
             if kind == "secret" and values[field]:
                 display = f"******** (set, {secret_backend})"
             print(f"  [{index}] {env_name} = {display}")
-        choice = input("Select a number to update, 's' to save, or 'q' to cancel: ").strip().lower()
-        if choice == "q":
+        choice = input("Select a number to update, 's' to save, 'c' to cancel, or 'q' to quit: ").strip().lower()
+        if choice == "c":
             print("No changes saved.")
             return env_path
         if choice == "s":
@@ -577,7 +602,7 @@ def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
                 return env_path
             candidate = Credentials(**values)
             if not report_credential_checks(candidate):
-                print("Not saved. Fix the flagged values and try again, or 'q' to cancel.")
+                print("Not saved. Fix the flagged values and try again, or 'c' to cancel.")
                 continue
             write_credentials_file(env_path, candidate)
             print(f"Updated credentials saved to {env_path}.")
@@ -916,7 +941,21 @@ def log_run(step: str, argv: Sequence[str], status: str, error: Optional[str] = 
 
 
 def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[str]):
-    return main_func(argv)
+    original_input = builtins.input
+
+    def session_input(text: str = "") -> str:
+        value = original_input(_with_exit_hint(text))
+        if value.strip().lower() == "q":
+            raise CliExit
+        return value
+
+    builtins.input = session_input
+    try:
+        return main_func(argv)
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise CliExit from exc
+    finally:
+        builtins.input = original_input
 
 
 def _strip_task_scope_args(argv: Sequence[str]) -> List[str]:
@@ -1836,6 +1875,8 @@ def run_group(title: str, menu: Dict[str, MenuItem]) -> None:
         item = menu[choice]
         try:
             item.handler()
+        except CliExit:
+            raise
         except Exception as exc:  # pragma: no cover - defensive
             logging.exception("Step failed: %s", exc)
         else:
@@ -2251,7 +2292,7 @@ def parse_cli_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Optional[Iterable[str]] = None) -> None:
+def _run_cli(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_cli_args(argv)
     log_level = resolve_log_level(args.log_level)
     configure_logging(log_level)
@@ -2273,10 +2314,20 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         item = top_menu[choice]
         try:
             item.handler()
+        except CliExit:
+            raise
         except Exception as exc:  # pragma: no cover - defensive
             logging.exception("Step failed: %s", exc)
         else:
             logging.info("Completed: %s", item.label)
+
+
+def main(argv: Optional[Iterable[str]] = None) -> None:
+    """Run the CLI and turn exits from any prompt into a clean return."""
+    try:
+        _run_cli(argv)
+    except CliExit:
+        print("\nExiting Asana -> Jira Migration Toolkit.")
 
 
 if __name__ == "__main__":
