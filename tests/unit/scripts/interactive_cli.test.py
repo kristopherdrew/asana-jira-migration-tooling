@@ -1031,3 +1031,107 @@ class MenuSortingTest(TestCase):
             lines,
             ["[1] One", "[9] Nine", "[a] Letter A", "[b] Back", "[q] Quit"],
         )
+
+
+class LifecycleMenuTest(TestCase):
+    def test_top_menu_follows_migration_lifecycle(self) -> None:
+        menu = interactive_cli.build_top_menu("INFO")
+        self.assertEqual(
+            [menu[str(index)].label for index in range(1, 8)],
+            [
+                "Client & Environment",
+                "Discover & Refresh Asana",
+                "Assess & Plan Migration",
+                "Prepare Jira",
+                "Migrate Projects",
+                "Maintain & Validate",
+                "Advanced & Recovery",
+            ],
+        )
+        self.assertEqual(menu["q"].label, "Quit")
+
+    def test_lifecycle_submenus_have_matching_display_and_selection_keys(self) -> None:
+        menus = [
+            interactive_cli.build_client_environment_menu(),
+            interactive_cli.build_discover_refresh_menu("INFO"),
+            interactive_cli.build_assess_plan_menu("INFO"),
+            interactive_cli.build_prepare_jira_menu("INFO"),
+            interactive_cli.build_migrate_projects_menu("INFO"),
+            interactive_cli.build_maintain_validate_menu("INFO"),
+            interactive_cli.build_advanced_recovery_menu("INFO"),
+        ]
+        for menu in menus:
+            self.assertEqual(list(menu), [item.key for item in menu.values()])
+
+    @patch("scripts.interactive_cli.args_get_project_status_updates", return_value=["status"])
+    @patch("scripts.interactive_cli.args_get_task_extras", return_value=["extras"])
+    @patch("scripts.interactive_cli.run_script")
+    @patch("scripts.interactive_cli.run_task_sync_flow")
+    @patch("scripts.interactive_cli.run_initial_metadata")
+    @patch("scripts.interactive_cli.confirm", side_effect=[True, True, False, False])
+    def test_guided_refresh_preserves_dependency_order(
+        self,
+        mock_confirm,
+        mock_metadata,
+        mock_tasks,
+        mock_run_script,
+        mock_extras_args,
+        mock_status_args,
+    ) -> None:
+        interactive_cli.run_guided_asana_refresh("INFO")
+
+        mock_metadata.assert_called_once_with("INFO")
+        mock_tasks.assert_called_once_with("INFO")
+        self.assertEqual(
+            [call.args for call in mock_run_script.call_args_list],
+            [
+                (interactive_cli.get_task_extras.main, ["extras"]),
+                (interactive_cli.get_project_status_updates.main, ["status"]),
+            ],
+        )
+
+    def test_readiness_handles_missing_database(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / "missing.sqlite"
+            output = io.StringIO()
+            with patch("scripts.interactive_cli.active_db_path", return_value=missing), redirect_stdout(output):
+                interactive_cli.show_migration_readiness()
+        self.assertIn("Database has not been created", output.getvalue())
+
+    def test_readiness_reports_present_and_missing_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "readiness.sqlite"
+            connection = interactive_cli.sqlite3.connect(str(db_path))
+            connection.executescript(
+                """
+                CREATE TABLE projects (gid TEXT, synced_at TEXT);
+                INSERT INTO projects VALUES ('p1', '2026-08-12T12:00:00Z');
+                CREATE TABLE tasks (gid TEXT, synced_at TEXT);
+                CREATE TABLE user_atlassian_accounts (user_gid TEXT, synced_at TEXT);
+                INSERT INTO user_atlassian_accounts VALUES ('u1', '2026-08-12T13:00:00Z');
+                """
+            )
+            connection.commit()
+            connection.close()
+            output = io.StringIO()
+            with patch("scripts.interactive_cli.active_db_path", return_value=db_path), redirect_stdout(output):
+                interactive_cli.show_migration_readiness()
+        rendered = output.getvalue()
+        self.assertIn("[x] Asana projects: 1", rendered)
+        self.assertIn("[ ] Asana tasks: 0", rendered)
+        self.assertIn("[x] Atlassian user mappings: 1", rendered)
+        self.assertIn("[ ] Task Jira mappings: 0", rendered)
+
+    @patch("scripts.interactive_cli.args_clear_jira_keys")
+    @patch("scripts.interactive_cli.run_script")
+    @patch("scripts.interactive_cli.confirm", return_value=False)
+    def test_recovery_action_requires_confirmation_before_prompting_for_scope(
+        self,
+        mock_confirm,
+        mock_run_script,
+        mock_args,
+    ) -> None:
+        interactive_cli.build_advanced_recovery_menu("INFO")["1"].handler()
+        mock_confirm.assert_called_once()
+        mock_args.assert_not_called()
+        mock_run_script.assert_not_called()
