@@ -474,13 +474,7 @@ def confirm(text: str, default: bool = True) -> bool:
 
 
 def append_jira_env_flag(args: List[str]) -> None:
-    """Append --prod when the session targets Production; default is the sandbox URL.
-
-    The Sandbox/Production choice is a session-level toggle (see the "Profile &
-    Environment" menu and the header), so Jira commands no longer prompt per-run.
-    The base URL itself comes from the credentials file (JIRA_BASE_URL /
-    JIRA_SANDBOX_BASE_URL).
-    """
+    """Append the active named Jira site (with legacy ``--prod`` fallback)."""
     if _session is not None and _session.jira_site_key:
         args.extend(["--jira-site", _session.jira_site_key])
     elif _session is not None and _session.use_prod:
@@ -493,16 +487,23 @@ def prompt_credentials_values() -> Credentials:
     skip_ssl_verification = prompt_bool("Skip SSL verification?", default=False)
     atlassian_username = prompt("ATLASSIAN_USERNAME (optional)", default="")
     atlassian_token = prompt("ATLASSIAN_TOKEN (optional)", default="")
-    jira_base_url = prompt("JIRA_BASE_URL — production Jira site (optional)", default="")
-    jira_sandbox_base_url = prompt("JIRA_SANDBOX_BASE_URL — sandbox Jira site (optional)", default="")
+    jira_sites: List[JiraSite] = []
+    if prompt_bool("Configure a Jira site now?", default=bool(atlassian_username or atlassian_token)):
+        while True:
+            site_name = prompt_required("Jira site label")
+            site_key = slugify(prompt("Stable site key", default=slugify(site_name)))
+            site_url = prompt_required("Jira site URL").rstrip("/")
+            jira_sites.append(JiraSite(site_key, site_name, site_url))
+            if not prompt_bool("Add another Jira site?", default=False):
+                break
     return Credentials(
         token=token,
         workspace_gid=workspace_gid,
         skip_ssl_verification=skip_ssl_verification,
         atlassian_username=atlassian_username or None,
         atlassian_token=atlassian_token or None,
-        jira_base_url=jira_base_url or None,
-        jira_sandbox_base_url=jira_sandbox_base_url or None,
+        jira_sites=tuple(jira_sites),
+        jira_default_site=jira_sites[0].key if jira_sites else None,
     )
 
 
@@ -541,8 +542,6 @@ CREDENTIAL_FIELDS = [
     ("skip_ssl_verification", "SKIP_SSL_VERIFICATION", "bool"),
     ("atlassian_username", "ATLASSIAN_USERNAME", "optional"),
     ("atlassian_token", "ATLASSIAN_TOKEN", "secret"),
-    ("jira_base_url", "JIRA_BASE_URL", "optional"),
-    ("jira_sandbox_base_url", "JIRA_SANDBOX_BASE_URL", "optional"),
 ]
 
 
@@ -591,7 +590,7 @@ def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
     profile_label = current.client_name or env_path.name
     dirty = False
     while True:
-        print(f"\nCredentials for profile '{profile_label}' in {env_path} (tokens stored in: {secret_backend}):")
+        print(f"\nShared credentials for profile '{profile_label}' in {env_path} (tokens stored in: {secret_backend}):")
         for index, (field, env_name, kind) in enumerate(CREDENTIAL_FIELDS, start=1):
             display = _display_credential_value(kind, values[field])
             if kind == "secret" and values[field]:
@@ -662,7 +661,7 @@ def print_welcome() -> None:
         "============================================================\n"
         "\n"
         "No client profile is set up yet. A profile holds the credentials\n"
-        "for one Asana workspace (and, optionally, its Atlassian/Jira site).\n"
+        "for one Asana workspace, shared Atlassian credentials, and named Jira sites.\n"
         "\n"
         "To get started you'll need:\n"
         "  REQUIRED\n"
@@ -671,7 +670,7 @@ def print_welcome() -> None:
         "\n"
         "  OPTIONAL (only for the Jira migration steps)\n"
         "   - ATLASSIAN_USERNAME / ATLASSIAN_TOKEN  Atlassian API credentials\n"
-        "   - JIRA_BASE_URL / JIRA_SANDBOX_BASE_URL  your Jira sites\n"
+        "   - One or more labeled Jira site URLs\n"
         "\n"
         "On macOS the two tokens are stored securely in the Keychain; the\n"
         "rest is saved to a per-profile file in the project (profiles/<name>.env).\n"
@@ -2172,7 +2171,7 @@ def build_client_environment_menu(
         "3": MenuItem("3", "Select active Jira site", select_jira_site),
         "4": MenuItem("4", "Set default Jira site", lambda: select_jira_site(make_default=True)),
         "5": MenuItem("5", "Add Jira site", add_jira_site),
-        "6": MenuItem("6", "View or update credentials", lambda: manage_credentials(reference_path)),
+        "6": MenuItem("6", "View or update shared credentials", lambda: manage_credentials(reference_path)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

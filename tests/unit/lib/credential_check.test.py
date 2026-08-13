@@ -95,7 +95,7 @@ class CheckCredentialsTest(TestCase):
         results = check_credentials(creds)
         atl = next(r for r in results if r.service.startswith("Atlassian"))
         self.assertFalse(atl.ok)
-        self.assertIn("No JIRA_BASE_URL", atl.detail)
+        self.assertIn("No Jira site is configured", atl.detail)
 
     @patch("src.lib.credential_check.validate_asana_token", side_effect=ValueError("Asana token rejected (HTTP 401)."))
     def test_asana_failure_is_captured_as_result(self, _mock_asana) -> None:

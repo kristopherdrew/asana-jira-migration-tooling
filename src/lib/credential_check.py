@@ -88,9 +88,8 @@ def check_credentials(credentials: Credentials) -> List[CheckResult]:
     """Validate the tokens present on ``credentials`` and return per-service results.
 
     Always checks the (required) Asana token. Checks Atlassian only when both a
-    username and token are set; it validates against the production Jira URL when
-    available, otherwise the sandbox URL, and reports that no check was possible
-    when neither URL is configured.
+    username and token are set; it validates against the profile's default named
+    Jira site, with legacy production/sandbox URL fallback.
     """
     results: List[CheckResult] = []
 
@@ -101,7 +100,13 @@ def check_credentials(credentials: Credentials) -> List[CheckResult]:
         results.append(CheckResult("Asana", False, str(exc)))
 
     if credentials.atlassian_username and credentials.atlassian_token:
-        if credentials.jira_base_url:
+        named_site = next(
+            (site for site in credentials.jira_sites if site.key == credentials.jira_default_site),
+            credentials.jira_sites[0] if credentials.jira_sites else None,
+        )
+        if named_site:
+            base_url, label = named_site.base_url, f"Atlassian ({named_site.name})"
+        elif credentials.jira_base_url:
             base_url, label = credentials.jira_base_url, "Atlassian (production)"
         elif credentials.jira_sandbox_base_url:
             base_url, label = credentials.jira_sandbox_base_url, "Atlassian (sandbox)"
@@ -112,8 +117,8 @@ def check_credentials(credentials: Credentials) -> List[CheckResult]:
                 CheckResult(
                     label,
                     False,
-                    "No JIRA_BASE_URL or JIRA_SANDBOX_BASE_URL set, so the Atlassian token "
-                    "could not be validated. Add a Jira URL to validate it.",
+                    "No Jira site is configured, so the Atlassian token could not be "
+                    "validated. Add a Jira site URL to validate it.",
                 )
             )
         else:
