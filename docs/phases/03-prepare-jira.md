@@ -1,38 +1,35 @@
-# Phase 4: Prepare Jira
+# Phase 3: Prepare Jira
 
 ## Purpose
 
 Prepare Jira identities and project-level hierarchy before migrating task-level
 work. This phase creates or records the destinations that later migration waves use.
 
-## Key Decision: CSV or Direct API
-
-Choose one creation path for the Team-to-Epic and Project-to-Task hierarchy:
-
-- The **CSV path** exports a hierarchy file, relies on Jira's external-import
-  workflow, and then imports the resulting project associations.
-- The **direct API path** previews or creates the Jira hierarchy and persists its
-  mappings automatically.
-
-Do not run both paths for the same scope unless you are intentionally reconciling
-existing Jira work.
+The interactive workflow uses the direct API to preview or create the Team-to-Epic
+and Project-to-Task hierarchy. The legacy hierarchy CSV export remains available
+under **Advanced & Recovery** for exceptional recovery work.
 
 ## Menu Actions and Scripts
+
+### Create Jira fields for task-import mappings
+
+Runs `scripts.atlassian.create_jira_import_fields` for the task-import field set.
+Jira administrator permission is required.
+
+### Create Jira fields for Team/Project tracking
+
+Runs `scripts.atlassian.create_jira_import_fields` for the Team/Project tracking
+field set used by the direct-API hierarchy flow.
 
 ### Update Atlassian user mappings
 
 Runs `scripts.atlassian.update_atlassian_user_map`. It maps Asana users to Atlassian
 account IDs so Jira assignee and owner fields can be populated correctly.
 
-### Export Team -> Epic / Project -> Task CSV
-
-Runs `scripts.atlassian.export_team_project_jira_csv`. Import the resulting file
-through Jira, then record the created project associations with the next action.
-
 ### Import Jira project associations
 
-Runs `scripts.atlassian.import_jira_project_map`. It loads the Jira keys produced by
-the hierarchy CSV import and maps them back to Asana teams and projects in SQLite.
+Runs `scripts.atlassian.import_jira_project_map`. Use it to load existing Jira keys
+and map them back to Asana teams and projects in SQLite.
 
 ### Preview or create Team/Project Jira hierarchy (API)
 
@@ -49,8 +46,8 @@ dry run before writes, especially in Production.
 ## Expected Result
 
 Users have the required Atlassian mappings, each in-scope Asana project has a known
-Jira project-level destination, and the chosen hierarchy creation path is recorded
-consistently in SQLite.
+Jira project-level destination, and the hierarchy mappings are recorded consistently
+in SQLite.
 
 ## Detailed Script Reference
 
