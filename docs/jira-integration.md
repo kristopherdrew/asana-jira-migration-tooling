@@ -87,9 +87,13 @@ python3 -m scripts.export_project_to_jira_csv --project-gid <gid>
 python3 -m scripts.export_project_to_jira_csv --project-gids <gid1,gid2>
 # all projects for a team
 python3 -m scripts.export_project_to_jira_csv --team-gid <team_gid> [--archived-scope active|archived|all]
+# exact task list
+python3 -m scripts.export_project_to_jira_csv --task-gids <task_gid1,task_gid2>
+python3 -m scripts.export_project_to_jira_csv --task-gids-file <path>
 ```
 Required flags:
-- One scope selector: `--project-gid`, `--project-gids`, or `--team-gid` (optionally with `--archived-scope`).
+- One scope selector: `--project-gid`, `--project-gids`, `--project-gids-file`, `--team-gid` (optionally with `--archived-scope`), `--task-gids`, or `--task-gids-file`.
+- Task-GID scope accepts comma-separated values inline or comma/newline-separated values from a file. Duplicate GIDs are removed while preserving input order. Each task is exported once under its primary project; shared tasks without a primary membership use the lowest project GID. Unknown and projectless GIDs are logged and skipped.
 
 Optional flags:
 - `--database <path>` to point at a different SQLite file.
@@ -134,9 +138,14 @@ python3 -m scripts.export_archival_project_jira_csv --project-gid <gid>
 python3 -m scripts.export_archival_project_jira_csv --project-gids <gid1,gid2>
 # every project in a team (defaults to all archived/active projects)
 python3 -m scripts.export_archival_project_jira_csv --team-gid <team_gid> [--archived-scope active|archived|all]
+
+python3 -m scripts.export_archival_project_jira_csv --task-gids <task_gid1,task_gid2>
+
+python3 -m scripts.export_archival_project_jira_csv --task-gids-file <path>
 ```
 Required flags:
-- One scope selector: `--project-gid`, `--project-gids`, `--project-gids-file`, or `--team-gid` (optionally with `--archived-scope`, default `all`).
+- One scope selector: `--project-gid`, `--project-gids`, `--project-gids-file`, `--team-gid` (optionally with `--archived-scope`, default `all`), `--task-gids`, or `--task-gids-file`.
+- Task-GID scope accepts comma-separated values inline or comma/newline-separated values from a file. Duplicate GIDs are removed while preserving input order. Each task is exported once under its primary project; shared tasks without a primary membership use the lowest project GID. Unknown and projectless GIDs are logged and skipped.
 
 Optional flags:
 - `--database <path>` to point at a different SQLite file (default resolves to the active profile's database).

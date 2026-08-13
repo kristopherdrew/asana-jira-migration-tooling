@@ -313,6 +313,28 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIn("--project-gids-file", archival_args)
         self.assertIn("/repo/projects.csv", archival_args)
 
+    def test_archival_export_accepts_inline_task_gids(self) -> None:
+        with patch(
+            "builtins.input",
+            side_effect=["4", "n", "task_1,task_2", "", "", ""],
+        ):
+            args = interactive_cli.args_export_archival_project("INFO")
+        self.assertIn("--task-gids", args)
+        self.assertIn("task_1,task_2", args)
+
+    def test_regular_export_accepts_inline_task_gids(self) -> None:
+        with patch(
+            "scripts.interactive_cli._open_sqlite",
+            side_effect=SystemExit,
+        ), patch(
+            "builtins.input",
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", ""],
+        ):
+            args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
+        self.assertTrue(allow_merge)
+        self.assertIn("--task-gids", args)
+        self.assertIn("task_1,task_2", args)
+
     def test_status_updates_uses_fuzzy_team_lookup(self) -> None:
         with patch(
             "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_99"

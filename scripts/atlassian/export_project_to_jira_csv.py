@@ -26,6 +26,7 @@ from src.lib.attachments import jira_unique_attachment_name
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.task_scope import parse_task_gids, resolve_task_projects
 from src.lib.jira_csv_partition import (
     CsvPart,
     pack_csv_parts,
@@ -971,6 +972,14 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Export all projects belonging to this team GID (mutually exclusive with --project-gid/--project-gids).",
     )
     parser.add_argument(
+        "--task-gids",
+        help="Comma-separated task GIDs to export.",
+    )
+    parser.add_argument(
+        "--task-gids-file",
+        help="Path to a file containing task GIDs (newline or comma separated).",
+    )
+    parser.add_argument(
         "--database",
         default=resolve_default_db_path(),
         help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).",
@@ -1660,6 +1669,7 @@ def export_project(
     skipped_log: Optional[List[Dict[str, str]]] = None,
     add_epics: bool = False,
     add_section_epics: bool = False,
+    task_gids: Optional[Set[str]] = None,
 ) -> Optional[Path]:
     database = Database(db_path=database_path)
     with database.connect() as refresh_connection:
@@ -1733,6 +1743,8 @@ def export_project(
             return connection.execute(project_task_query, (project_gid,)).fetchall()
 
         tasks = [dict(row) for row in fetch_project_task_rows()]
+        if task_gids is not None:
+            tasks = [task for task in tasks if task["gid"] in task_gids]
         if not tasks:
             raise SystemExit(f"No tasks found for project {project_gid}.")
 
@@ -1825,6 +1837,8 @@ def export_project(
             )
             database.rebuild_flattened_task_hierarchy(connection)
             tasks = [dict(row) for row in fetch_project_task_rows()]
+            if task_gids is not None:
+                tasks = [task for task in tasks if task["gid"] in task_gids]
             if _needs_flattened_refresh(tasks):
                 missing_gids = [
                     row["gid"]
@@ -3105,14 +3119,29 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     with database.connect() as connection:
         database.initialize(connection)
-        projects = parse_project_list(
-            connection=connection,
-            project_gid=args.project_gid,
-            project_gids=args.project_gids,
-            project_gids_file=args.project_gids_file,
-            team_gid=args.team_gid,
-            archived_scope=args.archived_scope,
+        project_scope = any(
+            (args.project_gid, args.project_gids, args.project_gids_file, args.team_gid)
         )
+        task_scope = any((args.task_gids, args.task_gids_file))
+        if project_scope and task_scope:
+            raise SystemExit("Project and task scope options cannot be combined.")
+        if task_scope:
+            requested_task_gids = parse_task_gids(args.task_gids, args.task_gids_file)
+            projects, task_filters = resolve_task_projects(
+                connection,
+                requested_task_gids,
+                logger,
+            )
+        else:
+            projects = parse_project_list(
+                connection=connection,
+                project_gid=args.project_gid,
+                project_gids=args.project_gids,
+                project_gids_file=args.project_gids_file,
+                team_gid=args.team_gid,
+                archived_scope=args.archived_scope,
+            )
+            task_filters = {}
 
     project_count = len(projects)
     # Suppress repeated per-project breakdown prompts during incremental refresh when exporting many projects.
@@ -3220,6 +3249,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             add_epics=args.add_epics,
             no_custom_fields=args.no_custom_fields,
             add_section_epics=args.add_section_epics,
+            task_gids=task_filters.get(project_gid),
         )
         if args.stats_only and output_path:
             logger.info("Generated statistics for project %s (%s).", project_name, project_gid)

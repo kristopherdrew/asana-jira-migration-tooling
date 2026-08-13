@@ -1301,6 +1301,7 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     print("[1] Single project")
     print("[2] Multiple projects (comma-separated GIDs)")
     print("[3] All projects in a team")
+    print("[4] Specific task GIDs")
     choice = input("Choice (default 1): ").strip() or "1"
     if choice == "1":
         project_gid = ""
@@ -1347,7 +1348,7 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
                 raise SystemExit("At least one project GID is required.")
             args.extend(["--project-gids", gids])
         allow_merge = True
-    else:
+    elif choice == "3":
         team_gid = ""
         if conn and confirm("Search for team by name?", default=True):
             term = prompt("Search text", default="")
@@ -1381,11 +1382,25 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
         scope = prompt("Archived scope (active|archived|all) [active]", default="active")
         args.extend(["--archived-scope", scope])
         allow_merge = True
+    elif choice == "4":
+        if confirm("Load task GIDs from a file?", default=False):
+            path = prompt("Task GIDs file path", default="")
+            if not path:
+                raise SystemExit("Task GIDs file path is required.")
+            args.extend(["--task-gids-file", path])
+        else:
+            gids = prompt("Task GIDs (comma-separated)", default="")
+            if not gids:
+                raise SystemExit("At least one task GID is required.")
+            args.extend(["--task-gids", gids])
+        allow_merge = True
+    else:
+        raise SystemExit(f"Invalid export scope choice: {choice}")
 
     if not confirm("Prompt to select custom fields during export?", default=True):
         args.append("--no-custom-field-prompt")
 
-    if choice in ("2", "3"):
+    if choice in ("2", "3", "4"):
         incremental_yes = confirm("Run incremental refresh for every selected project?", default=False)
         args.extend(["--incremental-refresh", "yes" if incremental_yes else "no"])
         if incremental_yes:
@@ -1415,6 +1430,7 @@ def args_export_archival_project(log_level: str) -> List[str]:
     print("[1] Single project")
     print("[2] Multiple projects (comma-separated GIDs)")
     print("[3] All projects in a team")
+    print("[4] Specific task GIDs")
     choice = input("Choice (default 1): ").strip() or "1"
     if choice == "1":
         project_gid = _prompt_project_gid_from_lookup(
@@ -1433,7 +1449,7 @@ def args_export_archival_project(log_level: str) -> List[str]:
             if not gids:
                 raise SystemExit("At least one project GID is required.")
             args.extend(["--project-gids", gids])
-    else:
+    elif choice == "3":
         team_gid = _prompt_team_gid_from_lookup(
             "archival export", "Team GID whose projects to export"
         )
@@ -1442,6 +1458,19 @@ def args_export_archival_project(log_level: str) -> List[str]:
         args.extend(["--team-gid", team_gid])
         scope = prompt("Archived scope (active|archived|all) [all]", default="all")
         args.extend(["--archived-scope", scope])
+    elif choice == "4":
+        if confirm("Load task GIDs from a file?", default=False):
+            path = prompt("Task GIDs file path", default="")
+            if not path:
+                raise SystemExit("Task GIDs file path is required.")
+            args.extend(["--task-gids-file", path])
+        else:
+            gids = prompt("Task GIDs (comma-separated)", default="")
+            if not gids:
+                raise SystemExit("At least one task GID is required.")
+            args.extend(["--task-gids", gids])
+    else:
+        raise SystemExit(f"Invalid export scope choice: {choice}")
 
     append_jira_env_flag(args)
     fallback_atl = prompt("Fallback Atlassian account ID for unmapped users (optional)", default="")
