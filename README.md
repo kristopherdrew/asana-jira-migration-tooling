@@ -17,7 +17,7 @@ The simplest path is to launch the interactive CLI and let it create your first 
 ```bash
 python3 -m scripts.interactive_cli
 ```
-It prompts for a client name, the Asana token + workspace GID, the SSL flag, and the optional Atlassian/Jira values, validates the tokens, then writes `profiles/<slug>.env` and the `profiles/.asana_jira_active` marker for you (storing the tokens in the Keychain on macOS).
+It prompts for a client name, the Asana token + workspace GID, the SSL flag, shared Atlassian credentials, and optional labeled Jira sites, validates the tokens, then writes `profiles/<slug>.env` and the `profiles/.asana_jira_active` marker for you (storing the tokens in the Keychain on macOS).
 
 To create a profile by hand instead, write the file directly (tokens included here only when you are not using the macOS Keychain):
 ```bash
@@ -28,8 +28,12 @@ export ASANA_WORKSPACE_GID="your_workspace_gid"
 export SKIP_SSL_VERIFICATION="false"
 export ATLASSIAN_USERNAME="you@example.com"
 export ATLASSIAN_TOKEN="your_jira_api_token"
-export JIRA_BASE_URL="https://your-prod.atlassian.net"
-export JIRA_SANDBOX_BASE_URL="https://your-sandbox.atlassian.net"
+export JIRA_SITES="production_jira,sandbox_jira"
+export JIRA_DEFAULT_SITE="sandbox_jira"
+export JIRA_SITE_PRODUCTION_JIRA_NAME="Production Jira"
+export JIRA_SITE_PRODUCTION_JIRA_URL="https://your-prod.atlassian.net"
+export JIRA_SITE_SANDBOX_JIRA_NAME="Sandbox Jira"
+export JIRA_SITE_SANDBOX_JIRA_URL="https://your-sandbox.atlassian.net"
 EOF
 chmod 600 profiles/client_a.env
 echo "client_a" > profiles/.asana_jira_active
