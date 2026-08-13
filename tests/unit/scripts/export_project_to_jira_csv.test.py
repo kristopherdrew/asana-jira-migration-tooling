@@ -1345,6 +1345,23 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual({gid for gid, _ in archived}, {"team_archived"})
         self.assertEqual({gid for gid, _ in all_projects}, {"team_active", "team_archived"})
 
+    def test_exact_task_scope_exports_only_requested_task(self) -> None:
+        output_path = export_project(
+            str(self.db_path),
+            "proj_1",
+            self.workspace / "task-scope",
+            filename="selected.csv",
+            prompt_for_custom_fields=False,
+            jira_base_url=self.jira_base_url,
+            incremental_decision=False,
+            task_gids={"task_2"},
+        )
+
+        self.assertIsNotNone(output_path)
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual([row["task_gid"] for row in rows], ["task_2"])
+
     def _section_epic_gid(self, section_name: str) -> str:
         base = re.sub(r"[^A-Za-z0-9._-]+", "_", section_name.strip())
         base = base.strip("_") or "section"

@@ -9,9 +9,10 @@ column) as one ``Field Name: value`` line per field, under an
 original parent, completion status, dates, assignee/creator, tags, comments)
 are retained as their own columns exactly as the full exporter emits them.
 
-Project selection is explicit (``--project-gid`` / ``--project-gids`` /
-``--project-gids-file`` / ``--team-gid``); the script does not derive the
-archival set from the migration-decision field.
+Selection is explicit by project (``--project-gid`` / ``--project-gids`` /
+``--project-gids-file`` / ``--team-gid``) or by task (``--task-gids`` /
+``--task-gids-file``); the script does not derive the archival set from the
+migration-decision field.
 """
 
 from __future__ import annotations
@@ -57,6 +58,7 @@ from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.asana_urls import build_project_url, build_task_url, infer_workspace_gid
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.task_scope import parse_task_gids, resolve_task_projects
 from src.lib.jira_csv_partition import (
     CsvPart,
     pack_csv_parts,
@@ -159,6 +161,7 @@ def export_archival_project(
     export_id: Optional[str] = None,
     skipped_log: Optional[List[Dict[str, str]]] = None,
     workspace_gid: Optional[str] = None,
+    task_gids: Optional[Set[str]] = None,
 ) -> Optional[Path]:
     jira_base_url = normalize_jira_base_url(jira_base_url)
     if not jira_base_url:
@@ -191,6 +194,8 @@ def export_archival_project(
 
         bundle = _bundle()
         tasks = [dict(row) for row in bundle["tasks"]]
+        if task_gids is not None:
+            tasks = [task for task in tasks if task["gid"] in task_gids]
         if not tasks:
             raise NoTasksFoundError(f"No tasks found for project {project_gid}.")
 
@@ -202,6 +207,8 @@ def export_archival_project(
             database.rebuild_flattened_task_hierarchy(connection)
             bundle = _bundle()
             tasks = [dict(row) for row in bundle["tasks"]]
+            if task_gids is not None:
+                tasks = [task for task in tasks if task["gid"] in task_gids]
 
         if export_id:
             exported_task_projects = database.get_exported_task_projects(connection, export_id)
@@ -627,6 +634,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Path to a file containing project GIDs (newline or comma separated).",
     )
     parser.add_argument("--team-gid", help="Export every project in this team.")
+    parser.add_argument("--task-gids", help="Comma-separated task GIDs to export.")
+    parser.add_argument(
+        "--task-gids-file",
+        help="Path to a file containing task GIDs (newline or comma separated).",
+    )
     parser.add_argument(
         "--archived-scope",
         choices=["active", "archived", "all"],
@@ -676,14 +688,25 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     database = Database(db_path=args.database)
     with database.connect() as connection:
         database.initialize(connection)
-        projects = parse_project_list(
-            connection=connection,
-            project_gid=args.project_gid,
-            project_gids=args.project_gids,
-            project_gids_file=args.project_gids_file,
-            team_gid=args.team_gid,
-            archived_scope=args.archived_scope,
+        project_scope = any(
+            (args.project_gid, args.project_gids, args.project_gids_file, args.team_gid)
         )
+        task_scope = any((args.task_gids, args.task_gids_file))
+        if project_scope and task_scope:
+            raise SystemExit("Project and task scope options cannot be combined.")
+        if task_scope:
+            requested_task_gids = parse_task_gids(args.task_gids, args.task_gids_file)
+            projects, task_filters = resolve_task_projects(connection, requested_task_gids, logger)
+        else:
+            projects = parse_project_list(
+                connection=connection,
+                project_gid=args.project_gid,
+                project_gids=args.project_gids,
+                project_gids_file=args.project_gids_file,
+                team_gid=args.team_gid,
+                archived_scope=args.archived_scope,
+            )
+            task_filters = {}
 
     if args.filename and len(projects) > 1:
         raise SystemExit("--filename can only be used when exporting a single project.")
@@ -704,6 +727,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 export_id=args.export_id,
                 skipped_log=skipped_log,
                 workspace_gid=args.workspace_gid,
+                task_gids=task_filters.get(project_gid),
             )
         except NoTasksFoundError:
             skipped_empty_projects.append((project_gid, project_name))

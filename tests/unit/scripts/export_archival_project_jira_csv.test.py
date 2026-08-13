@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -14,6 +15,7 @@ from scripts.atlassian.export_archival_project_jira_csv import (
     export_archival_project,
     main,
 )
+from src.lib.task_scope import parse_task_gids, resolve_task_projects
 
 
 class ExportArchivalProjectJiraCsvTest(TestCase):
@@ -290,6 +292,69 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertTrue((output_dir / "link_modifications").is_dir())
         self.assertTrue((output_dir / "section_counts").is_dir())
         self.assertTrue((output_dir / "user_associations").is_dir())
+
+    def test_task_gid_scope_exports_only_requested_tasks(self) -> None:
+        output_dir = self.workspace / "task-scope"
+        argv = [
+            "--task-gids",
+            "task_2,task_2,missing_task",
+            "--database",
+            str(self.db_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+        with patch(
+            "scripts.atlassian.export_archival_project_jira_csv.load_credentials"
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ), self.assertLogs(
+            "scripts.atlassian.export_archival_project_jira_csv", level="WARNING"
+        ) as logs:
+            main(argv)
+
+        consolidated = next(
+            path for path in (output_dir / "tasks").glob("_Consolidated-*.csv")
+            if "manifest" not in path.name
+        )
+        with consolidated.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        external_ids = {row["External issue ID"] for row in rows}
+        self.assertEqual(external_ids, {"proj_1::archival::epic", "task_2"})
+        self.assertIn("missing_task", "\n".join(logs.output))
+
+    def test_task_gid_file_parser_deduplicates_and_preserves_order(self) -> None:
+        path = self.workspace / "task-gids.csv"
+        path.write_text("task_2\ntask_1, task_2\n", encoding="utf-8")
+        self.assertEqual(
+            parse_task_gids(task_gids_file=str(path)),
+            ["task_2", "task_1"],
+        )
+
+    def test_resolve_task_projects_prefers_primary_membership(self) -> None:
+        self.connection.execute(
+            "UPDATE task_projects SET is_primary = 0 WHERE task_gid = ?",
+            ("task_1",),
+        )
+        self.connection.execute(
+            "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
+            ("proj_2", "Primary Project", self.sync_time.isoformat()),
+        )
+        self.connection.execute(
+            "INSERT INTO task_projects "
+            "(task_gid, project_gid, is_primary, synced_at) VALUES (?, ?, ?, ?)",
+            ("task_1", "proj_2", 1, self.sync_time.isoformat()),
+        )
+        self.connection.commit()
+
+        projects, filters = resolve_task_projects(
+            self.connection,
+            ["task_1"],
+            logging.getLogger(__name__),
+        )
+
+        self.assertEqual(projects, [("proj_2", "Primary Project")])
+        self.assertEqual(filters, {"proj_2": {"task_1"}})
 
     def test_export_id_records_tasks_and_skips_them_on_rerun(self) -> None:
         output_dir = self.workspace / "export-id"
