@@ -28,19 +28,19 @@ and then task-derived resources.
 
 See [Discover & Refresh Asana](phases/02-discover-refresh-asana.md).
 
-## 3. Assess & Plan Migration
-
-Produce stakeholder review material and make project, field, section, membership,
-and migration-scope decisions.
-
-See [Assess & Plan Migration](phases/03-assess-plan-migration.md).
-
-## 4. Prepare Jira
+## 3. Prepare Jira
 
 Establish user mappings, project associations, Jira hierarchy, and project-level
 fields needed before task migration.
 
-See [Prepare Jira](phases/04-prepare-jira.md).
+See [Prepare Jira](phases/03-prepare-jira.md).
+
+## 4. Assess & Plan Migration
+
+Produce stakeholder review material and make project, field, section, membership,
+and migration-scope decisions.
+
+See [Assess & Plan Migration](phases/04-assess-plan-migration.md).
 
 ## 5. Migrate Projects
 

@@ -1159,8 +1159,8 @@ class LifecycleMenuTest(TestCase):
             [
                 "Client & Environment",
                 "Discover & Refresh Asana",
-                "Assess & Plan Migration",
                 "Prepare Jira",
+                "Assess & Plan Migration",
                 "Migrate Projects",
                 "Maintain & Validate",
                 "Advanced & Recovery",
@@ -1197,6 +1197,11 @@ class LifecycleMenuTest(TestCase):
         menu = interactive_cli.build_prepare_jira_menu("INFO")
         self.assertEqual(menu["1"].label, "Create Jira fields for task-import mappings")
         self.assertEqual(menu["2"].label, "Create Jira fields for Team/Project tracking")
+        self.assertEqual(menu["5"].label, "Preview or create Team/Project Jira hierarchy (API)")
+        self.assertNotIn(
+            "Export Team -> Epic / Project -> Task CSV",
+            [item.label for item in menu.values()],
+        )
 
     @patch("scripts.interactive_cli.args_get_project_status_updates", return_value=["status"])
     @patch("scripts.interactive_cli.args_get_task_extras", return_value=["extras"])

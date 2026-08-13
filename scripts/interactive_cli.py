@@ -2230,20 +2230,13 @@ def build_assess_plan_menu(log_level: str) -> Dict[str, MenuItem]:
 
 
 def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
-    def run_team_project_export() -> None:
-        args = args_report_defaults(log_level)
-        if confirm("Include projects with 0 tasks?", default=False):
-            args.append("--include-empty-projects")
-        run_script(export_team_project_jira_csv.main, args)
-
     return {
         "1": MenuItem("1", "Create Jira fields for task-import mappings", lambda: run_script(create_jira_import_fields.main, args_create_jira_import_fields(log_level, "import"))),
         "2": MenuItem("2", "Create Jira fields for Team/Project tracking", lambda: run_script(create_jira_import_fields.main, args_create_jira_import_fields(log_level, "tracking"))),
         "3": MenuItem("3", "Update Atlassian user mappings", lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level))),
-        "4": MenuItem("4", "Export Team -> Epic / Project -> Task CSV", run_team_project_export),
-        "5": MenuItem("5", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
-        "6": MenuItem("6", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
-        "7": MenuItem("7", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "4": MenuItem("4", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
+        "5": MenuItem("5", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
+        "6": MenuItem("6", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -2307,8 +2300,8 @@ def build_top_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Client & Environment", lambda: run_group("Client & Environment", build_client_environment_menu(PROJECT_ROOT))),
         "2": MenuItem("2", "Discover & Refresh Asana", lambda: run_group("Discover & Refresh Asana", build_discover_refresh_menu(log_level))),
-        "3": MenuItem("3", "Assess & Plan Migration", lambda: run_group("Assess & Plan Migration", build_assess_plan_menu(log_level))),
-        "4": MenuItem("4", "Prepare Jira", lambda: run_group("Prepare Jira", build_prepare_jira_menu(log_level))),
+        "3": MenuItem("3", "Prepare Jira", lambda: run_group("Prepare Jira", build_prepare_jira_menu(log_level))),
+        "4": MenuItem("4", "Assess & Plan Migration", lambda: run_group("Assess & Plan Migration", build_assess_plan_menu(log_level))),
         "5": MenuItem("5", "Migrate Projects", lambda: run_group("Migrate Projects", build_migrate_projects_menu(log_level))),
         "6": MenuItem("6", "Maintain & Validate", lambda: run_group("Maintain & Validate", build_maintain_validate_menu(log_level))),
         "7": MenuItem("7", "Advanced & Recovery", lambda: run_group("Advanced & Recovery", build_advanced_recovery_menu(log_level))),

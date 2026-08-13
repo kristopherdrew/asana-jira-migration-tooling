@@ -67,8 +67,8 @@ The top menu follows the migration lifecycle:
 
 1. **Client & Environment** — profiles, credentials, and Sandbox/Production selection.
 2. **Discover & Refresh Asana** — metadata, tasks, task-derived data, portfolios, personal tasks, and incremental refreshes.
-3. **Assess & Plan Migration** — review workbooks, project/member/activity reports, and Jira migration decisions.
-4. **Prepare Jira** — user mappings, project associations, Team/Project hierarchy creation, and project date fields.
+3. **Prepare Jira** — user mappings, project associations, Team/Project hierarchy creation, and project date fields.
+4. **Assess & Plan Migration** — review workbooks, project/member/activity reports, and Jira migration decisions.
 5. **Migrate Projects** — guided CSV/API migration paths, key recovery, and attachments.
 6. **Maintain & Validate** — advisory readiness, incremental updates, reconciliation, and Jira field maintenance.
 7. **Advanced & Recovery** — destructive resets, one-time token migration, and temporary access to the previous technical menus.
