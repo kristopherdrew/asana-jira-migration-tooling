@@ -12,11 +12,35 @@ from src.lib.jira_csv_import_config import (
     build_archive_import_config,
     load_archive_import_settings,
     normalize_fields,
+    prompt_field_choice,
     save_archive_import_settings,
 )
 
 
 class JiraCsvImportConfigTest(TestCase):
+    def test_field_picker_can_search_custom_fields_by_name(self) -> None:
+        fields = [
+            JiraFieldChoice("summary", "Summary", "Text", "string"),
+            JiraFieldChoice("customfield_10001", "Asana Section", "Text", "string"),
+            JiraFieldChoice("customfield_10002", "Legacy Section", "Text", "string"),
+            JiraFieldChoice("customfield_10003", "Asana Start Date", "Date", "date"),
+        ]
+        answers = iter(["f", "asana", "2"])
+        output = []
+        selected, persist = prompt_field_choice(
+            "Section",
+            fields,
+            None,
+            input_fn=lambda _prompt: next(answers),
+            output_fn=output.append,
+        )
+        self.assertEqual(selected.field_id, "customfield_10003")
+        self.assertTrue(persist)
+        rendered = "\n".join(output)
+        self.assertIn("Asana Section", rendered)
+        self.assertIn("Asana Start Date", rendered)
+        self.assertNotIn("Summary —", rendered)
+
     def test_normalize_fields_reports_name_id_and_type(self) -> None:
         fields = normalize_fields(
             [
@@ -80,4 +104,3 @@ class JiraCsvImportConfigTest(TestCase):
                 {"No": "<<blank>>", "Yes": "10000"},
             )
             json.dumps(config)
-

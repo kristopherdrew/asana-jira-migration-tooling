@@ -159,15 +159,30 @@ def prompt_field_choice(
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
 ) -> tuple[Optional[JiraFieldChoice], bool]:
-    exact = [field for field in fields if field.name.casefold() == label.casefold()]
-    matches = exact or [field for field in fields if label.casefold() in field.name.casefold()]
-    output_fn(f"\nSelect the Jira field for {label!r}:")
-    for index, field in enumerate(matches, start=1):
-        output_fn(f"[{index}] {field.name} — {field.field_id} — {field.field_type}")
-    output_fn("[M] Enter a field ID manually")
-    output_fn("[S] Skip this mapping for this export")
-    if current:
-        output_fn("[X] Clear the saved mapping")
+    custom_fields = [
+        field for field in fields if field.field_id.casefold().startswith("customfield_")
+    ]
+    exact = [field for field in custom_fields if field.name.casefold() == label.casefold()]
+    matches = exact or [
+        field for field in custom_fields if label.casefold() in field.name.casefold()
+    ]
+
+    def show_choices() -> None:
+        output_fn(f"\nSelect the Jira field for {label!r}:")
+        if matches:
+            for index, field in enumerate(matches, start=1):
+                output_fn(
+                    f"[{index}] {field.name} — {field.field_id} — {field.field_type}"
+                )
+        else:
+            output_fn("No matching custom fields found.")
+        output_fn("[F] Search custom fields by name")
+        output_fn("[M] Enter a field ID manually")
+        output_fn("[S] Skip this mapping for this export")
+        if current:
+            output_fn("[X] Clear the saved mapping")
+
+    show_choices()
     while True:
         choice = input_fn("Choice: ").strip()
         if choice.isdigit() and 1 <= int(choice) <= len(matches):
@@ -177,6 +192,14 @@ def prompt_field_choice(
                 f"{selected.field_type} (schema: {selected.schema_type})"
             )
             return selected, True
+        if choice.casefold() == "f":
+            query = input_fn("Custom field name search: ").strip().casefold()
+            if not query:
+                output_fn("Enter at least one character to search.")
+                continue
+            matches = [field for field in custom_fields if query in field.name.casefold()]
+            show_choices()
+            continue
         if choice.casefold() == "m":
             entered = input_fn("Jira custom field ID: ").strip()
             selected = _field_by_id(fields, entered)
@@ -192,7 +215,7 @@ def prompt_field_choice(
             return None, False
         if choice.casefold() == "x" and current:
             return None, True
-        output_fn("Choose a listed number, M, S, or X.")
+        output_fn("Choose a listed number, F, M, S, or X.")
 
 
 def prompt_resolution_choice(
