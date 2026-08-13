@@ -293,6 +293,36 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertTrue((output_dir / "section_counts").is_dir())
         self.assertTrue((output_dir / "user_associations").is_dir())
 
+    def test_main_groups_default_output_by_export_id(self) -> None:
+        grouped_dir = self.workspace / "exports" / "export-01-archive-wave"
+        argv = [
+            "--project-gid",
+            "proj_1",
+            "--database",
+            str(self.db_path),
+            "--export-id",
+            "archive-wave",
+        ]
+        with patch(
+            "scripts.atlassian.export_archival_project_jira_csv.load_credentials"
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.next_export_dir",
+            return_value=grouped_dir,
+        ) as next_dir:
+            main(argv)
+
+        next_dir.assert_called_once_with(Path("exports"), "archive-wave")
+        self.assertTrue((grouped_dir / "tasks").is_dir())
+        self.assertTrue(
+            any(
+                path.name.startswith("_Consolidated-")
+                for path in (grouped_dir / "tasks").glob("*.csv")
+            )
+        )
+
     def test_task_gid_scope_exports_only_requested_tasks(self) -> None:
         output_dir = self.workspace / "task-scope"
         argv = [

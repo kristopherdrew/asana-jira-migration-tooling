@@ -42,6 +42,7 @@ from scripts.atlassian.export_project_to_jira_csv import (
     load_user_display_names,
     load_user_emails,
     normalize_jira_base_url,
+    next_export_dir,
     organize_outputs,
     parse_iso_datetime,
     parse_project_list,
@@ -685,6 +686,13 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         raise SystemExit("Jira base URL is required.")
 
     output_dir = Path(args.output_dir)
+    if args.export_id and output_dir == Path(DEFAULT_OUTPUT_DIR):
+        output_dir = next_export_dir(Path(DEFAULT_OUTPUT_DIR), args.export_id)
+        logger.info(
+            "Using grouped archival export directory %s for export_id %s",
+            output_dir,
+            args.export_id,
+        )
     database = Database(db_path=args.database)
     with database.connect() as connection:
         database.initialize(connection)

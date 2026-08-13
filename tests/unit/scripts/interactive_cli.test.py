@@ -177,9 +177,11 @@ class IncrementalArgsBuilderTest(TestCase):
             args = interactive_cli.args_get_task_extras("INFO")
         self.assertEqual(args, ["--log-level", "INFO", "--project-gids", "proj_a, proj_b"])
 
-    def test_task_sync_can_select_project_gids_file_from_current_directory(self) -> None:
+    def test_task_sync_can_select_project_gids_file_from_inputs_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            gids_path = Path(tmpdir) / "migration_project_gids.txt"
+            inputs_dir = Path(tmpdir) / "inputs"
+            inputs_dir.mkdir()
+            gids_path = inputs_dir / "migration_project_gids.txt"
             gids_path.write_text("proj_a\nproj_b\n", encoding="utf-8")
             with patch("scripts.interactive_cli.PROJECT_ROOT", Path(tmpdir)), patch(
                 "builtins.input", side_effect=["4", "1", "5"]
@@ -190,12 +192,14 @@ class IncrementalArgsBuilderTest(TestCase):
             ["--log-level", "INFO", "--project-gids-file", str(gids_path.resolve()), "--workers", "5"],
         )
 
-    def test_csv_file_picker_searches_repository_root(self) -> None:
+    def test_csv_file_picker_searches_inputs_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            csv_path = root / "jira-keys.csv"
+            inputs_dir = root / "inputs"
+            inputs_dir.mkdir()
+            csv_path = inputs_dir / "jira-keys.csv"
             csv_path.write_text("Issue key,External issue ID\nABC-1,1\n", encoding="utf-8")
-            (root / "ignore.txt").write_text("not a csv", encoding="utf-8")
+            (inputs_dir / "ignore.txt").write_text("not a csv", encoding="utf-8")
             with patch("scripts.interactive_cli.PROJECT_ROOT", root), patch(
                 "builtins.input", side_effect=["1", "", ""]
             ):
@@ -252,10 +256,12 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIn("--prod", args)
         self.assertNotIn("--dry-run", args)
 
-    def test_user_and_project_map_imports_use_root_csv_picker(self) -> None:
+    def test_user_and_project_map_imports_use_inputs_csv_picker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            csv_path = root / "mapping.csv"
+            inputs_dir = root / "inputs"
+            inputs_dir.mkdir()
+            csv_path = inputs_dir / "mapping.csv"
             csv_path.write_text("gid,value\n1,x\n", encoding="utf-8")
             with patch("scripts.interactive_cli.PROJECT_ROOT", root), patch(
                 "builtins.input", side_effect=["1", "1"]
@@ -331,9 +337,28 @@ class IncrementalArgsBuilderTest(TestCase):
             side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", ""],
         ):
             args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
-        self.assertTrue(allow_merge)
+        self.assertFalse(allow_merge)
         self.assertIn("--task-gids", args)
         self.assertIn("task_1,task_2", args)
+
+    def test_regular_and_archival_exports_use_task_gid_file_picker(self) -> None:
+        with patch(
+            "scripts.interactive_cli._open_sqlite",
+            side_effect=SystemExit,
+        ), patch(
+            "scripts.interactive_cli._prompt_task_gids_file",
+            return_value="/repo/missing-task-gids.txt",
+        ), patch(
+            "builtins.input",
+            side_effect=["4", "y", "", "n", "n", "", "", "4", "y", "", "", ""],
+        ):
+            regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
+            archival_args = interactive_cli.args_export_archival_project("INFO")
+        self.assertFalse(allow_merge)
+        self.assertIn("--task-gids-file", regular_args)
+        self.assertIn("/repo/missing-task-gids.txt", regular_args)
+        self.assertIn("--task-gids-file", archival_args)
+        self.assertIn("/repo/missing-task-gids.txt", archival_args)
 
     def test_status_updates_uses_fuzzy_team_lookup(self) -> None:
         with patch(

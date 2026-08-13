@@ -120,6 +120,7 @@ class ExportProjectToJiraCsvTest(TestCase):
                 "name": "First Task",
                 "resource_type": "task",
                 "resource_subtype": "default_task",
+                "workspace": {"gid": "ws_1", "name": "Demo Workspace"},
                 "notes": "Task notes",
                 "assignee": {"gid": "user_1", "name": "Alice Reviewer"},
                 "created_by": {"gid": "user_1"},
@@ -172,6 +173,7 @@ class ExportProjectToJiraCsvTest(TestCase):
                 "name": "Second Task",
                 "resource_type": "task",
                 "resource_subtype": "default_task",
+                "workspace": {"gid": "ws_1", "name": "Demo Workspace"},
                 "assignee": {"gid": "user_2", "name": "Bob Approver"},
                 "created_by": {"gid": "user_2"},
                 "created_at": "2025-02-26T12:45:00Z",
@@ -305,6 +307,8 @@ class ExportProjectToJiraCsvTest(TestCase):
         creator_atl_index = header.index("creator_atlassian_id")
         creator_atl_email_index = header.index("creator_atlassian_email")
         current_project_index = header.index("current_project")
+        project_link_index = header.index("Asana Project Link")
+        task_link_index = header.index("Asana Task Link")
         for removed_column in (
             "project_num_tasks",
             "project_num_incomplete_tasks",
@@ -343,6 +347,14 @@ class ExportProjectToJiraCsvTest(TestCase):
         )
 
         self.assertEqual(first_task[asana_id_index], "task_1")
+        self.assertEqual(
+            first_task[project_link_index],
+            "https://app.asana.com/1/ws_1/project/proj_1",
+        )
+        self.assertEqual(
+            first_task[task_link_index],
+            "https://app.asana.com/1/ws_1/task/task_1",
+        )
         self.assertEqual(first_task[section_columns[0]], "Backlog")
         self.assertEqual(first_task[assignee_atl_index], "atl-account-alice")
         self.assertEqual(first_task[assignee_atl_email_index], "alice.atl@example.com")
