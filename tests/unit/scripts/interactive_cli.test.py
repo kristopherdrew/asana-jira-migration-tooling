@@ -10,7 +10,7 @@ from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
 from scripts import interactive_cli
-from src.lib.config import Credentials, load_credentials, write_credentials_file
+from src.lib.config import Credentials, JiraSite, load_credentials, write_credentials_file
 
 
 class IncrementalArgsBuilderTest(TestCase):
@@ -417,19 +417,19 @@ class IncrementalArgsBuilderTest(TestCase):
                     skip_ssl_verification=False,
                     atlassian_username="u@example.com",
                     atlassian_token="jira-token-SECRET",
-                    jira_base_url="https://prod.example",
-                    jira_sandbox_base_url="https://old-sb.example",
+                    jira_sites=(JiraSite("sandbox_jira", "Sandbox Jira", "https://old-sb.example"),),
+                    jira_default_site="sandbox_jira",
                 ),
             )
             (project_root / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
 
             buffer = io.StringIO()
-            # Pick [7] JIRA_SANDBOX_BASE_URL, enter a new value, then save.
+            # Pick [4] ATLASSIAN_USERNAME, enter a new value, then save.
             # Token validation is exercised separately; stub it to pass here.
             with patch.dict(environ, {}, clear=True), patch(
                 "scripts.interactive_cli.report_credential_checks", return_value=True
             ), patch(
-                "builtins.input", side_effect=["7", "https://new-sb.example", "s"]
+                "builtins.input", side_effect=["4", "new@example.com", "s"]
             ), redirect_stdout(buffer):
                 interactive_cli.manage_credentials(project_root)
 
@@ -439,14 +439,13 @@ class IncrementalArgsBuilderTest(TestCase):
             self.assertNotIn("asana-token-SECRET", output)
             self.assertNotIn("jira-token-SECRET", output)
 
-            # The edit is merged: sandbox URL changed, everything else preserved.
+            # The shared edit is merged and named Jira sites are preserved.
             with patch.dict(environ, {}, clear=True):
                 updated = load_credentials(project_root)
-            self.assertEqual(updated.jira_sandbox_base_url, "https://new-sb.example")
-            self.assertEqual(updated.jira_base_url, "https://prod.example")
+            self.assertEqual(updated.jira_sites[0].base_url, "https://old-sb.example")
             self.assertEqual(updated.token, "asana-token-SECRET")
             self.assertEqual(updated.atlassian_token, "jira-token-SECRET")
-            self.assertEqual(updated.atlassian_username, "u@example.com")
+            self.assertEqual(updated.atlassian_username, "new@example.com")
 
     def test_manage_credentials_cancel_discards_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -458,20 +457,20 @@ class IncrementalArgsBuilderTest(TestCase):
                     token="t",
                     workspace_gid="ws-1",
                     skip_ssl_verification=False,
-                    jira_sandbox_base_url="https://old-sb.example",
+                    atlassian_username="old@example.com",
                 ),
             )
             (project_root / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
 
-            # Edit the sandbox URL but quit without saving.
+            # Edit the shared username but cancel without saving.
             with patch.dict(environ, {}, clear=True), patch(
-                "builtins.input", side_effect=["7", "https://discarded.example", "q"]
+                "builtins.input", side_effect=["4", "discarded@example.com", "c"]
             ), redirect_stdout(io.StringIO()):
                 interactive_cli.manage_credentials(project_root)
 
             with patch.dict(environ, {}, clear=True):
                 unchanged = load_credentials(project_root)
-            self.assertEqual(unchanged.jira_sandbox_base_url, "https://old-sb.example")
+            self.assertEqual(unchanged.atlassian_username, "old@example.com")
 
     def test_manage_credentials_does_not_save_when_validation_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -483,22 +482,22 @@ class IncrementalArgsBuilderTest(TestCase):
                     token="t",
                     workspace_gid="ws-1",
                     skip_ssl_verification=False,
-                    jira_sandbox_base_url="https://old-sb.example",
+                    atlassian_username="old@example.com",
                 ),
             )
             (project_root / ".asana_jira_env_path").write_text(f"{env_path}\n", encoding="utf-8")
 
-            # Edit + save, but validation fails (and user declines save-anyway) -> 'q' to leave.
+            # Edit + save, but validation fails -> 'c' to leave.
             with patch.dict(environ, {}, clear=True), patch(
                 "scripts.interactive_cli.report_credential_checks", return_value=False
             ), patch(
-                "builtins.input", side_effect=["7", "https://new-sb.example", "s", "q"]
+                "builtins.input", side_effect=["4", "new@example.com", "s", "c"]
             ), redirect_stdout(io.StringIO()):
                 interactive_cli.manage_credentials(project_root)
 
             with patch.dict(environ, {}, clear=True):
                 unchanged = load_credentials(project_root)
-            self.assertEqual(unchanged.jira_sandbox_base_url, "https://old-sb.example")
+            self.assertEqual(unchanged.atlassian_username, "old@example.com")
 
     @patch("scripts.interactive_cli.check_credentials")
     def test_report_credential_checks_passes_without_prompting(self, mock_check) -> None:
@@ -1017,6 +1016,60 @@ class ProfileSessionTest(TestCase):
 
 
 class MenuSortingTest(TestCase):
+    def test_q_exits_from_any_prompt(self) -> None:
+        with patch("builtins.input", return_value=" Q ") as mock_input:
+            with self.assertRaises(interactive_cli.CliExit):
+                interactive_cli.prompt("Any value")
+        self.assertIn("q to quit", mock_input.call_args.args[0])
+
+    def test_terminal_interrupts_exit_from_any_prompt(self) -> None:
+        for interruption in (KeyboardInterrupt(), EOFError()):
+            with self.subTest(interruption=type(interruption).__name__), patch(
+                "builtins.input", side_effect=interruption
+            ):
+                with self.assertRaises(interactive_cli.CliExit):
+                    interactive_cli.prompt("Any value")
+
+    def test_main_reports_a_clean_exit(self) -> None:
+        output = io.StringIO()
+        with patch("scripts.interactive_cli._run_cli", side_effect=interactive_cli.CliExit), redirect_stdout(output):
+            interactive_cli.main([])
+        self.assertIn("Exiting Asana -> Jira Migration Toolkit.", output.getvalue())
+
+    def test_q_exits_from_an_invoked_script_prompt(self) -> None:
+        def prompting_script(_argv) -> None:
+            input("Nested script prompt: ")
+
+        with patch("builtins.input", return_value="q"):
+            with self.assertRaises(interactive_cli.CliExit):
+                interactive_cli.run_script(prompting_script, [])
+
+    def test_q_exits_new_profile_wizard_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "builtins.input", return_value="q"
+        ) as mock_input:
+            with self.assertRaises(interactive_cli.CliExit):
+                interactive_cli.bootstrap_credentials(Path(tmpdir))
+        self.assertIn("Client / profile name", mock_input.call_args.args[0])
+        self.assertIn("q to quit", mock_input.call_args.args[0])
+
+    def test_q_exits_add_jira_site_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            original_session = interactive_cli._session
+            interactive_cli._session = interactive_cli.CliSession(
+                reference_path=Path(tmpdir), env_path=env_path
+            )
+            try:
+                with patch("builtins.input", return_value="q") as mock_input:
+                    with self.assertRaises(interactive_cli.CliExit):
+                        interactive_cli.add_jira_site()
+                self.assertFalse(env_path.exists())
+                self.assertIn("Jira site label", mock_input.call_args.args[0])
+                self.assertIn("q to quit", mock_input.call_args.args[0])
+            finally:
+                interactive_cli._session = original_session
+
     def test_menu_sort_key_orders_digits_letters_back_quit(self) -> None:
         keys = ["b", "9", "a", "1", "q", "2"]
         self.assertEqual(
