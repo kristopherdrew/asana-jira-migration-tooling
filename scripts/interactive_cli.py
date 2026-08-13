@@ -2011,7 +2011,6 @@ def build_client_environment_menu(
         "2": MenuItem("2", "Create a new client profile", lambda: bootstrap_credentials(reference_path)),
         "3": MenuItem("3", "Toggle Jira environment (Sandbox <-> Production)", toggle_environment),
         "4": MenuItem("4", "View or update credentials", lambda: manage_credentials(reference_path)),
-        "5": MenuItem("5", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(reference_path)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -2116,10 +2115,11 @@ def build_advanced_recovery_menu(log_level: str) -> Dict[str, MenuItem]:
         "2": MenuItem("2", "Clear Jira project associations", lambda: run_recovery_action("Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, build_common_args(log_level) + ["--clear-jira-project-map"]))),
         "3": MenuItem("3", "Clear export-ID history", lambda: run_recovery_action("Clear export-ID history", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level)))),
         "4": MenuItem("4", "Reset direct-API Team/Project mappings", lambda: run_recovery_action("Reset direct-API Team/Project mappings", reset_direct_api_mappings)),
-        "5": MenuItem("5", "Legacy Initialization menu", lambda: run_group("Legacy Initialization", build_init_menu(log_level))),
-        "6": MenuItem("6", "Legacy Tasks menu", lambda: run_group("Legacy Tasks", build_tasks_menu(log_level))),
-        "7": MenuItem("7", "Legacy Atlassian menu", lambda: run_group("Legacy Atlassian", build_atlassian_menu(log_level))),
-        "8": MenuItem("8", "Legacy Reports menu", lambda: run_group("Legacy Reports", build_reports_menu(log_level))),
+        "5": MenuItem("5", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
+        "6": MenuItem("6", "Legacy Initialization menu", lambda: run_group("Legacy Initialization", build_init_menu(log_level))),
+        "7": MenuItem("7", "Legacy Tasks menu", lambda: run_group("Legacy Tasks", build_tasks_menu(log_level))),
+        "8": MenuItem("8", "Legacy Atlassian menu", lambda: run_group("Legacy Atlassian", build_atlassian_menu(log_level))),
+        "9": MenuItem("9", "Legacy Reports menu", lambda: run_group("Legacy Reports", build_reports_menu(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
