@@ -353,13 +353,21 @@ class ProfileHelpersTest(TestCase):
             write_active_slug("acme", root)
             self.assertTrue(has_active_marker(root))
             self.assertEqual(read_active_slug(root), "acme")
-            self.assertEqual((root / ".asana_jira_active").read_text(encoding="utf-8"), "acme\n")
+            marker = root / "profiles" / ".asana_jira_active"
+            self.assertEqual(marker.read_text(encoding="utf-8"), "acme\n")
 
             # The default profile is written/read as "default" -> "".
             write_active_slug("", root)
             self.assertTrue(has_active_marker(root))
             self.assertEqual(read_active_slug(root), "")
-            self.assertEqual((root / ".asana_jira_active").read_text(encoding="utf-8"), "default\n")
+            self.assertEqual(marker.read_text(encoding="utf-8"), "default\n")
+
+    def test_legacy_root_active_marker_is_still_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / ".asana_jira_active").write_text("acme\n", encoding="utf-8")
+            self.assertTrue(has_active_marker(root))
+            self.assertEqual(read_active_slug(root), "acme")
 
     def test_list_project_profiles_discovers_env_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -21,7 +21,7 @@ NAMED_PROFILE_PREFIX = ".asana_jira_env_"
 
 # Project-local profile storage (the current scheme). Non-secret config lives in
 # ``<project>/profiles/<slug>.env`` (``default.env`` for the default profile) and
-# the active profile is named by ``<project>/.asana_jira_active``.
+# the active profile is named by ``<project>/profiles/.asana_jira_active``.
 PROFILES_DIRNAME = "profiles"
 ACTIVE_MARKER_FILENAME = ".asana_jira_active"
 DEFAULT_PROFILE_FILENAME = "default.env"
@@ -211,12 +211,21 @@ def project_profile_path(slug: str, reference_path: str | Path = ".") -> Path:
 
 
 def _active_marker_path(reference_path: str | Path = ".") -> Path:
+    return project_profiles_dir(reference_path) / ACTIVE_MARKER_FILENAME
+
+
+def _legacy_active_marker_path(reference_path: str | Path = ".") -> Path:
     return _resolve_project_root(Path(reference_path)) / ACTIVE_MARKER_FILENAME
+
+
+def _existing_active_marker_path(reference_path: str | Path = ".") -> Path:
+    current = _active_marker_path(reference_path)
+    return current if current.exists() else _legacy_active_marker_path(reference_path)
 
 
 def has_active_marker(reference_path: str | Path = ".") -> bool:
     """Return True when the project has an active-profile marker file."""
-    return _active_marker_path(reference_path).exists()
+    return _existing_active_marker_path(reference_path).exists()
 
 
 def read_active_slug(reference_path: str | Path = ".") -> str:
@@ -224,7 +233,7 @@ def read_active_slug(reference_path: str | Path = ".") -> str:
 
     Tolerant of a missing/blank marker file; ``default`` (or empty) maps to ''.
     """
-    path = _active_marker_path(reference_path)
+    path = _existing_active_marker_path(reference_path)
     if not path.exists():
         return ""
     raw = ""
@@ -264,7 +273,7 @@ def _resolve_env_path(reference_path: Path) -> Path:
     root = _resolve_project_root(reference_path)
 
     # 1. Active-slug marker -> the project profile file for that slug.
-    if _active_marker_path(root).exists():
+    if has_active_marker(root):
         slug = read_active_slug(root)
         candidate = project_profile_path(slug, root)
         if candidate.exists():
@@ -341,7 +350,7 @@ def load_credentials(path: str | Path = ".") -> Credentials:
             raise FileNotFoundError(
                 f"No credentials found. Set environment variables, create {env_path}, "
                 f"or run the interactive CLI to create a profile in {root / PROFILES_DIRNAME} "
-                f"(selected via {root / ACTIVE_MARKER_FILENAME})."
+                f"(selected via {project_profiles_dir(root) / ACTIVE_MARKER_FILENAME})."
             )
         missing_keys = []
         if token is None:

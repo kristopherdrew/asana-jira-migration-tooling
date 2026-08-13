@@ -59,11 +59,10 @@ credentials.json
 
 .asana_jira_env_path
 
-# Per-profile config (non-secret config; tokens live in the macOS Keychain)
-# and the active-profile marker — both machine-specific.
+# Per-profile config and active-profile marker (non-secret config; tokens live
+# in the macOS Keychain) — all machine-specific.
 
 profiles/
-.asana_jira_active
 
 # Allow the example file
 
