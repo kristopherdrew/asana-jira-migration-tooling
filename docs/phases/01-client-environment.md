@@ -16,7 +16,7 @@ menu actions do not ask again.
 This phase contains CLI-native operations rather than standalone scripts:
 
 - **Switch active client profile** selects an existing `profiles/<slug>.env`, writes
-  the `.asana_jira_active` marker, and activates that profile's database.
+  the `profiles/.asana_jira_active` marker, and activates that profile's database.
 - **Create a new client profile** collects the client name, Asana workspace and
   credentials, optional Jira settings, and SSL preference. It validates available
   credentials before saving.

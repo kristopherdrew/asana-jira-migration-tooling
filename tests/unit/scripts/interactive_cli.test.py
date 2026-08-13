@@ -1033,7 +1033,7 @@ class ProfileSessionTest(TestCase):
                 interactive_cli.switch_profile(project_root)
 
                 # The active-profile marker now names the chosen profile's slug.
-                marker = (project_root / ".asana_jira_active").read_text(encoding="utf-8").strip()
+                marker = (project_root / "profiles" / ".asana_jira_active").read_text(encoding="utf-8").strip()
                 self.assertEqual(marker, "globex")
                 # Session + DB env follow the switch; the toggle is preserved.
                 self.assertEqual(interactive_cli._session.client_name, "Globex")
@@ -1058,7 +1058,7 @@ class ProfileSessionTest(TestCase):
             mock_migrate.assert_called_once_with(project_root)
             # With a single migrated profile and no prior marker, it is adopted.
             self.assertEqual(
-                (project_root / ".asana_jira_active").read_text(encoding="utf-8").strip(), "acme"
+                (project_root / "profiles" / ".asana_jira_active").read_text(encoding="utf-8").strip(), "acme"
             )
 
 
