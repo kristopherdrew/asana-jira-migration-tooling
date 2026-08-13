@@ -1193,6 +1193,11 @@ class LifecycleMenuTest(TestCase):
             advanced_menu["5"].handler()
         mock_migrate.assert_called_once_with(interactive_cli.PROJECT_ROOT)
 
+    def test_prepare_jira_starts_with_standard_import_field_setup(self) -> None:
+        menu = interactive_cli.build_prepare_jira_menu("INFO")
+        self.assertEqual(menu["1"].label, "Create Jira fields for task-import mappings")
+        self.assertEqual(menu["2"].label, "Create Jira fields for Team/Project tracking")
+
     @patch("scripts.interactive_cli.args_get_project_status_updates", return_value=["status"])
     @patch("scripts.interactive_cli.args_get_task_extras", return_value=["extras"])
     @patch("scripts.interactive_cli.run_script")

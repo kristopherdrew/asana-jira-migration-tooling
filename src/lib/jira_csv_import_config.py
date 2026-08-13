@@ -36,7 +36,7 @@ class ArchiveImportSettings:
 
 
 FIELD_SPECS = (
-    ("section", "Section", "SECTION"),
+    ("section", "Asana Section", "SECTION"),
     ("external_id", "External Issue ID", "EXTERNAL_ID"),
     ("start_date", "Start Date", "START_DATE"),
 )
