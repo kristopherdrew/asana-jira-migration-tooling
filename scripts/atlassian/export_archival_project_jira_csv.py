@@ -652,6 +652,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Workspace GID used to build the Asana project link when it cannot be inferred.",
     )
     parser.add_argument("--prod", action="store_true", help="Resolve the production Jira base URL (default: sandbox).")
+    parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(list(argv) if argv is not None else None)
 
@@ -665,7 +666,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     configure_logging(log_level)
 
     try:
-        jira_base_url = normalize_jira_base_url(resolve_jira_base_url(load_credentials(), prod=args.prod))
+        jira_base_url = normalize_jira_base_url(resolve_jira_base_url(load_credentials(), prod=args.prod, site_key=args.jira_site))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     if not jira_base_url:

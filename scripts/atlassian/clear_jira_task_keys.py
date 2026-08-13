@@ -40,6 +40,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         default="INFO",
         help="Logging verbosity (default: INFO).",
     )
+    parser.add_argument("--jira-site", help="Limit deletion to this named Jira site.")
     return parser.parse_args(argv)
 
 
@@ -47,19 +48,26 @@ def clear_jira_mappings(
     database_path: str,
     task_gids: Optional[List[str]] = None,
     project_gid: Optional[str] = None,
+    jira_site_key: Optional[str] = None,
 ) -> int:
     database = Database(db_path=database_path)
     with database.connect() as connection:
         database.initialize(connection)
         sql = "DELETE FROM task_jira_mappings"
         params: List[str] = []
+        clauses: List[str] = []
+        if jira_site_key:
+            clauses.append("jira_site_key = ?")
+            params.append(jira_site_key)
         if task_gids:
             placeholders = ",".join("?" for _ in task_gids)
-            sql += f" WHERE task_gid IN ({placeholders})"
+            clauses.append(f"task_gid IN ({placeholders})")
             params.extend(task_gids)
         elif project_gid:
-            sql += " WHERE task_gid IN (SELECT task_gid FROM task_projects WHERE project_gid = ?)"
+            clauses.append("task_gid IN (SELECT task_gid FROM task_projects WHERE project_gid = ?)")
             params.append(project_gid)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         cursor = connection.execute(sql, tuple(params))
         connection.commit()
         return cursor.rowcount if cursor else 0
@@ -79,7 +87,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         else None
     )
 
-    count = clear_jira_mappings(args.database, tasks, args.project_gid)
+    count = clear_jira_mappings(args.database, tasks, args.project_gid, args.jira_site)
 
     if tasks:
         logger.info("Cleared %s Jira mapping(s) for %s task(s).", count, len(tasks))

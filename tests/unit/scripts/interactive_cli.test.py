@@ -874,7 +874,7 @@ class ProfileSessionTest(TestCase):
             output = buffer.getvalue()
             self.assertIn("Profile: Acme Corp", output)
             # Sandbox session shows the sandbox URL next to the environment.
-            self.assertIn("Environment: SANDBOX (https://sandbox.example.net)", output)
+            self.assertIn("Jira site: Sandbox Jira (https://sandbox.example.net)", output)
             self.assertIn("Database: asana_acme.sqlite", output)
             # A bordered box wraps the block.
             self.assertIn("┌", output)
@@ -899,7 +899,7 @@ class ProfileSessionTest(TestCase):
             buffer = io.StringIO()
             with redirect_stdout(buffer):
                 interactive_cli.print_session_header()
-            self.assertIn("Environment: PRODUCTION (https://prod.example.net)", buffer.getvalue())
+            self.assertIn("Jira site: Production Jira (https://prod.example.net)", buffer.getvalue())
 
     def test_offer_legacy_db_adoption_renames_when_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -951,14 +951,23 @@ class ProfileSessionTest(TestCase):
                     interactive_cli.offer_legacy_db_adoption()
                     mock_bool.assert_not_called()
 
-    def test_toggle_environment_flips_use_prod(self) -> None:
-        self._set_session(Path("/tmp/.asana_jira_env_acme"), use_prod=False)
-        with redirect_stdout(io.StringIO()):
-            interactive_cli.toggle_environment()
-        self.assertTrue(interactive_cli._session.use_prod)
-        with redirect_stdout(io.StringIO()):
-            interactive_cli.toggle_environment()
-        self.assertFalse(interactive_cli._session.use_prod)
+    def test_select_jira_site_can_persist_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            env_path.write_text(
+                "ASANA_WORKSPACE_GID=w\nJIRA_SITES=production_jira,sandbox_jira\n"
+                "JIRA_DEFAULT_SITE=sandbox_jira\n"
+                "JIRA_SITE_PRODUCTION_JIRA_NAME='Production Jira'\n"
+                "JIRA_SITE_PRODUCTION_JIRA_URL=https://prod.example.net\n"
+                "JIRA_SITE_SANDBOX_JIRA_NAME='Sandbox Jira'\n"
+                "JIRA_SITE_SANDBOX_JIRA_URL=https://sandbox.example.net\n",
+                encoding="utf-8",
+            )
+            interactive_cli._set_session(Path(tmpdir), env_path)
+            with patch("scripts.interactive_cli.prompt", return_value="1"), redirect_stdout(io.StringIO()):
+                interactive_cli.select_jira_site(make_default=True)
+            self.assertEqual(interactive_cli._session.jira_site_key, "production_jira")
+            self.assertIn("JIRA_DEFAULT_SITE=production_jira", env_path.read_text(encoding="utf-8"))
 
     def test_switch_profile_writes_marker_and_sets_db_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

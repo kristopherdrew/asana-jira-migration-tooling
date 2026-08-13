@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -32,7 +33,7 @@ from scripts.atlassian.search_jira_external_ids import (
 )
 from scripts.atlassian.export_team_project_jira_csv import build_team_project_rows
 from src.lib.config import load_credentials, resolve_jira_base_url
-from src.lib.database import Database, resolve_default_db_path
+from src.lib.database import ASANA_JIRA_SITE_KEY_ENV, Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.xlsx_writer import write_workbook
 
@@ -74,8 +75,11 @@ def derive_project_keys(jira_keys: Iterable[str]) -> List[str]:
 
 def load_mappings(connection) -> Dict[str, Tuple[str, str]]:
     """Return ``jira_key -> (kind, asana_gid)`` from ``team_project_jira_mappings``."""
+    jira_site_key = os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+    sql = "SELECT jira_key, kind, asana_gid FROM team_project_jira_mappings"
     rows = connection.execute(
-        "SELECT jira_key, kind, asana_gid FROM team_project_jira_mappings"
+        sql + (" WHERE jira_site_key = ?" if jira_site_key else ""),
+        ((jira_site_key,) if jira_site_key else ()),
     ).fetchall()
     mappings: Dict[str, Tuple[str, str]] = {}
     for row in rows:
@@ -292,6 +296,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
     )
+    parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(argv)
 
@@ -307,7 +312,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     credentials = load_credentials()
     try:
         username, jira_token = ensure_atlassian_credentials(credentials)
-        base_url = resolve_jira_base_url(credentials, prod=args.prod)
+        base_url = resolve_jira_base_url(credentials, prod=args.prod, site_key=args.jira_site)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 

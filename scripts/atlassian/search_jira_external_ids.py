@@ -338,6 +338,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
     )
+    parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument(
         "--jql",
         required=True,
@@ -379,7 +380,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     credentials = load_credentials()
     try:
         username, jira_token = ensure_atlassian_credentials(credentials)
-        base_url = resolve_jira_base_url(credentials, prod=args.prod)
+        base_url = resolve_jira_base_url(credentials, prod=args.prod, site_key=args.jira_site)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 

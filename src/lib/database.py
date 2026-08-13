@@ -19,6 +19,11 @@ DEFAULT_DB_PATH = "data/asana.sqlite"
 # without threading a --database flag through each invocation. An explicit db_path
 # (e.g. --database) always wins over this env override.
 ASANA_JIRA_DB_PATH_ENV = "ASANA_JIRA_DB_PATH"
+ASANA_JIRA_SITE_KEY_ENV = "ASANA_JIRA_SITE_KEY"
+
+
+def _site_key(value: Optional[str]) -> str:
+    return (value or os.environ.get(ASANA_JIRA_SITE_KEY_ENV) or "legacy_unknown").strip()
 
 
 def resolve_default_db_path(fallback: Optional[str] = None) -> str:
@@ -281,7 +286,8 @@ CREATE TABLE IF NOT EXISTS attachment_jira_uploads (
     status TEXT NOT NULL,
     uploaded_at TEXT,
     error TEXT,
-    PRIMARY KEY (archive_id, attachment_gid, jira_key),
+    jira_site_key TEXT NOT NULL DEFAULT 'legacy_unknown',
+    PRIMARY KEY (archive_id, attachment_gid, jira_site_key, jira_key),
     FOREIGN KEY (archive_id, attachment_gid)
         REFERENCES attachment_archive_files(archive_id, attachment_gid)
 );
@@ -289,10 +295,12 @@ CREATE TABLE IF NOT EXISTS attachment_jira_uploads (
 
 JIRA_PROJECT_MAPPINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS jira_project_mappings (
-    project_gid TEXT PRIMARY KEY,
+    project_gid TEXT NOT NULL,
     jira_project_name TEXT,
     jira_project_key TEXT,
-    synced_at TEXT NOT NULL
+    synced_at TEXT NOT NULL,
+    jira_site_key TEXT NOT NULL DEFAULT 'legacy_unknown',
+    PRIMARY KEY (jira_site_key, project_gid)
 );
 """
 
@@ -313,8 +321,9 @@ CREATE TABLE IF NOT EXISTS task_jira_mappings (
     task_gid TEXT NOT NULL,
     jira_key TEXT NOT NULL,
     synced_at TEXT NOT NULL,
-    PRIMARY KEY (task_gid, jira_key),
-    UNIQUE (jira_key),
+    jira_site_key TEXT NOT NULL DEFAULT 'legacy_unknown',
+    PRIMARY KEY (jira_site_key, task_gid, jira_key),
+    UNIQUE (jira_site_key, jira_key),
     FOREIGN KEY (task_gid) REFERENCES tasks(gid)
 );
 """
@@ -708,8 +717,9 @@ CREATE TABLE IF NOT EXISTS team_project_jira_mappings (
     kind TEXT NOT NULL,
     jira_key TEXT NOT NULL,
     synced_at TEXT NOT NULL,
-    PRIMARY KEY (asana_gid, kind),
-    UNIQUE (jira_key)
+    jira_site_key TEXT NOT NULL DEFAULT 'legacy_unknown',
+    PRIMARY KEY (jira_site_key, asana_gid, kind),
+    UNIQUE (jira_site_key, jira_key)
 );
 """
 
@@ -720,8 +730,9 @@ CREATE TABLE IF NOT EXISTS project_jira_decisions (
     jira_key TEXT NOT NULL,
     decision TEXT,
     synced_at TEXT NOT NULL,
-    PRIMARY KEY (project_gid),
-    UNIQUE (jira_key),
+    jira_site_key TEXT NOT NULL DEFAULT 'legacy_unknown',
+    PRIMARY KEY (jira_site_key, project_gid),
+    UNIQUE (jira_site_key, jira_key),
     FOREIGN KEY (project_gid) REFERENCES projects(gid)
 );
 """
@@ -793,7 +804,7 @@ class Database:
         self._ensure_column(connection, "user_atlassian_accounts", "atlassian_email", "TEXT")
         self._ensure_column(connection, "user_atlassian_accounts", "atlassian_status", "TEXT")
         self._ensure_column(connection, "team_members", "is_admin", "INTEGER")
-        self._ensure_task_jira_mapping_schema(connection)
+        self._ensure_jira_site_schema(connection)
         self._ensure_indexes(connection)
         self._ensure_views(connection)
 
@@ -2371,16 +2382,35 @@ class Database:
         connection.executescript(VIEW_PROJECT_CUSTOM_FIELD_CONFIGURATIONS)
         connection.executescript(VIEW_TEAM_MEMBERSHIPS)
 
-    def _ensure_task_jira_mapping_schema(self, connection: sqlite3.Connection) -> None:
-        info = connection.execute("PRAGMA table_info(task_jira_mappings)").fetchall()
-        if not info:
-            return
-        columns = {row[1] for row in info}
-        expected = {"task_gid", "jira_key", "synced_at"}
-        if columns != expected:
-            logger.warning("Resetting task_jira_mappings schema to the latest format.")
-            connection.execute("DROP TABLE IF EXISTS task_jira_mappings")
-            connection.executescript(TASK_JIRA_MAPPINGS_SCHEMA)
+    def _ensure_jira_site_schema(self, connection: sqlite3.Connection) -> None:
+        """Add Jira-site attribution without discarding legacy mappings."""
+        migrations = (
+            ("task_jira_mappings", TASK_JIRA_MAPPINGS_SCHEMA,
+             "task_gid, jira_key, synced_at, CASE WHEN jira_key LIKE 'ATJM-%' THEN 'production_jira' WHEN jira_key LIKE 'FACARC-%' THEN 'sandbox_jira' ELSE 'legacy_unknown' END"),
+            ("jira_project_mappings", JIRA_PROJECT_MAPPINGS_SCHEMA,
+             "project_gid, jira_project_name, jira_project_key, synced_at, CASE WHEN jira_project_key = 'ATJM' THEN 'production_jira' WHEN jira_project_key = 'FACARC' THEN 'sandbox_jira' ELSE 'legacy_unknown' END"),
+            ("team_project_jira_mappings", TEAM_PROJECT_JIRA_MAPPINGS_SCHEMA,
+             "asana_gid, kind, jira_key, synced_at, CASE WHEN jira_key LIKE 'ATJM-%' THEN 'production_jira' WHEN jira_key LIKE 'FACARC-%' THEN 'sandbox_jira' ELSE 'legacy_unknown' END"),
+            ("project_jira_decisions", PROJECT_JIRA_DECISIONS_SCHEMA,
+             "project_gid, jira_key, decision, synced_at, CASE WHEN jira_key LIKE 'ATJM-%' THEN 'production_jira' WHEN jira_key LIKE 'FACARC-%' THEN 'sandbox_jira' ELSE 'legacy_unknown' END"),
+            ("attachment_jira_uploads", ATTACHMENT_JIRA_UPLOADS_SCHEMA,
+             "archive_id, attachment_gid, jira_key, jira_attachment_id, uploaded_size, status, uploaded_at, error, CASE WHEN jira_key LIKE 'ATJM-%' THEN 'production_jira' WHEN jira_key LIKE 'FACARC-%' THEN 'sandbox_jira' ELSE 'legacy_unknown' END"),
+        )
+        for table, schema, select_columns in migrations:
+            columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+            if not columns or "jira_site_key" in columns:
+                continue
+            legacy = f"{table}__pre_jira_sites"
+            logger.info("Migrating %s to site-aware Jira mappings.", table)
+            connection.execute(f"ALTER TABLE {table} RENAME TO {legacy}")
+            connection.executescript(schema)
+            destination_columns = ", ".join(
+                row[1] for row in connection.execute(f"PRAGMA table_info({table})")
+            )
+            connection.execute(
+                f"INSERT INTO {table} ({destination_columns}) SELECT {select_columns} FROM {legacy}"
+            )
+            connection.execute(f"DROP TABLE {legacy}")
         connection.commit()
 
     def get_personal_task_cursor(self, connection: sqlite3.Connection, assignee_gid: str) -> Optional[str]:
@@ -2490,7 +2520,9 @@ class Database:
         connection: sqlite3.Connection,
         mappings: Iterable[Dict[str, str]],
         synced_at: datetime,
+        jira_site_key: Optional[str] = None,
     ) -> int:
+        jira_site_key = _site_key(jira_site_key)
         rows = []
         stamp = synced_at.isoformat()
         for mapping in mappings:
@@ -2499,14 +2531,14 @@ class Database:
             key = (mapping.get("project_key") or "").strip()
             if not gid:
                 continue
-            rows.append((gid, name, key, stamp))
+            rows.append((gid, name, key, stamp, jira_site_key))
         if not rows:
             return 0
         connection.executemany(
             """
-            INSERT INTO jira_project_mappings (project_gid, jira_project_name, jira_project_key, synced_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(project_gid) DO UPDATE SET
+            INSERT INTO jira_project_mappings (project_gid, jira_project_name, jira_project_key, synced_at, jira_site_key)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(jira_site_key, project_gid) DO UPDATE SET
                 jira_project_name=excluded.jira_project_name,
                 jira_project_key=excluded.jira_project_key,
                 synced_at=excluded.synced_at
@@ -2516,10 +2548,10 @@ class Database:
         connection.commit()
         return len(rows)
 
-    def load_jira_project_mappings(self, connection: sqlite3.Connection) -> Dict[str, Dict[str, str]]:
-        rows = connection.execute(
-            "SELECT project_gid, jira_project_name, jira_project_key FROM jira_project_mappings"
-        ).fetchall()
+    def load_jira_project_mappings(self, connection: sqlite3.Connection, jira_site_key: Optional[str] = None) -> Dict[str, Dict[str, str]]:
+        jira_site_key = jira_site_key or os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+        sql = "SELECT project_gid, jira_project_name, jira_project_key FROM jira_project_mappings"
+        rows = connection.execute(sql + (" WHERE jira_site_key = ?" if jira_site_key else ""), ((jira_site_key,) if jira_site_key else ())).fetchall()
         return {
             row["project_gid"]: {
                 "jira_project_name": row["jira_project_name"] or "",
@@ -2530,7 +2562,11 @@ class Database:
         }
 
     def clear_jira_project_mappings(self, connection: sqlite3.Connection) -> int:
-        deleted = connection.execute("DELETE FROM jira_project_mappings").rowcount
+        active_site = os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+        deleted = connection.execute(
+            "DELETE FROM jira_project_mappings" + (" WHERE jira_site_key = ?" if active_site else ""),
+            ((active_site,) if active_site else ()),
+        ).rowcount
         connection.commit()
         return deleted
 
@@ -2539,6 +2575,7 @@ class Database:
         connection: sqlite3.Connection,
         mappings: Iterable[Dict[str, str]],
         synced_at: datetime,
+        jira_site_key: Optional[str] = None,
     ) -> int:
         """Persist Asana team/project -> Jira issue key mappings.
 
@@ -2547,6 +2584,7 @@ class Database:
         synthetic 'no_team' epic). Raises ``ValueError`` when a Jira key is already
         mapped to a different Asana entity.
         """
+        jira_site_key = _site_key(jira_site_key)
         rows = []
         jira_keys: List[str] = []
         seen_keys: Set[Tuple[str, str]] = set()
@@ -2561,7 +2599,7 @@ class Database:
             if key in seen_keys:
                 continue
             seen_keys.add(key)
-            rows.append((asana_gid, kind, jira_key, stamp))
+            rows.append((asana_gid, kind, jira_key, stamp, jira_site_key))
             jira_keys.append(jira_key)
 
         if jira_keys:
@@ -2570,12 +2608,12 @@ class Database:
                 f"""
                 SELECT jira_key, asana_gid, kind
                 FROM team_project_jira_mappings
-                WHERE jira_key IN ({placeholders})
+                WHERE jira_site_key = ? AND jira_key IN ({placeholders})
                 """,
-                tuple(jira_keys),
+                (jira_site_key, *jira_keys),
             ).fetchall()
             conflict_map = {row["jira_key"]: (row["asana_gid"], row["kind"]) for row in conflicts}
-            for asana_gid, kind, jira_key, _ in rows:
+            for asana_gid, kind, jira_key, _, _ in rows:
                 existing = conflict_map.get(jira_key)
                 if existing and existing != (asana_gid, kind):
                     raise ValueError(
@@ -2586,9 +2624,9 @@ class Database:
         if rows:
             connection.executemany(
                 """
-                INSERT INTO team_project_jira_mappings (asana_gid, kind, jira_key, synced_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(asana_gid, kind) DO UPDATE SET
+                INSERT INTO team_project_jira_mappings (asana_gid, kind, jira_key, synced_at, jira_site_key)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(jira_site_key, asana_gid, kind) DO UPDATE SET
                     jira_key=excluded.jira_key,
                     synced_at=excluded.synced_at
                 """,
@@ -2598,12 +2636,12 @@ class Database:
         return len(rows)
 
     def load_team_project_jira_mappings(
-        self, connection: sqlite3.Connection
+        self, connection: sqlite3.Connection, jira_site_key: Optional[str] = None
     ) -> Dict[Tuple[str, str], str]:
         """Return existing mappings keyed by ``(kind, asana_gid)`` -> jira_key."""
-        rows = connection.execute(
-            "SELECT asana_gid, kind, jira_key FROM team_project_jira_mappings"
-        ).fetchall()
+        jira_site_key = jira_site_key or os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+        sql = "SELECT asana_gid, kind, jira_key FROM team_project_jira_mappings"
+        rows = connection.execute(sql + (" WHERE jira_site_key = ?" if jira_site_key else ""), ((jira_site_key,) if jira_site_key else ())).fetchall()
         return {
             (row["kind"], row["asana_gid"] or ""): row["jira_key"]
             for row in rows
@@ -2622,15 +2660,22 @@ class Database:
         delete every mapping. Returns the number of rows deleted.
         """
         if keys is None:
-            cursor = connection.execute("DELETE FROM team_project_jira_mappings")
+            active_site = os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+            cursor = connection.execute(
+                "DELETE FROM team_project_jira_mappings" + (" WHERE jira_site_key = ?" if active_site else ""),
+                ((active_site,) if active_site else ()),
+            )
             connection.commit()
             return cursor.rowcount
 
         deleted = 0
         for kind, asana_gid in keys:
+            active_site = os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
             cursor = connection.execute(
-                "DELETE FROM team_project_jira_mappings WHERE kind = ? AND asana_gid = ?",
-                ((kind or "").strip(), (asana_gid or "").strip()),
+                "DELETE FROM team_project_jira_mappings WHERE kind = ? AND asana_gid = ?"
+                + (" AND jira_site_key = ?" if active_site else ""),
+                ((kind or "").strip(), (asana_gid or "").strip())
+                + ((active_site,) if active_site else ()),
             )
             deleted += cursor.rowcount
         connection.commit()
@@ -2911,7 +2956,9 @@ class Database:
         connection: sqlite3.Connection,
         mappings: Iterable[Dict[str, str]],
         synced_at: datetime,
+        jira_site_key: Optional[str] = None,
     ) -> Dict[str, int]:
+        jira_site_key = _site_key(jira_site_key)
         entries = []
         jira_keys: List[str] = []
         seen_pairs: Set[Tuple[str, str]] = set()
@@ -2930,6 +2977,7 @@ class Database:
                     "task_gid": task_gid,
                     "jira_key": jira_key,
                     "synced_at": timestamp,
+                    "jira_site_key": jira_site_key,
                 }
             )
             jira_keys.append(jira_key)
@@ -2940,9 +2988,9 @@ class Database:
                 f"""
                 SELECT jira_key, task_gid
                 FROM task_jira_mappings
-                WHERE jira_key IN ({placeholders})
+                WHERE jira_site_key = ? AND jira_key IN ({placeholders})
                 """,
-                tuple(jira_keys),
+                (jira_site_key, *jira_keys),
             ).fetchall()
             conflict_map = {row["jira_key"]: row["task_gid"] for row in conflicts}
             for entry in entries:
@@ -2957,12 +3005,12 @@ class Database:
             connection.executemany(
                 """
                 INSERT INTO task_jira_mappings (
-                    task_gid, jira_key, synced_at
+                    task_gid, jira_key, synced_at, jira_site_key
                 )
                 VALUES (
-                    :task_gid, :jira_key, :synced_at
+                    :task_gid, :jira_key, :synced_at, :jira_site_key
                 )
-                ON CONFLICT(task_gid, jira_key) DO UPDATE SET
+                ON CONFLICT(jira_site_key, task_gid, jira_key) DO UPDATE SET
                     synced_at=excluded.synced_at
                 """,
                 entries,
@@ -2975,6 +3023,7 @@ class Database:
         connection: sqlite3.Connection,
         decisions: Iterable[Dict[str, str]],
         synced_at: datetime,
+        jira_site_key: Optional[str] = None,
     ) -> Dict[str, int]:
         """Persist Asana project -> Jira "Asana Migration Decision" values.
 
@@ -2983,6 +3032,7 @@ class Database:
         ``UNIQUE(jira_key)`` constraint guards against the same Jira issue mapping to
         two projects — a conflicting key raises ``ValueError``.
         """
+        jira_site_key = _site_key(jira_site_key)
         entries: List[Dict[str, str]] = []
         jira_keys: List[str] = []
         seen_projects: Set[str] = set()
@@ -3001,6 +3051,7 @@ class Database:
                     "jira_key": jira_key,
                     "decision": (decision.get("decision") or "").strip() or None,
                     "synced_at": timestamp,
+                    "jira_site_key": jira_site_key,
                 }
             )
             jira_keys.append(jira_key)
@@ -3011,9 +3062,9 @@ class Database:
                 f"""
                 SELECT jira_key, project_gid
                 FROM project_jira_decisions
-                WHERE jira_key IN ({placeholders})
+                WHERE jira_site_key = ? AND jira_key IN ({placeholders})
                 """,
-                tuple(jira_keys),
+                (jira_site_key, *jira_keys),
             ).fetchall()
             conflict_map = {row["jira_key"]: row["project_gid"] for row in conflicts}
             for entry in entries:
@@ -3031,12 +3082,12 @@ class Database:
             connection.executemany(
                 """
                 INSERT INTO project_jira_decisions (
-                    project_gid, jira_key, decision, synced_at
+                    project_gid, jira_key, decision, synced_at, jira_site_key
                 )
                 VALUES (
-                    :project_gid, :jira_key, :decision, :synced_at
+                    :project_gid, :jira_key, :decision, :synced_at, :jira_site_key
                 )
-                ON CONFLICT(project_gid) DO UPDATE SET
+                ON CONFLICT(jira_site_key, project_gid) DO UPDATE SET
                     jira_key=excluded.jira_key,
                     decision=excluded.decision,
                     synced_at=excluded.synced_at

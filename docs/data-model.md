@@ -686,7 +686,7 @@ Per-destination delivery state for archived files uploaded to Jira work items.
 - **Source:** Archive manifest joined to current task_jira_mappings and Jira attachment API responses.
 - **Populated by:** `scripts/upload_jira_attachments.py`
 - **Written by:** `upload_archive`
-- **Write semantics:** Upsert by (archive_id, attachment_gid, jira_key); records retries and Jira attachment IDs.
+- **Write semantics:** Upsert by (archive_id, attachment_gid, jira_site_key, jira_key); records retries and Jira attachment IDs.
 - **Foreign keys:** archive_id → attachment_archive_files(archive_id); attachment_gid → attachment_archive_files(attachment_gid)
 
 | Column | Type | PK |
@@ -699,6 +699,7 @@ Per-destination delivery state for archived files uploaded to Jira work items.
 | `status` | TEXT |  |
 | `uploaded_at` | TEXT |  |
 | `error` | TEXT |  |
+| `jira_site_key` | TEXT | ✓ |
 
 #### `task_jira_mappings`
 
@@ -707,7 +708,7 @@ Maps Asana task GID ↔ Jira issue key.
 - **Source:** Jira CSV export import, or Jira JQL search for an external-id field — not an Asana API.
 - **Populated by:** `scripts/atlassian/import_jira_task_keys.py`, `scripts/atlassian/search_jira_external_ids.py`
 - **Written by:** `upsert_task_jira_mappings`
-- **Write semantics:** Upsert by (task_gid, jira_key); UNIQUE(jira_key) enforces one task per key. FK→tasks.
+- **Write semantics:** Upsert by (jira_site_key, task_gid, jira_key); UNIQUE(jira_site_key, jira_key). FK→tasks.
 - **Foreign keys:** task_gid → tasks(gid)
 
 | Column | Type | PK |
@@ -715,6 +716,7 @@ Maps Asana task GID ↔ Jira issue key.
 | `task_gid` | TEXT | ✓ |
 | `jira_key` | TEXT | ✓ |
 | `synced_at` | TEXT |  |
+| `jira_site_key` | TEXT | ✓ |
 
 #### `jira_project_mappings`
 
@@ -723,7 +725,7 @@ Maps Asana project GID → Jira project name/key for export columns.
 - **Source:** CSV import (project_gid,project_name,project_key) — not an Asana API.
 - **Populated by:** `scripts/atlassian/import_jira_project_map.py`
 - **Written by:** `upsert_jira_project_mappings`
-- **Write semantics:** Upsert by project_gid (PK).
+- **Write semantics:** Upsert by (jira_site_key, project_gid).
 
 | Column | Type | PK |
 |---|---|---|
@@ -731,6 +733,7 @@ Maps Asana project GID → Jira project name/key for export columns.
 | `jira_project_name` | TEXT |  |
 | `jira_project_key` | TEXT |  |
 | `synced_at` | TEXT |  |
+| `jira_site_key` | TEXT | ✓ |
 
 #### `team_project_jira_mappings`
 
@@ -739,7 +742,7 @@ Maps Asana team/project → created Jira Epic/Task key so re-runs skip existing 
 - **Source:** Recorded during direct-API Jira issue creation (kind = team/project/no_team).
 - **Populated by:** `scripts/atlassian/create_team_project_jira_issues.py`
 - **Written by:** `upsert_team_project_jira_mappings (delete_team_project_jira_mappings for --reset)`
-- **Write semantics:** Upsert by (asana_gid, kind); UNIQUE(jira_key).
+- **Write semantics:** Upsert by (jira_site_key, asana_gid, kind); UNIQUE(jira_site_key, jira_key).
 
 | Column | Type | PK |
 |---|---|---|
@@ -747,6 +750,7 @@ Maps Asana team/project → created Jira Epic/Task key so re-runs skip existing 
 | `kind` | TEXT | ✓ |
 | `jira_key` | TEXT |  |
 | `synced_at` | TEXT |  |
+| `jira_site_key` | TEXT | ✓ |
 
 #### `project_jira_decisions`
 
@@ -755,7 +759,7 @@ Stores the 'Asana Migration Decision' custom-field value read back from each pro
 - **Source:** Jira JQL search for the decision field (POST /rest/api/3/search/jql) + field-id lookup (GET /rest/api/3/field); jira_key resolved to project via team_project_jira_mappings (kind='project') — not an Asana API.
 - **Populated by:** `scripts/atlassian/get_jira_migration_decisions.py`
 - **Written by:** `upsert_project_jira_decisions`
-- **Write semantics:** Upsert by project_gid (PK); UNIQUE(jira_key). FK→projects.
+- **Write semantics:** Upsert by (jira_site_key, project_gid); UNIQUE(jira_site_key, jira_key). FK→projects.
 - **Foreign keys:** project_gid → projects(gid)
 
 | Column | Type | PK |
@@ -764,6 +768,7 @@ Stores the 'Asana Migration Decision' custom-field value read back from each pro
 | `jira_key` | TEXT |  |
 | `decision` | TEXT |  |
 | `synced_at` | TEXT |  |
+| `jira_site_key` | TEXT | ✓ |
 
 #### `exported_tasks`
 

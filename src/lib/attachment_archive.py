@@ -399,14 +399,16 @@ def _record_upload(
     uploaded_size: Optional[int],
     jira_attachment_id: Optional[str],
     error_message: str,
+    jira_site_key: Optional[str] = None,
 ) -> None:
+    jira_site_key = jira_site_key or "legacy_unknown"
     connection.execute(
         """
         INSERT INTO attachment_jira_uploads (
             archive_id, attachment_gid, jira_key, jira_attachment_id,
-            uploaded_size, status, uploaded_at, error
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(archive_id, attachment_gid, jira_key) DO UPDATE SET
+            uploaded_size, status, uploaded_at, error, jira_site_key
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(archive_id, attachment_gid, jira_site_key, jira_key) DO UPDATE SET
             jira_attachment_id=excluded.jira_attachment_id,
             uploaded_size=excluded.uploaded_size, status=excluded.status,
             uploaded_at=excluded.uploaded_at, error=excluded.error
@@ -414,7 +416,7 @@ def _record_upload(
         (
             archive_id, attachment_gid, jira_key, jira_attachment_id,
             uploaded_size, status, utc_now() if status == "uploaded" else None,
-            error_message,
+            error_message, jira_site_key,
         ),
     )
 
@@ -426,6 +428,7 @@ def upload_archive(
     dry_run: bool = True,
     workers: int = 2,
     throttle_seconds: float = 0.5,
+    jira_site_key: Optional[str] = None,
 ) -> Path:
     """Resolve current task mappings and upload verified archive files to Jira."""
     payload = load_manifest(manifest_path)
@@ -473,9 +476,11 @@ def upload_archive(
             )
         if task_gids:
             placeholders = ",".join("?" for _ in task_gids)
+            site_clause = "jira_site_key = ? AND " if jira_site_key else ""
+            params = ((jira_site_key,) if jira_site_key else ()) + tuple(task_gids)
             rows = connection.execute(
-                f"SELECT task_gid, jira_key FROM task_jira_mappings WHERE task_gid IN ({placeholders})",
-                tuple(task_gids),
+                f"SELECT task_gid, jira_key FROM task_jira_mappings WHERE {site_clause}task_gid IN ({placeholders})",
+                params,
             ).fetchall()
             for row in rows:
                 mappings.setdefault(row["task_gid"], []).append(row["jira_key"])
@@ -545,7 +550,7 @@ def upload_archive(
         for row, size, jira_id in completed:
             _record_upload(
                 connection, archive_id, row["attachment_gid"], row["jira_key"],
-                row["status"], size, jira_id, row["message"],
+                row["status"], size, jira_id, row["message"], jira_site_key,
             )
         connection.commit()
 

@@ -27,6 +27,7 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--csv", required=True, help="Path to CSV with project_gid,project_name,project_key")
     parser.add_argument("--database", default=resolve_default_db_path(), help=f"Path to SQLite DB (default: {DEFAULT_DB_PATH}).")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
+    parser.add_argument("--jira-site", help="Named Jira site key for these mappings.")
     return parser.parse_args(argv)
 
 
@@ -57,7 +58,7 @@ def main(argv: Iterable[str] | None = None) -> None:
     now = datetime.now(timezone.utc)
     with database.connect() as conn:
         database.initialize(conn)
-        count = database.upsert_jira_project_mappings(conn, mappings, now)
+        count = database.upsert_jira_project_mappings(conn, mappings, now, jira_site_key=args.jira_site)
     print(f"Upserted {count} Jira project association(s) from {csv_path}")
 
 

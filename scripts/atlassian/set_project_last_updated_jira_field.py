@@ -62,6 +62,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
     )
+    parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument("--field-id", default=DEFAULT_FIELD_ID, help=f"Jira date custom field id to set (default: {DEFAULT_FIELD_ID}).")
     parser.add_argument("--team-gid", help="Optional team GID to scope the update to one team's projects.")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Concurrent workers for the update pass (default: {DEFAULT_WORKERS}).")
@@ -197,7 +198,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     configure_logging(log_level)
 
     try:
-        jira_base_url = resolve_jira_base_url(load_credentials(), prod=args.prod)
+        jira_base_url = resolve_jira_base_url(load_credentials(), prod=args.prod, site_key=args.jira_site)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 

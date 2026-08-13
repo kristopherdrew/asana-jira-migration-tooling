@@ -20,6 +20,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--manifest", required=True, help="Path to the archive manifest.json.")
     parser.add_argument("--database", default=resolve_default_db_path(), help="SQLite database with current Jira mappings.")
     parser.add_argument("--prod", action="store_true", help="Target production Jira; default is sandbox.")
+    parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument("--dry-run", action="store_true", help="Resolve destinations and report without Jira calls.")
     parser.add_argument("--workers", type=int, default=2, help="Concurrent upload workers (default: 2).")
     parser.add_argument("--throttle-seconds", type=float, default=0.5, help="Delay before each upload (default: 0.5).")
@@ -38,7 +39,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     if not credentials.atlassian_username or not credentials.atlassian_token:
         raise SystemExit("ATLASSIAN_USERNAME and ATLASSIAN_TOKEN are required.")
     client = JiraClient(
-        base_url=resolve_jira_base_url(credentials, prod=args.prod),
+        base_url=resolve_jira_base_url(credentials, prod=args.prod, site_key=args.jira_site),
         username=credentials.atlassian_username,
         token=credentials.atlassian_token,
         skip_ssl_verification=credentials.skip_ssl_verification,
@@ -50,6 +51,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         dry_run=args.dry_run,
         workers=max(1, args.workers),
         throttle_seconds=max(0.0, args.throttle_seconds),
+        jira_site_key=args.jira_site,
     )
     logging.info("Jira attachment report written to %s", report)
 
