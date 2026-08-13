@@ -45,6 +45,18 @@ class CreateIssueTest(TestCase):
         self.assertEqual(call["method"], "GET")
         self.assertEqual(call["path"], "/rest/api/3/myself")
 
+    def test_field_and_resolution_catalog_endpoints(self) -> None:
+        client = _RecordingClient([
+            b'[{"id":"customfield_1","name":"Section"}]',
+            b'[{"id":"10000","name":"Done"}]',
+        ])
+        self.assertEqual(client.get_fields()[0]["name"], "Section")
+        self.assertEqual(client.get_resolutions()[0]["name"], "Done")
+        self.assertEqual(
+            [call["path"] for call in client.calls],
+            ["/rest/api/3/field", "/rest/api/3/resolution"],
+        )
+
 
 class JiraApiErrorTest(TestCase):
     def test_status_and_body_are_accessible(self) -> None:
