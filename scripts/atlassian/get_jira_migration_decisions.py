@@ -215,8 +215,7 @@ def default_jql_from_database(database_path: str, field_name: str) -> str:
     if not project_keys:
         raise SystemExit(
             "No project-level Jira mappings found in team_project_jira_mappings, so a default "
-            "JQL cannot be derived. Run create_team_project_jira_issues (or import_jira_task_keys) "
-            "first, or pass --jql explicitly."
+            "JQL cannot be derived. Run create_team_project_jira_issues first, or pass --jql explicitly."
         )
     return build_default_jql(project_keys, field_name)
 

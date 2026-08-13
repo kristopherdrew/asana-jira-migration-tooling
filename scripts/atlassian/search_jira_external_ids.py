@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
+from src.lib.config import Credentials, load_credentials, resolve_jira_base_url, resolve_jira_site
 from src.lib.database import Database, DEFAULT_DB_PATH, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_RESULTS = 500
 JIRA_MAX_RESULTS_CAP = 5000  # v3 /search/jql cap per RFC-61
 DEFAULT_FIELDS = ("created",)
+DEFAULT_EXTERNAL_ID_FIELD = "External issue ID"
 
 
 class JiraSearchError(Exception):
@@ -290,10 +291,44 @@ def load_known_task_gids(connection) -> set[str]:
     return {row["gid"] for row in rows}
 
 
+def resolve_external_field_id(fields: Sequence[Dict[str, object]], requested: str) -> str:
+    """Resolve a Jira field ID from either its ID or display name."""
+    requested = requested.strip()
+    for field in fields:
+        if str(field.get("id") or "") == requested:
+            return requested
+    matches = [
+        str(field["id"])
+        for field in fields
+        if field.get("id") and str(field.get("name") or "").casefold() == requested.casefold()
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"Jira field name {requested!r} is ambiguous; pass its customfield ID instead.")
+    raise ValueError(f"Jira field {requested!r} was not found.")
+
+
+def load_mapped_jira_project_keys(database_path: str, jira_site_key: str) -> List[str]:
+    database = Database(db_path=database_path)
+    with database.connect() as connection:
+        database.initialize(connection)
+        mappings = database.load_jira_project_mappings(connection, jira_site_key=jira_site_key)
+    return sorted({row["jira_project_key"].strip() for row in mappings.values() if row["jira_project_key"].strip()})
+
+
+def build_mapped_projects_jql(project_keys: Sequence[str], external_field_id: str) -> str:
+    if not project_keys:
+        raise ValueError("No Jira project/space keys are stored for the selected Jira site.")
+    quoted_keys = ", ".join('"%s"' % key.replace('"', '\\"') for key in project_keys)
+    return f'project IN ({quoted_keys}) AND "{external_field_id}" is not EMPTY'
+
+
 def upsert_mappings(
     database_path: str,
     issues: Sequence[JiraIssue],
     skip_missing_tasks: bool = True,
+    jira_site_key: Optional[str] = None,
 ) -> Dict[str, int]:
     def chunked(items: Sequence[Dict[str, str]], size: int) -> Iterable[Sequence[Dict[str, str]]]:
         for i in range(0, len(items), size):
@@ -317,7 +352,7 @@ def upsert_mappings(
         now = datetime.now(timezone.utc)
         # SQLite parameter limit is ~999; chunk to stay well below that (400 rows per batch).
         for batch in chunked(filtered, 400):
-            partial = database.upsert_task_jira_mappings(connection, batch, now)
+            partial = database.upsert_task_jira_mappings(connection, batch, now, jira_site_key=jira_site_key)
             written += partial.get("written", 0)
     if missing:
         logger.warning(
@@ -340,14 +375,9 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument(
-        "--jql",
-        required=True,
-        help="JQL filter to select issues that carry external IDs (ORDER BY created ASC is applied automatically).",
-    )
-    parser.add_argument(
         "--external-id-field",
-        required=True,
-        help="Field key that stores the external ID (e.g., customfield_12345).",
+        default=DEFAULT_EXTERNAL_ID_FIELD,
+        help="Field ID or display name storing the Asana task GID (default: 'External issue ID').",
     )
     parser.add_argument(
         "--max-results",
@@ -381,6 +411,12 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     try:
         username, jira_token = ensure_atlassian_credentials(credentials)
         base_url = resolve_jira_base_url(credentials, prod=args.prod, site_key=args.jira_site)
+        if credentials.jira_sites:
+            selected_site = resolve_jira_site(
+                credentials, "production_jira" if args.prod and not args.jira_site else args.jira_site
+            ).key
+        else:
+            selected_site = args.jira_site or ("production_jira" if args.prod else "sandbox_jira")
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -397,11 +433,18 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=jira_token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
+    try:
+        external_field_id = resolve_external_field_id(client.list_fields(), args.external_id_field)
+        project_keys = load_mapped_jira_project_keys(args.database, selected_site)
+        jql = build_mapped_projects_jql(project_keys, external_field_id)
+        logger.info("Searching mapped Jira projects/spaces: %s", ", ".join(project_keys))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     issues = collect_external_ids(
         client=client,
-        base_jql=args.jql,
-        external_field=args.external_id_field,
+        base_jql=jql,
+        external_field=external_field_id,
         max_results=max_results,
     )
     if not issues:
@@ -414,7 +457,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             logger.info("Jira: %s | Created: %s | External ID: %s", issue.key, issue.created, issue.external_id or "<missing>")
         return
 
-    summary = upsert_mappings(args.database, issues)
+    summary = upsert_mappings(args.database, issues, jira_site_key=selected_site)
     logger.info(
         "Import complete: processed=%s written=%s skipped=%s",
         summary["processed"],

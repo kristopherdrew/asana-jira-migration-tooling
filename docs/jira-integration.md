@@ -39,16 +39,17 @@ Flags (supply at least one of `--csv`, `--atlassian-export`, or `--clear`):
 Fetch Jira issues using the v3 `POST /rest/api/3/search/jql` endpoint (nextPageToken pagination), pull the external ID field (e.g., an Asana task GID stored in `customfield_<id>`), and upsert the Jira→Asana mapping into SQLite. The query is always forced to `ORDER BY created ASC, issuekey ASC` to keep pagination deterministic. The Jira base URL comes from the credentials file (`JIRA_SANDBOX_BASE_URL` by default, `JIRA_BASE_URL` with `--prod`). Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials.
 ```bash
 python3 -m scripts.search_jira_external_ids \\
-  --jql 'project = ENG AND "External issue ID" is not EMPTY' \\
   --external-id-field customfield_12345 \\
   --max-results 500
 ```
-Required flags:
-- `--jql <expression>` to pick the issue set (order is forced to `created ASC`).
-- `--external-id-field <key>` identifying the field that holds the external/task ID (e.g., `customfield_12345`).
+The search scope always comes from the distinct Jira space keys in the selected site's
+`jira_project_mappings`. External IDs are unique per Jira site: the first Jira issue found
+for a task is retained and later occurrences are skipped.
 
 Optional flags:
 - `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
+- `--external-id-field <name-or-key>` identifies the external/task ID field; defaults to `External issue ID` and resolves its Jira field ID automatically.
+- `--jira-site <key>` selects the named site and records recovered task mappings under that same site.
 - `--max-results <n>` page size per search call (default 500; clamped to Jira’s cap).
 - `--database <path>` SQLite file to update (default `data/asana.sqlite`).
 - `--dry-run` to print mappings without writing to SQLite.
@@ -263,24 +264,6 @@ Optional flags:
 - `--database <path>`, `--output-dir <path>`, `--log-level <LEVEL>` as elsewhere.
 
 Writes a run report CSV (`project_last_updated_jira_update_report.csv`) with `project_gid`, `project_name`, `jira_key`, `last_updated`, `status` (`updated`, `skipped-no-date`, `skipped-unmapped`, `skipped-limit`, `dry-run-updated`, or `error`), and a `message`.
-
-### Import Jira Task Keys
-Persists Jira issue keys (after a Jira import) back to SQLite so future exports know which tasks already exist in Jira. Expects Jira export headers `Issue key` and `External issue ID` by default; override column names with `--jira-column` and/or `--task-column` if your export labels them differently (e.g., `Issue Key`, `Custom field (Asana Task ID)`). BOMs and surrounding whitespace in headers are ignored.
-```bash
-python3 -m scripts.import_jira_task_keys --csv /path/to/jira_export.csv
-# Example overriding column names
-python3 -m scripts.import_jira_task_keys --csv /path/to/jira_export.csv --jira-column "Issue Key" --task-column "Custom field (Asana Task ID)"
-```
-Required flags:
-- `--csv <path>` pointing to the Jira export with `Issue key` (or your chosen Jira column) and whichever task ID column you specify (defaults to `External issue ID`).
-
-Optional flags:
-- `--jira-column <header>` to use a differently named Jira issue key column.
-- `--task-column <header>` to use a differently named Asana task ID column.
-- `--database <path>` to point at a different SQLite snapshot (default `data/asana.sqlite`).
-- `--log-level <LEVEL>` to adjust verbosity (default `INFO`).
-
-Each import upserts the mappings found in the CSV. A single Asana task may accumulate multiple Jira keys (one per Jira project you imported it into), but a single Jira key can only belong to one task; attempting to reuse a key for a different task raises an error. Rows whose task IDs don’t exist in SQLite are skipped with a warning.
 
 ### Clear Jira Task Keys
 Removes stored Jira mappings when you need a fresh slate before re-importing.

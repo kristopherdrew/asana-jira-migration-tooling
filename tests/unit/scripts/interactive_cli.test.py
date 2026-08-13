@@ -192,42 +192,8 @@ class IncrementalArgsBuilderTest(TestCase):
             ["--log-level", "INFO", "--project-gids-file", str(gids_path.resolve()), "--workers", "5"],
         )
 
-    def test_csv_file_picker_searches_inputs_directory(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            inputs_dir = root / "inputs"
-            inputs_dir.mkdir()
-            csv_path = inputs_dir / "jira-keys.csv"
-            csv_path.write_text("Issue key,External issue ID\nABC-1,1\n", encoding="utf-8")
-            (inputs_dir / "ignore.txt").write_text("not a csv", encoding="utf-8")
-            with patch("scripts.interactive_cli.PROJECT_ROOT", root), patch(
-                "builtins.input", side_effect=["1", "", ""]
-            ):
-                args = interactive_cli.args_import_jira_keys("INFO")
-        self.assertEqual(
-            args,
-            [
-                "--log-level",
-                "INFO",
-                "--csv",
-                str(csv_path.resolve()),
-                "--task-column",
-                "External issue ID",
-                "--jira-column",
-                "Issue key",
-            ],
-        )
-
     def test_search_jira_external_ids_builds_sandbox_dry_run_args(self) -> None:
-        with patch(
-            "builtins.input",
-            side_effect=[
-                'project = ENG AND "External issue ID" is not EMPTY',
-                "customfield_10001",
-                "250",
-                "y",
-            ],
-        ):
+        with patch("builtins.input", side_effect=["customfield_10001", "250", "y"]):
             args = interactive_cli.args_search_jira_external_ids("DEBUG")
 
         self.assertEqual(
@@ -235,8 +201,6 @@ class IncrementalArgsBuilderTest(TestCase):
             [
                 "--log-level",
                 "DEBUG",
-                "--jql",
-                'project = ENG AND "External issue ID" is not EMPTY',
                 "--external-id-field",
                 "customfield_10001",
                 "--max-results",
@@ -247,14 +211,17 @@ class IncrementalArgsBuilderTest(TestCase):
 
     def test_search_jira_external_ids_uses_production_session(self) -> None:
         interactive_cli._session.use_prod = True
-        with patch(
-            "builtins.input",
-            side_effect=["project = ENG", "customfield_10001", "500", "n"],
-        ):
+        with patch("builtins.input", side_effect=["customfield_10001", "500", "n"]):
             args = interactive_cli.args_search_jira_external_ids("INFO")
 
         self.assertIn("--prod", args)
         self.assertNotIn("--dry-run", args)
+
+    def test_search_jira_external_ids_defaults_external_id_field(self) -> None:
+        with patch("builtins.input", side_effect=["", "500", "y"]):
+            args = interactive_cli.args_search_jira_external_ids("INFO")
+        self.assertIn("External issue ID", args)
+        self.assertNotIn("--jql", args)
 
     def test_user_and_project_map_imports_use_inputs_csv_picker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
