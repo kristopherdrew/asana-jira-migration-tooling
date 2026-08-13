@@ -322,7 +322,7 @@ CREATE TABLE IF NOT EXISTS task_jira_mappings (
     jira_key TEXT NOT NULL,
     synced_at TEXT NOT NULL,
     jira_site_key TEXT NOT NULL DEFAULT 'legacy_unknown',
-    PRIMARY KEY (jira_site_key, task_gid, jira_key),
+    PRIMARY KEY (jira_site_key, task_gid),
     UNIQUE (jira_site_key, jira_key),
     FOREIGN KEY (task_gid) REFERENCES tasks(gid)
 );
@@ -2411,6 +2411,26 @@ class Database:
                 f"INSERT INTO {table} ({destination_columns}) SELECT {select_columns} FROM {legacy}"
             )
             connection.execute(f"DROP TABLE {legacy}")
+            connection.commit()
+        # External issue IDs are globally unique within a Jira site. Older
+        # snapshots allowed one task to accumulate several Jira keys; retain
+        # the earliest imported row and prevent that fan-out going forward.
+        connection.execute(
+            """
+            DELETE FROM task_jira_mappings
+            WHERE rowid NOT IN (
+                SELECT MIN(rowid)
+                FROM task_jira_mappings
+                GROUP BY jira_site_key, task_gid
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_task_jira_mappings_site_task
+            ON task_jira_mappings (jira_site_key, task_gid)
+            """
+        )
         connection.commit()
 
     def get_personal_task_cursor(self, connection: sqlite3.Connection, assignee_gid: str) -> Optional[str]:
@@ -2961,17 +2981,16 @@ class Database:
         jira_site_key = _site_key(jira_site_key)
         entries = []
         jira_keys: List[str] = []
-        seen_pairs: Set[Tuple[str, str]] = set()
+        seen_tasks: Set[str] = set()
         timestamp = synced_at.isoformat()
         for mapping in mappings:
             task_gid = (mapping.get("task_gid") or "").strip()
             jira_key = (mapping.get("jira_key") or "").strip()
             if not task_gid or not jira_key:
                 continue
-            pair = (task_gid, jira_key)
-            if pair in seen_pairs:
+            if task_gid in seen_tasks:
                 continue
-            seen_pairs.add(pair)
+            seen_tasks.add(task_gid)
             entries.append(
                 {
                     "task_gid": task_gid,
@@ -3002,6 +3021,24 @@ class Database:
                     )
 
         if entries:
+            task_gids = [entry["task_gid"] for entry in entries]
+            placeholders = ",".join("?" for _ in task_gids)
+            existing_rows = connection.execute(
+                f"""
+                SELECT task_gid, jira_key
+                FROM task_jira_mappings
+                WHERE jira_site_key = ? AND task_gid IN ({placeholders})
+                """,
+                (jira_site_key, *task_gids),
+            ).fetchall()
+            existing_by_task = {row["task_gid"]: row["jira_key"] for row in existing_rows}
+            entries = [
+                entry for entry in entries
+                if not existing_by_task.get(entry["task_gid"])
+                or existing_by_task[entry["task_gid"]] == entry["jira_key"]
+            ]
+
+        if entries:
             connection.executemany(
                 """
                 INSERT INTO task_jira_mappings (
@@ -3010,7 +3047,7 @@ class Database:
                 VALUES (
                     :task_gid, :jira_key, :synced_at, :jira_site_key
                 )
-                ON CONFLICT(jira_site_key, task_gid, jira_key) DO UPDATE SET
+                ON CONFLICT(jira_site_key, task_gid) DO UPDATE SET
                     synced_at=excluded.synced_at
                 """,
                 entries,

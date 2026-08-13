@@ -60,7 +60,6 @@ from scripts.atlassian import (  # noqa: E402
     export_project_to_jira_csv,
     export_team_project_jira_csv,
     get_jira_migration_decisions,
-    import_jira_task_keys,
     search_jira_external_ids,
     sync_jira_attachments,
     update_atlassian_user_map,
@@ -1693,30 +1692,10 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
     }
 
 
-def args_import_jira_keys(log_level: str) -> List[str]:
-    args = build_common_args(log_level)
-    append_jira_env_flag(args)
-    csv_path = _prompt_csv_file("Jira task-key import", "Jira export CSV")
-    args.extend(["--csv", csv_path])
-    task_column = prompt("Task ID column name", default="External issue ID")
-    if task_column:
-        args.extend(["--task-column", task_column])
-    jira_column = prompt("Jira key column name", default="Issue key")
-    if jira_column:
-        args.extend(["--jira-column", jira_column])
-    return args
-
-
 def args_search_jira_external_ids(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     append_jira_env_flag(args)
-    jql = prompt_required(
-        'JQL (for example: project = ENG AND "External issue ID" is not EMPTY)',
-    )
-    args.extend(["--jql", jql])
-    external_id_field = prompt_required(
-        "External ID field key (for example: customfield_10001)",
-    )
+    external_id_field = prompt("External ID field name or key", default="External issue ID")
     args.extend(["--external-id-field", external_id_field])
     max_results = prompt("Results per Jira page", default="500")
     if max_results:
@@ -2014,10 +1993,10 @@ def run_guided_project_migration(log_level: str) -> None:
             )
         run_export_project_to_jira(log_level)
         print("\nImport the generated CSV through Jira's external-import wizard.")
-        if confirm("Is the Jira import complete and a Jira export available now?", default=False):
+        if confirm("Is the Jira import complete and ready for Jira-key recovery?", default=False):
             run_script(
-                import_jira_task_keys.main,
-                args_import_jira_keys(log_level),
+                search_jira_external_ids.main,
+                args_search_jira_external_ids(log_level),
             )
     elif choice == "2":
         if confirm("Refresh the Atlassian user map before creating issues?", default=True):
@@ -2119,7 +2098,7 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Export project to Jira CSV", lambda: run_export_project_to_jira(log_level)),
         "2": MenuItem("2", "Export team/project Jira CSV", run_team_project_jira_export),
-        "3": MenuItem("3", "Import Jira task keys", lambda: run_script(import_jira_task_keys.main, args_import_jira_keys(log_level))),
+        "3": MenuItem("3", "Recover Jira task keys from project associations", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "4": MenuItem("4", "Clear Jira task keys", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level))),
         "5": MenuItem(
             "5",
@@ -2152,7 +2131,7 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
         ),
         "14": MenuItem(
             "14",
-            "Search Jira for External IDs (JQL)",
+            "Recover Jira keys from project associations",
             lambda: run_script(
                 search_jira_external_ids.main,
                 args_search_jira_external_ids(log_level),
@@ -2246,7 +2225,7 @@ def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
         "1": MenuItem("1", "Guided project migration", lambda: run_guided_project_migration(log_level)),
         "2": MenuItem("2", "Export active project tasks for Jira CSV import", lambda: run_export_project_to_jira(log_level)),
         "3": MenuItem("3", "Export archival project tasks for Jira CSV import", lambda: run_script(export_archival_project_jira_csv.main, args_export_archival_project(log_level))),
-        "4": MenuItem("4", "Import Jira task keys after CSV import", lambda: run_script(import_jira_task_keys.main, args_import_jira_keys(log_level))),
+        "4": MenuItem("4", "Recover Jira task keys from project associations", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "5": MenuItem("5", "Recover Jira task keys from External IDs", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "6": MenuItem("6", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
         "7": MenuItem("7", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),

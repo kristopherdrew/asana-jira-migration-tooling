@@ -35,15 +35,11 @@ Runs `scripts.atlassian.export_archival_project_jira_csv`. This simplified forma
 folds populated custom fields into the description while retaining native migration
 columns and Asana links.
 
-### Import Jira task keys after CSV import
-
-Runs `scripts.atlassian.import_jira_task_keys`. It reads a Jira export after the CSV
-import and persists Asana task GID to Jira key mappings needed by later operations.
-
 ### Recover Jira task keys from External IDs
 
 Runs `scripts.atlassian.search_jira_external_ids`. Use it when Jira contains the
 external Asana identifiers but the local task-key mappings are missing or incomplete.
+Its Jira scope is derived from the stored Asana Project → Jira Space associations.
 
 ### Download durable Asana attachment archive
 

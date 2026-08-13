@@ -342,10 +342,10 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "task_jira_mappings",
         "Jira / Atlassian mapping",
         "Maps Asana task GID ↔ Jira issue key.",
-        "Jira CSV export import, or Jira JQL search for an external-id field — not an Asana API.",
-        ["scripts/atlassian/import_jira_task_keys.py", "scripts/atlassian/search_jira_external_ids.py"],
+        "Jira search across associated project/space keys for an external-id field — not an Asana API.",
+        ["scripts/atlassian/search_jira_external_ids.py"],
         "upsert_task_jira_mappings",
-        "Upsert by (jira_site_key, task_gid, jira_key); UNIQUE(jira_site_key, jira_key). FK→tasks.",
+        "One row per (jira_site_key, task_gid); UNIQUE(jira_site_key, jira_key). FK→tasks.",
     ),
     "jira_project_mappings": _m(
         "jira_project_mappings",

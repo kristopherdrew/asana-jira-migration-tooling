@@ -93,6 +93,35 @@ class SearchJiraExternalIdsTests(unittest.TestCase):
             self.assertEqual(summary["written"], 1)
             self.assertEqual(summary["processed"], 2)
 
+    def test_upsert_mappings_records_selected_site(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = f"{temp_dir}/asana.sqlite"
+            database = Database(db_path=db_path)
+            with database.connect() as conn:
+                database.initialize(conn)
+                conn.execute(
+                    "INSERT INTO tasks (gid, name, synced_at) VALUES (?, ?, ?)",
+                    ("task_1", "Task 1", datetime.now(timezone.utc).isoformat()),
+                )
+                conn.commit()
+            search_mod.upsert_mappings(
+                db_path,
+                [search_mod.JiraIssue("ENG-1", "2024-01-01", "task_1")],
+                jira_site_key="client_jira",
+            )
+            with database.connect() as conn:
+                row = conn.execute("SELECT jira_site_key FROM task_jira_mappings").fetchone()
+            self.assertEqual(row["jira_site_key"], "client_jira")
+
+    def test_resolve_external_field_and_build_mapped_jql(self) -> None:
+        fields = [{"id": "customfield_123", "name": "External issue ID"}]
+        field_id = search_mod.resolve_external_field_id(fields, "external ISSUE id")
+        self.assertEqual(field_id, "customfield_123")
+        self.assertEqual(
+            search_mod.build_mapped_projects_jql(["ABC", "XYZ"], field_id),
+            'project IN ("ABC", "XYZ") AND "customfield_123" is not EMPTY',
+        )
+
     def test_clamp_max_results_respects_cap(self) -> None:
         self.assertEqual(search_mod.clamp_max_results(search_mod.JIRA_MAX_RESULTS_CAP + 5), search_mod.JIRA_MAX_RESULTS_CAP)
         self.assertEqual(search_mod.clamp_max_results(50), 50)

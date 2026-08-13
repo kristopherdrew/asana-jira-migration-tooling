@@ -48,7 +48,6 @@ class ClearJiraTaskKeysTest(TestCase):
             "INSERT INTO task_jira_mappings (task_gid, jira_key, synced_at) VALUES (?, ?, ?)",
             [
                 ("task_1", "ENG-1", sync_time()),
-                ("task_1", "ENG-2", sync_time()),
                 ("task_2", "ENG-3", sync_time()),
             ],
         )
@@ -56,13 +55,13 @@ class ClearJiraTaskKeysTest(TestCase):
 
     def test_clear_all(self) -> None:
         removed = clear_script.clear_jira_mappings(str(self.db_path))
-        self.assertEqual(removed, 3)
+        self.assertEqual(removed, 2)
         rows = self.connection.execute("SELECT COUNT(*) AS total FROM task_jira_mappings").fetchone()
         self.assertEqual(rows["total"], 0)
 
     def test_clear_specific_tasks(self) -> None:
         removed = clear_script.clear_jira_mappings(str(self.db_path), ["task_1"])
-        self.assertEqual(removed, 2)
+        self.assertEqual(removed, 1)
         rows = self.connection.execute(
             "SELECT jira_key FROM task_jira_mappings ORDER BY jira_key"
         ).fetchall()
@@ -70,7 +69,7 @@ class ClearJiraTaskKeysTest(TestCase):
 
     def test_clear_by_project(self) -> None:
         removed = clear_script.clear_jira_mappings(str(self.db_path), project_gid="proj_1")
-        self.assertEqual(removed, 2)
+        self.assertEqual(removed, 1)
         rows = self.connection.execute(
             "SELECT task_gid, jira_key FROM task_jira_mappings ORDER BY jira_key"
         ).fetchall()

@@ -54,7 +54,7 @@ class DatabaseJiraMappingsTest(TestCase):
         )
         self.connection.commit()
 
-    def test_upsert_task_jira_mappings_allows_multiple_keys_per_task(self) -> None:
+    def test_upsert_task_jira_mappings_keeps_first_key_per_task(self) -> None:
         summary = self.database.upsert_task_jira_mappings(
             self.connection,
             [
@@ -63,15 +63,12 @@ class DatabaseJiraMappingsTest(TestCase):
             ],
             self.sync_time,
         )
-        self.assertEqual(summary["written"], 2)
+        self.assertEqual(summary["written"], 1)
 
         rows = self.connection.execute(
             "SELECT task_gid, jira_key FROM task_jira_mappings ORDER BY jira_key"
         ).fetchall()
-        self.assertEqual([(row["task_gid"], row["jira_key"]) for row in rows], [
-            ("task_1", "ENG-100"),
-            ("task_1", "ENG-101"),
-        ])
+        self.assertEqual([(row["task_gid"], row["jira_key"]) for row in rows], [("task_1", "ENG-100")])
 
         # Re-importing the same key should just update synced_at, not duplicate rows
         summary_second = self.database.upsert_task_jira_mappings(
@@ -83,7 +80,14 @@ class DatabaseJiraMappingsTest(TestCase):
         total_rows = self.connection.execute(
             "SELECT COUNT(*) AS count FROM task_jira_mappings"
         ).fetchone()["count"]
-        self.assertEqual(total_rows, 2)
+        self.assertEqual(total_rows, 1)
+
+        skipped = self.database.upsert_task_jira_mappings(
+            self.connection,
+            [{"task_gid": "task_1", "jira_key": "ENG-101"}],
+            self.sync_time,
+        )
+        self.assertEqual(skipped["written"], 0)
 
     def test_upsert_task_jira_mappings_detects_conflicting_keys(self) -> None:
         self.database.upsert_task_jira_mappings(

@@ -705,16 +705,16 @@ Per-destination delivery state for archived files uploaded to Jira work items.
 
 Maps Asana task GID ↔ Jira issue key.
 
-- **Source:** Jira CSV export import, or Jira JQL search for an external-id field — not an Asana API.
-- **Populated by:** `scripts/atlassian/import_jira_task_keys.py`, `scripts/atlassian/search_jira_external_ids.py`
+- **Source:** Jira search across associated project/space keys for an external-id field — not an Asana API.
+- **Populated by:** `scripts/atlassian/search_jira_external_ids.py`
 - **Written by:** `upsert_task_jira_mappings`
-- **Write semantics:** Upsert by (jira_site_key, task_gid, jira_key); UNIQUE(jira_site_key, jira_key). FK→tasks.
+- **Write semantics:** One row per (jira_site_key, task_gid); UNIQUE(jira_site_key, jira_key). FK→tasks.
 - **Foreign keys:** task_gid → tasks(gid)
 
 | Column | Type | PK |
 |---|---|---|
 | `task_gid` | TEXT | ✓ |
-| `jira_key` | TEXT | ✓ |
+| `jira_key` | TEXT |  |
 | `synced_at` | TEXT |  |
 | `jira_site_key` | TEXT | ✓ |
 
