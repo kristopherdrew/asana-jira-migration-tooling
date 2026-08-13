@@ -13,7 +13,7 @@ import shlex
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 # Ensure project root is on sys.path so imports work when run directly.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -67,6 +67,7 @@ from scripts.atlassian import (  # noqa: E402
 )
 from src.lib.config import (  # noqa: E402
     Credentials,
+    JiraSite,
     file_has_plaintext_tokens,
     has_active_marker,
     list_project_profiles,
@@ -78,12 +79,15 @@ from src.lib.config import (  # noqa: E402
     read_active_slug,
     read_profile_name,
     read_profile_jira_urls,
+    read_profile_jira_sites,
     resolve_credentials_path,
     slugify,
     write_active_slug,
     write_credentials_file,
+    write_profile_default_jira_site,
+    write_profile_jira_sites,
 )
-from src.lib.database import ASANA_JIRA_DB_PATH_ENV  # noqa: E402
+from src.lib.database import ASANA_JIRA_DB_PATH_ENV, ASANA_JIRA_SITE_KEY_ENV  # noqa: E402
 from src.lib import keychain  # noqa: E402
 from src.lib.credential_check import check_credentials  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
@@ -116,6 +120,9 @@ class CliSession:
     use_prod: bool = False
     jira_base_url: Optional[str] = None
     jira_sandbox_base_url: Optional[str] = None
+    jira_sites: Tuple[JiraSite, ...] = ()
+    jira_site_key: Optional[str] = None
+    default_jira_site_key: Optional[str] = None
 
     @property
     def db_path(self) -> Path:
@@ -127,11 +134,19 @@ class CliSession:
 
     @property
     def environment_label(self) -> str:
+        if self.active_jira_site:
+            return self.active_jira_site.name
         return "PRODUCTION" if self.use_prod else "SANDBOX"
 
     @property
     def environment_url(self) -> Optional[str]:
+        if self.active_jira_site:
+            return self.active_jira_site.base_url
         return self.jira_base_url if self.use_prod else self.jira_sandbox_base_url
+
+    @property
+    def active_jira_site(self) -> Optional[JiraSite]:
+        return next((site for site in self.jira_sites if site.key == self.jira_site_key), None)
 
 
 # Set once in main(); read by the args builders and DB helpers below.
@@ -149,6 +164,8 @@ def _apply_session_env() -> None:
     """Point in-process scripts at the active profile's database."""
     if _session is not None:
         os.environ[ASANA_JIRA_DB_PATH_ENV] = str(_session.db_path)
+        if _session.jira_site_key:
+            os.environ[ASANA_JIRA_SITE_KEY_ENV] = _session.jira_site_key
 
 
 def _set_session(reference_path: Path, env_path: Path, *, use_prod: Optional[bool] = None) -> CliSession:
@@ -156,6 +173,14 @@ def _set_session(reference_path: Path, env_path: Path, *, use_prod: Optional[boo
     global _session
     prod = use_prod if use_prod is not None else (_session.use_prod if _session else False)
     base_url, sandbox_url = read_profile_jira_urls(env_path)
+    sites, default_site = read_profile_jira_sites(env_path)
+    selected = None
+    if use_prod is not None:
+        selected = "production_jira" if use_prod else "sandbox_jira"
+    elif _session and _session.env_path == env_path and any(site.key == _session.jira_site_key for site in sites):
+        selected = _session.jira_site_key
+    else:
+        selected = default_site or (sites[0].key if sites else None)
     _session = CliSession(
         reference_path=reference_path,
         env_path=env_path,
@@ -163,6 +188,9 @@ def _set_session(reference_path: Path, env_path: Path, *, use_prod: Optional[boo
         use_prod=prod,
         jira_base_url=base_url,
         jira_sandbox_base_url=sandbox_url,
+        jira_sites=sites,
+        jira_site_key=selected,
+        default_jira_site_key=default_site,
     )
     _apply_session_env()
     return _session
@@ -423,7 +451,9 @@ def append_jira_env_flag(args: List[str]) -> None:
     The base URL itself comes from the credentials file (JIRA_BASE_URL /
     JIRA_SANDBOX_BASE_URL).
     """
-    if _session is not None and _session.use_prod:
+    if _session is not None and _session.jira_site_key:
+        args.extend(["--jira-site", _session.jira_site_key])
+    elif _session is not None and _session.use_prod:
         args.append("--prod")
 
 
@@ -525,6 +555,8 @@ def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
     values: Dict[str, object] = {field: getattr(current, field) for field, _, _ in CREDENTIAL_FIELDS}
     # client_name is not edited here (it names the profile/file); preserve it on save.
     values["client_name"] = current.client_name
+    values["jira_sites"] = current.jira_sites
+    values["jira_default_site"] = current.jira_default_site
     secret_backend = "Keychain" if keychain.is_available() else "env file"
     profile_label = current.client_name or env_path.name
     dirty = False
@@ -748,12 +780,12 @@ def print_session_header() -> None:
         env_value += f" ({_session.environment_url})"
     rows = [
         ("Profile", _session.profile_label),
-        ("Environment", env_value),
+        ("Jira site", env_value),
         ("Database", _session.db_path.name),
     ]
     lines = [f"{label}: {value}" for label, value in rows]
     width = max(len(line) for line in lines)
-    border_color = "red" if _session.use_prod else "green"
+    border_color = "red" if _session.jira_site_key == "production_jira" else "green"
 
     top = _colorize("┌" + "─" * (width + 2) + "┐", border_color)
     bottom = _colorize("└" + "─" * (width + 2) + "┘", border_color)
@@ -766,14 +798,63 @@ def print_session_header() -> None:
     print(bottom)
 
 
-def toggle_environment() -> None:
+def select_jira_site(*, make_default: bool = False) -> None:
     if _session is None:
         return
-    _session.use_prod = not _session.use_prod
-    print(
-        f"\nJira environment is now {_session.environment_label}. "
-        "All Jira commands will target it until you change it again."
-    )
+    if not _session.jira_sites:
+        print("No Jira sites are configured for this profile.")
+        return
+    print("\nAvailable Jira sites:")
+    for index, site in enumerate(_session.jira_sites, start=1):
+        markers = []
+        if site.key == _session.jira_site_key:
+            markers.append("active")
+        if site.key == _session.default_jira_site_key:
+            markers.append("default")
+        suffix = f" ({', '.join(markers)})" if markers else ""
+        print(f"  [{index}] {site.name} — {site.base_url}{suffix}")
+    choice = prompt("Pick a number (Enter to cancel)", default="")
+    if not choice:
+        return
+    if not (choice.isdigit() and 1 <= int(choice) <= len(_session.jira_sites)):
+        print("Invalid selection.")
+        return
+    site = _session.jira_sites[int(choice) - 1]
+    _session.jira_site_key = site.key
+    os.environ[ASANA_JIRA_SITE_KEY_ENV] = site.key
+    _session.use_prod = site.key == "production_jira"
+    if make_default:
+        write_profile_default_jira_site(_session.env_path, site.key)
+        _session.default_jira_site_key = site.key
+        print(f"{site.name} is now active and will be selected on future launches.")
+    else:
+        print(f"{site.name} is active for this session.")
+
+
+def add_jira_site() -> None:
+    """Add a user-labeled Jira site to the active client profile."""
+    if _session is None:
+        return
+    name = prompt_required("Jira site label")
+    suggested = slugify(name)
+    key = slugify(prompt("Stable site key", default=suggested))
+    if any(site.key == key for site in _session.jira_sites):
+        print(f"A Jira site with key '{key}' already exists.")
+        return
+    url = prompt_required("Jira site URL").rstrip("/")
+    sites = (*_session.jira_sites, JiraSite(key, name, url))
+    default = _session.default_jira_site_key or key
+    write_profile_jira_sites(_session.env_path, sites, default)
+    _session.jira_sites = sites
+    _session.default_jira_site_key = default
+    if not _session.jira_site_key:
+        _session.jira_site_key = key
+    print(f"Added {name} ({url}).")
+
+
+def toggle_environment() -> None:
+    """Compatibility alias for older callers; opens the named-site selector."""
+    select_jira_site()
 
 
 def switch_profile(reference_path: Path = PROJECT_ROOT) -> None:
@@ -813,7 +894,7 @@ def switch_profile(reference_path: Path = PROJECT_ROOT) -> None:
 
 def build_profile_env_menu(reference_path: Path = PROJECT_ROOT) -> Dict[str, MenuItem]:
     return {
-        "1": MenuItem("1", "Toggle Jira environment (Sandbox <-> Production)", toggle_environment),
+        "1": MenuItem("1", "Select active Jira site", select_jira_site),
         "2": MenuItem("2", "Switch active profile", lambda: switch_profile(reference_path)),
         "3": MenuItem("3", "Create a new profile", lambda: bootstrap_credentials(reference_path)),
         "b": MenuItem("b", "Back", lambda: None),
@@ -1536,6 +1617,7 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
 def args_import_jira_keys(log_level: str) -> List[str]:
     args = build_common_args(log_level)
+    append_jira_env_flag(args)
     csv_path = _prompt_csv_file("Jira task-key import", "Jira export CSV")
     args.extend(["--csv", csv_path])
     task_column = prompt("Task ID column name", default="External issue ID")
@@ -1568,6 +1650,7 @@ def args_search_jira_external_ids(log_level: str) -> List[str]:
 
 def args_import_jira_project_map(log_level: str) -> List[str]:
     args = build_common_args(log_level)
+    append_jira_env_flag(args)
     csv_path = _prompt_csv_file("Jira project association import", "Project association CSV")
     args.extend(["--csv", csv_path])
     return args
@@ -1593,6 +1676,7 @@ def run_merge_project_exports(log_level: str) -> None:
 
 def args_clear_jira_keys(log_level: str) -> List[str]:
     args = build_common_args(log_level)
+    append_jira_env_flag(args)
     gids = prompt("Comma-separated task GIDs to clear (blank = clear all)", default="")
     if gids:
         args.extend(["--task-gids", gids])
@@ -2009,8 +2093,10 @@ def build_client_environment_menu(
     return {
         "1": MenuItem("1", "Switch active client profile", lambda: switch_profile(reference_path)),
         "2": MenuItem("2", "Create a new client profile", lambda: bootstrap_credentials(reference_path)),
-        "3": MenuItem("3", "Toggle Jira environment (Sandbox <-> Production)", toggle_environment),
-        "4": MenuItem("4", "View or update credentials", lambda: manage_credentials(reference_path)),
+        "3": MenuItem("3", "Select active Jira site", select_jira_site),
+        "4": MenuItem("4", "Set default Jira site", lambda: select_jira_site(make_default=True)),
+        "5": MenuItem("5", "Add Jira site", add_jira_site),
+        "6": MenuItem("6", "View or update credentials", lambda: manage_credentials(reference_path)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -2173,7 +2259,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     env_path = ensure_interactive_credentials(PROJECT_ROOT)
     if _session is None:
         # Existing profile (ensure didn't bootstrap, which sets the session itself).
-        _set_session(PROJECT_ROOT, env_path, use_prod=False)
+        _set_session(PROJECT_ROOT, env_path)
         offer_legacy_db_adoption()
     top_menu = build_top_menu(args.log_level)
 

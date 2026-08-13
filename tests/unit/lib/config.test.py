@@ -7,6 +7,7 @@ from unittest.mock import patch
 from src.lib import keychain
 from src.lib.config import (
     Credentials,
+    JiraSite,
     file_has_plaintext_tokens,
     has_active_marker,
     list_credential_profiles,
@@ -22,9 +23,11 @@ from src.lib.config import (
     read_profile_name,
     resolve_credentials_path,
     resolve_jira_base_url,
+    resolve_jira_site,
     slugify,
     write_active_slug,
     write_credentials_file,
+    write_profile_default_jira_site,
     write_project_env_pointer,
 )
 
@@ -35,6 +38,12 @@ class LoadCredentialsTest(TestCase):
         patcher = patch.object(keychain, "is_available", return_value=False)
         patcher.start()
         self.addCleanup(patcher.stop)
+        original_site = environ.get("ASANA_JIRA_SITE_KEY")
+        self.addCleanup(
+            lambda: environ.pop("ASANA_JIRA_SITE_KEY", None)
+            if original_site is None
+            else environ.__setitem__("ASANA_JIRA_SITE_KEY", original_site)
+        )
 
     def test_loads_and_normalizes_boolean_from_env_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -188,6 +197,25 @@ class LoadCredentialsTest(TestCase):
         # Default is sandbox; --prod selects production. Trailing slash is stripped.
         self.assertEqual(resolve_jira_base_url(creds), "https://sandbox.atlassian.net")
         self.assertEqual(resolve_jira_base_url(creds, prod=True), "https://prod.atlassian.net")
+
+    def test_named_jira_sites_resolve_and_persist_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            creds = Credentials(
+                token="t", workspace_gid="w", skip_ssl_verification=False,
+                jira_sites=(
+                    JiraSite("production_jira", "Production Jira", "https://prod.example/"),
+                    JiraSite("archive_jira", "Archive Jira", "https://archive.example"),
+                ),
+                jira_default_site="archive_jira",
+            )
+            write_credentials_file(env_path, creds)
+            with patch.dict(environ, {"ASANA_JIRA_ENV_FILE": str(env_path)}, clear=False):
+                loaded = load_credentials(tmpdir)
+            self.assertEqual(resolve_jira_site(loaded).key, "archive_jira")
+            self.assertEqual(resolve_jira_base_url(loaded, site_key="production_jira"), "https://prod.example")
+            write_profile_default_jira_site(env_path, "production_jira")
+            self.assertIn("JIRA_DEFAULT_SITE=production_jira", env_path.read_text(encoding="utf-8"))
 
     def test_resolve_jira_base_url_missing_url_raises(self) -> None:
         creds = Credentials(token="t", workspace_gid="w", skip_ssl_verification=False)

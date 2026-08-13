@@ -4,6 +4,10 @@ Scripts that map Asana users to Atlassian accounts, generate Jira import CSVs, c
 
 Jira-bound scripts read `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` from the resolved credentials. Jira comment timestamps in the Jira CSV export use Jira's required comment format; all other report date columns export as `YYYY-MM-DD`.
 
+## Named Jira sites
+
+Each client profile can define any number of Jira destinations with `JIRA_SITES`, `JIRA_DEFAULT_SITE`, and `JIRA_SITE_<KEY>_NAME` / `JIRA_SITE_<KEY>_URL`. Use `--jira-site <key>` for standalone commands. The interactive CLI has separate actions to select a site for the current session and to persist the default for future launches. Jira mapping, decision, project-association, and attachment-upload records carry `jira_site_key`, so identical Jira issue keys on different sites remain distinct. The legacy `--prod` flag continues to select `production_jira` when `--jira-site` is omitted.
+
 ← Back to [README](../README.md)
 
 When an Atlassian CLI menu action accepts an input file, its picker lists matching files from the repository root regardless of the directory used to launch the CLI. Project-GID lists accept `.txt`, `.csv`, or `.list`; Jira key imports, Atlassian user maps, and Jira project associations list `.csv` files. A relative or absolute path can still be entered manually.

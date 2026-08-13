@@ -215,7 +215,7 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "Archive manifest joined to current task_jira_mappings and Jira attachment API responses.",
         ["scripts/upload_jira_attachments.py"],
         "upload_archive",
-        "Upsert by (archive_id, attachment_gid, jira_key); records retries and Jira attachment IDs.",
+        "Upsert by (archive_id, attachment_gid, jira_site_key, jira_key); records retries and Jira attachment IDs.",
     ),
     "task_tags": _m(
         "task_tags",
@@ -345,7 +345,7 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "Jira CSV export import, or Jira JQL search for an external-id field — not an Asana API.",
         ["scripts/atlassian/import_jira_task_keys.py", "scripts/atlassian/search_jira_external_ids.py"],
         "upsert_task_jira_mappings",
-        "Upsert by (task_gid, jira_key); UNIQUE(jira_key) enforces one task per key. FK→tasks.",
+        "Upsert by (jira_site_key, task_gid, jira_key); UNIQUE(jira_site_key, jira_key). FK→tasks.",
     ),
     "jira_project_mappings": _m(
         "jira_project_mappings",
@@ -354,7 +354,7 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "CSV import (project_gid,project_name,project_key) — not an Asana API.",
         ["scripts/atlassian/import_jira_project_map.py"],
         "upsert_jira_project_mappings",
-        "Upsert by project_gid (PK).",
+        "Upsert by (jira_site_key, project_gid).",
     ),
     "team_project_jira_mappings": _m(
         "team_project_jira_mappings",
@@ -363,7 +363,7 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "Recorded during direct-API Jira issue creation (kind = team/project/no_team).",
         ["scripts/atlassian/create_team_project_jira_issues.py"],
         "upsert_team_project_jira_mappings (delete_team_project_jira_mappings for --reset)",
-        "Upsert by (asana_gid, kind); UNIQUE(jira_key).",
+        "Upsert by (jira_site_key, asana_gid, kind); UNIQUE(jira_site_key, jira_key).",
     ),
     "project_jira_decisions": _m(
         "project_jira_decisions",
@@ -372,7 +372,7 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "Jira JQL search for the decision field (POST /rest/api/3/search/jql) + field-id lookup (GET /rest/api/3/field); jira_key resolved to project via team_project_jira_mappings (kind='project') — not an Asana API.",
         ["scripts/atlassian/get_jira_migration_decisions.py"],
         "upsert_project_jira_decisions",
-        "Upsert by project_gid (PK); UNIQUE(jira_key). FK→projects.",
+        "Upsert by (jira_site_key, project_gid); UNIQUE(jira_site_key, jira_key). FK→projects.",
     ),
     "exported_tasks": _m(
         "exported_tasks",

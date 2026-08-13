@@ -98,3 +98,39 @@ class DatabaseJiraMappingsTest(TestCase):
                 [{"task_gid": "task_2", "jira_key": "ENG-999"}],
                 self.sync_time,
             )
+
+    def test_same_jira_key_is_independent_between_sites(self) -> None:
+        self.database.upsert_task_jira_mappings(
+            self.connection, [{"task_gid": "task_1", "jira_key": "MIG-1"}],
+            self.sync_time, jira_site_key="production_jira",
+        )
+        self.database.upsert_task_jira_mappings(
+            self.connection, [{"task_gid": "task_2", "jira_key": "MIG-1"}],
+            self.sync_time, jira_site_key="sandbox_jira",
+        )
+        rows = self.connection.execute(
+            "SELECT jira_site_key, task_gid FROM task_jira_mappings ORDER BY jira_site_key"
+        ).fetchall()
+        self.assertEqual(
+            [(row["jira_site_key"], row["task_gid"]) for row in rows],
+            [("production_jira", "task_1"), ("sandbox_jira", "task_2")],
+        )
+
+    def test_legacy_mapping_schema_is_preserved_and_attributed(self) -> None:
+        self.connection.execute("DROP TABLE task_jira_mappings")
+        self.connection.execute(
+            "CREATE TABLE task_jira_mappings (task_gid TEXT, jira_key TEXT UNIQUE, synced_at TEXT)"
+        )
+        self.connection.executemany(
+            "INSERT INTO task_jira_mappings VALUES (?, ?, ?)",
+            [("task_1", "ATJM-1", "now"), ("task_2", "FACARC-2", "now")],
+        )
+        self.connection.commit()
+        self.database.initialize(self.connection)
+        rows = self.connection.execute(
+            "SELECT jira_key, jira_site_key FROM task_jira_mappings ORDER BY jira_key"
+        ).fetchall()
+        self.assertEqual(
+            [(row["jira_key"], row["jira_site_key"]) for row in rows],
+            [("ATJM-1", "production_jira"), ("FACARC-2", "sandbox_jira")],
+        )

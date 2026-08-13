@@ -59,6 +59,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         default="INFO",
         help="Logging verbosity (default: INFO).",
     )
+    parser.add_argument("--jira-site", help="Named Jira site key for these mappings.")
     return parser.parse_args(argv)
 
 
@@ -67,6 +68,7 @@ def import_jira_keys_from_csv(
     csv_path: Path,
     jira_column: str = DEFAULT_JIRA_COLUMN,
     task_column: str = DEFAULT_TASK_COLUMN,
+    jira_site_key: Optional[str] = None,
 ) -> Dict[str, int]:
     csv_path = csv_path.resolve()
     if not csv_path.exists():
@@ -99,6 +101,7 @@ def import_jira_keys_from_csv(
             connection,
             filtered_rows,
             sync_time,
+            jira_site_key=jira_site_key,
         )
 
     written = summary["written"]
@@ -175,6 +178,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             csv_path=Path(args.csv),
             jira_column=args.jira_column,
             task_column=args.task_column,
+            jira_site_key=args.jira_site,
         )
     except FileNotFoundError as exc:
         raise SystemExit(str(exc)) from exc

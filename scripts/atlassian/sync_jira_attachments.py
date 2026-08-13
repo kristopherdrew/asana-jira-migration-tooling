@@ -73,6 +73,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
     )
+    parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Directory for the CSV summary (default: exports/).")
     parser.add_argument("--task-gid", help="Optional Asana task GID to limit the sync to a single task.")
     parser.add_argument("--max-workers", type=int, default=DEFAULT_WORKERS, help="Concurrent upload workers (default: 2).")
@@ -118,7 +119,10 @@ def resolve_project_gids(
     return normalized
 
 
-def collect_attachment_jobs(connection, project_gid: str, task_gid: Optional[str] = None) -> List[AttachmentJob]:
+def collect_attachment_jobs(
+    connection, project_gid: str, task_gid: Optional[str] = None,
+    jira_site_key: Optional[str] = None,
+) -> List[AttachmentJob]:
     query = [
         "SELECT",
         "    ta.gid AS attachment_gid,",
@@ -143,14 +147,16 @@ def collect_attachment_jobs(connection, project_gid: str, task_gid: Optional[str
     mapping_rows = []
     if task_gids:
         placeholders = ",".join("?" for _ in task_gids)
+        site_clause = "jira_site_key = ? AND " if jira_site_key else ""
+        mapping_params = ((jira_site_key,) if jira_site_key else ()) + tuple(task_gids)
         mapping_rows = connection.execute(
             f"""
             SELECT task_gid, jira_key
             FROM task_jira_mappings
-            WHERE task_gid IN ({placeholders})
+            WHERE {site_clause}task_gid IN ({placeholders})
             ORDER BY task_gid
             """,
-            tuple(task_gids),
+            mapping_params,
         ).fetchall()
     key_map: Dict[str, List[str]] = {}
     for row in mapping_rows:
@@ -269,6 +275,7 @@ def sync_project_attachments(
     keep_downloads: bool,
     task_gid: Optional[str] = None,
     allow_empty: bool = False,
+    jira_site_key: Optional[str] = None,
 ) -> Optional[Path]:
     credentials = load_credentials()
     username, jira_token = ensure_atlassian_credentials(credentials)
@@ -278,7 +285,9 @@ def sync_project_attachments(
         database.initialize(connection)
         project_label = format_project_label(connection, project_gid)
         logger.debug("Collecting attachments for project %s", project_label)
-        jobs = collect_attachment_jobs(connection, project_gid, task_gid=task_gid)
+        jobs = collect_attachment_jobs(
+            connection, project_gid, task_gid=task_gid, jira_site_key=jira_site_key
+        )
         logger.info("Found %s attachment/Jira combinations for project %s", len(jobs), project_label)
         if not jobs:
             message = f"No attachments found for project {project_gid}."
@@ -458,6 +467,7 @@ def sync_attachments(
     dry_run: bool,
     keep_downloads: bool,
     task_gid: Optional[str] = None,
+    jira_site_key: Optional[str] = None,
 ) -> List[Path]:
     # Preserve order while removing duplicates/empties
     seen: Set[str] = set()
@@ -484,6 +494,7 @@ def sync_attachments(
             dry_run=dry_run,
             keep_downloads=keep_downloads,
             task_gid=task_gid,
+            jira_site_key=jira_site_key,
             allow_empty=len(normalized) > 1,
         )
         if report_path:
@@ -500,7 +511,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     configure_logging(log_level)
 
     try:
-        jira_base_url = resolve_jira_base_url(load_credentials(), prod=args.prod)
+        jira_base_url = resolve_jira_base_url(load_credentials(), prod=args.prod, site_key=args.jira_site)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
@@ -526,6 +537,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             dry_run=args.dry_run,
             keep_downloads=args.keep_downloads,
             task_gid=args.task_gid,
+            jira_site_key=args.jira_site or ("production_jira" if args.prod else None),
         )
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(str(exc)) from exc

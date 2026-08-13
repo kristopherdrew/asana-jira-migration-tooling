@@ -36,12 +36,22 @@ ENV_VAR_NAMES = {
     "atlassian_token": "ATLASSIAN_TOKEN",
     "jira_base_url": "JIRA_BASE_URL",
     "jira_sandbox_base_url": "JIRA_SANDBOX_BASE_URL",
+    "jira_sites": "JIRA_SITES",
+    "jira_default_site": "JIRA_DEFAULT_SITE",
 }
 
 # The secret fields stored in the macOS Keychain (when available); everything
 # else stays in the plaintext env file.
 SECRET_FIELDS = ("token", "atlassian_token")
 SECRET_ENV_VARS = tuple(ENV_VAR_NAMES[field] for field in SECRET_FIELDS)
+ACTIVE_JIRA_SITE_ENV = "ASANA_JIRA_SITE_KEY"
+
+
+@dataclass(frozen=True)
+class JiraSite:
+    key: str
+    name: str
+    base_url: str
 
 
 @dataclass(frozen=True)
@@ -54,15 +64,36 @@ class Credentials:
     jira_base_url: Optional[str] = None
     jira_sandbox_base_url: Optional[str] = None
     client_name: Optional[str] = None
+    jira_sites: Tuple[JiraSite, ...] = ()
+    jira_default_site: Optional[str] = None
 
 
-def resolve_jira_base_url(credentials: "Credentials", prod: bool = False) -> str:
+def resolve_jira_site(credentials: "Credentials", site_key: Optional[str] = None) -> JiraSite:
+    """Resolve a named Jira site, defaulting to the profile's persisted choice."""
+    sites = {site.key: site for site in credentials.jira_sites}
+    selected = (site_key or credentials.jira_default_site or "").strip()
+    if selected and selected in sites:
+        os.environ[ACTIVE_JIRA_SITE_ENV] = selected
+        return sites[selected]
+    if selected:
+        raise ValueError(f"Unknown Jira site {selected!r}. Available sites: {', '.join(sites) or 'none'}.")
+    if len(sites) == 1:
+        return next(iter(sites.values()))
+    raise ValueError("No default Jira site configured. Set JIRA_DEFAULT_SITE or pass --jira-site.")
+
+
+def resolve_jira_base_url(
+    credentials: "Credentials", prod: bool = False, site_key: Optional[str] = None
+) -> str:
     """Return the configured Jira base URL for the selected environment.
 
     Defaults to the sandbox (``JIRA_SANDBOX_BASE_URL``); pass ``prod=True`` to
     target production (``JIRA_BASE_URL``). Raises ``ValueError`` with actionable
     guidance when the chosen environment's URL is not set in the credentials.
     """
+    if site_key or credentials.jira_sites:
+        selected = "production_jira" if prod and not site_key else site_key
+        return resolve_jira_site(credentials, selected).base_url.rstrip("/")
     if prod:
         url, env_name, which = credentials.jira_base_url, ENV_VAR_NAMES["jira_base_url"], "production"
     else:
@@ -78,6 +109,20 @@ def resolve_jira_base_url(credentials: "Credentials", prod: bool = False) -> str
             f"No {which} Jira base URL configured. Set {env_name} in your credentials file{hint}."
         )
     return url.rstrip("/")
+
+
+def _load_jira_sites(env_file_data: Dict[str, str]) -> Tuple[Tuple[JiraSite, ...], Optional[str]]:
+    raw_keys = os.environ.get("JIRA_SITES") or env_file_data.get("JIRA_SITES") or ""
+    keys = [slugify(value) for value in raw_keys.split(",") if value.strip()]
+    sites: List[JiraSite] = []
+    for key in dict.fromkeys(keys):
+        prefix = f"JIRA_SITE_{key.upper()}"
+        name = os.environ.get(f"{prefix}_NAME") or env_file_data.get(f"{prefix}_NAME") or key
+        url = os.environ.get(f"{prefix}_URL") or env_file_data.get(f"{prefix}_URL") or ""
+        if url.strip():
+            sites.append(JiraSite(key, name.strip(), url.strip().rstrip("/")))
+    default = (os.environ.get("JIRA_DEFAULT_SITE") or env_file_data.get("JIRA_DEFAULT_SITE") or "").strip()
+    return tuple(sites), (slugify(default) if default else None)
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -323,6 +368,15 @@ def load_credentials(path: str | Path = ".") -> Credentials:
     jira_base_url = (_read_value("jira_base_url", env_file_data) or "").strip() or None
     jira_sandbox_base_url = (_read_value("jira_sandbox_base_url", env_file_data) or "").strip() or None
     client_name = (_read_value("client_name", env_file_data) or "").strip() or None
+    jira_sites, jira_default_site = _load_jira_sites(env_file_data)
+    if not jira_sites:
+        legacy_sites = []
+        if jira_base_url:
+            legacy_sites.append(JiraSite("production_jira", "Production Jira", jira_base_url.rstrip("/")))
+        if jira_sandbox_base_url:
+            legacy_sites.append(JiraSite("sandbox_jira", "Sandbox Jira", jira_sandbox_base_url.rstrip("/")))
+        jira_sites = tuple(legacy_sites)
+        jira_default_site = "sandbox_jira" if jira_sandbox_base_url else ("production_jira" if jira_base_url else None)
 
     return Credentials(
         token=token.strip(),
@@ -333,6 +387,8 @@ def load_credentials(path: str | Path = ".") -> Credentials:
         jira_base_url=jira_base_url,
         jira_sandbox_base_url=jira_sandbox_base_url,
         client_name=client_name,
+        jira_sites=jira_sites,
+        jira_default_site=jira_default_site,
     )
 
 
@@ -387,6 +443,14 @@ def write_credentials_file(path: str | Path, credentials: Credentials) -> Path:
         lines.append(_format_env_assignment("JIRA_BASE_URL", credentials.jira_base_url))
     if credentials.jira_sandbox_base_url:
         lines.append(_format_env_assignment("JIRA_SANDBOX_BASE_URL", credentials.jira_sandbox_base_url))
+    if credentials.jira_sites:
+        lines.append(_format_env_assignment("JIRA_SITES", ",".join(site.key for site in credentials.jira_sites)))
+        if credentials.jira_default_site:
+            lines.append(_format_env_assignment("JIRA_DEFAULT_SITE", credentials.jira_default_site))
+        for site in credentials.jira_sites:
+            prefix = f"JIRA_SITE_{site.key.upper()}"
+            lines.append(_format_env_assignment(f"{prefix}_NAME", site.name))
+            lines.append(_format_env_assignment(f"{prefix}_URL", site.base_url.rstrip("/")))
 
     env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
@@ -522,6 +586,70 @@ def read_profile_jira_urls(env_path: str | Path) -> Tuple[Optional[str], Optiona
     base = (data.get(ENV_VAR_NAMES["jira_base_url"]) or "").strip() or None
     sandbox = (data.get(ENV_VAR_NAMES["jira_sandbox_base_url"]) or "").strip() or None
     return (base, sandbox)
+
+
+def read_profile_jira_sites(env_path: str | Path) -> Tuple[Tuple[JiraSite, ...], Optional[str]]:
+    """Read named Jira sites for CLI display without loading profile secrets."""
+    path = Path(env_path).expanduser()
+    try:
+        data = _load_env_file(path)
+    except (OSError, ValueError):
+        return (), None
+    sites, default = _load_jira_sites(data)
+    if sites:
+        return sites, default
+    legacy = []
+    production = (data.get("JIRA_BASE_URL") or "").strip()
+    sandbox = (data.get("JIRA_SANDBOX_BASE_URL") or "").strip()
+    if production:
+        legacy.append(JiraSite("production_jira", "Production Jira", production.rstrip("/")))
+    if sandbox:
+        legacy.append(JiraSite("sandbox_jira", "Sandbox Jira", sandbox.rstrip("/")))
+    return tuple(legacy), ("sandbox_jira" if sandbox else ("production_jira" if production else None))
+
+
+def write_profile_default_jira_site(env_path: str | Path, site_key: str) -> None:
+    """Persist the default Jira site while preserving all other profile lines."""
+    path = Path(env_path).expanduser()
+    key = slugify(site_key)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    replacement = _format_env_assignment("JIRA_DEFAULT_SITE", key)
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("export "):
+            stripped = stripped[7:].strip()
+        if stripped.startswith("JIRA_DEFAULT_SITE="):
+            lines[index] = replacement
+            break
+    else:
+        lines.append(replacement)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def write_profile_jira_sites(
+    env_path: str | Path,
+    sites: Tuple[JiraSite, ...],
+    default_site_key: Optional[str],
+) -> None:
+    """Replace named-site assignments while preserving unrelated profile values."""
+    path = Path(env_path).expanduser()
+    kept = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()[7:].strip() if line.strip().startswith("export ") else line.strip()
+        key = stripped.split("=", 1)[0]
+        if key in {"JIRA_SITES", "JIRA_DEFAULT_SITE"} or re.fullmatch(
+            r"JIRA_SITE_[A-Z0-9_]+_(?:NAME|URL)", key
+        ):
+            continue
+        kept.append(line)
+    kept.append(_format_env_assignment("JIRA_SITES", ",".join(site.key for site in sites)))
+    if default_site_key:
+        kept.append(_format_env_assignment("JIRA_DEFAULT_SITE", slugify(default_site_key)))
+    for site in sites:
+        prefix = f"JIRA_SITE_{site.key.upper()}"
+        kept.append(_format_env_assignment(f"{prefix}_NAME", site.name))
+        kept.append(_format_env_assignment(f"{prefix}_URL", site.base_url.rstrip("/")))
+    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
 
 def list_credential_profiles() -> List[Tuple[Path, Optional[str]]]:
