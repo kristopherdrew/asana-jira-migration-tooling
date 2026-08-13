@@ -77,6 +77,7 @@ When you run the metadata flow under **Discover & Refresh Asana**, the projects 
 
 ## Documentation
 Per-script command reference lives under [`docs/`](docs/), split by concern:
+- [`docs/cli-phases.md`](docs/cli-phases.md) — Project-management lifecycle overview linking to one focused operator guide for each of the seven interactive CLI phases.
 - [`docs/sync-commands.md`](docs/sync-commands.md) — Core sync commands that pull Asana entities (teams, projects, custom fields, users, tasks, task extras, personal tasks, incremental updates) into the local SQLite snapshot.
 - [`docs/reports.md`](docs/reports.md) — CSV reports for auditing and scoping the migration (users, project details, custom field usage, team report, team memberships).
 - [`docs/jira-integration.md`](docs/jira-integration.md) — Atlassian/Jira integration: user mapping, external-ID search, Jira CSV/issue creation, key import, project associations, and attachment sync.
