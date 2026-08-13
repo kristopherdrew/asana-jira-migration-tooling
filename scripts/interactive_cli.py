@@ -1786,6 +1786,135 @@ def run_initial_metadata(log_level: str) -> None:
             raise
 
 
+def run_guided_asana_refresh(log_level: str) -> None:
+    """Run the Asana refresh layers in dependency order, with manual scope prompts."""
+    print("\nGuided Asana refresh: metadata -> tasks -> task-derived data")
+    run_initial_metadata(log_level)
+    run_task_sync_flow(log_level)
+    if confirm("Sync task extras (comments and attachment metadata) now?", default=True):
+        run_script(get_task_extras.main, args_get_task_extras(log_level))
+    if confirm("Sync project status updates now?", default=True):
+        run_script(
+            get_project_status_updates.main,
+            args_get_project_status_updates(log_level),
+        )
+    if confirm("Sync portfolios now?", default=False):
+        run_script(get_portfolios.main, args_portfolios(log_level))
+    if confirm("Sync personal tasks now?", default=False):
+        run_script(
+            get_personal_tasks.main,
+            args_personal_tasks(log_level, delta=False),
+        )
+
+
+def run_guided_migration_review(log_level: str) -> None:
+    """Refresh decisions when requested, then generate the primary review workbook."""
+    print("\nGuided migration review")
+    if confirm("Pull the latest 'Asana Migration Decision' values from Jira?", default=False):
+        run_script(
+            get_jira_migration_decisions.main,
+            args_get_jira_migration_decisions(log_level),
+        )
+    build_reports_menu(log_level)["2"].handler()
+    if confirm("Also export the project last-updated report?", default=True):
+        build_reports_menu(log_level)["a"].handler()
+
+
+def run_guided_project_migration(log_level: str) -> None:
+    """Guide one migration wave while keeping CSV and direct-API paths distinct."""
+    print("\nGuided project migration")
+    print("[1] CSV import path (export -> Jira import -> bring keys back)")
+    print("[2] Direct API path (creates Team/Project hierarchy and stores mappings)")
+    choice = prompt("Migration path", default="1")
+    if choice == "1":
+        if confirm("Refresh the Atlassian user map before exporting?", default=True):
+            run_script(
+                update_atlassian_user_map.main,
+                args_update_user_map(log_level),
+            )
+        if confirm("Import or update Jira project associations?", default=False):
+            run_script(
+                import_jira_project_map.main,
+                args_import_jira_project_map(log_level),
+            )
+        run_export_project_to_jira(log_level)
+        print("\nImport the generated CSV through Jira's external-import wizard.")
+        if confirm("Is the Jira import complete and a Jira export available now?", default=False):
+            run_script(
+                import_jira_task_keys.main,
+                args_import_jira_keys(log_level),
+            )
+    elif choice == "2":
+        if confirm("Refresh the Atlassian user map before creating issues?", default=True):
+            run_script(
+                update_atlassian_user_map.main,
+                args_update_user_map(log_level),
+            )
+        run_script(
+            create_team_project_jira_issues.main,
+            args_create_team_project_jira_issues(log_level),
+        )
+    else:
+        print("Invalid migration path; no migration commands were run.")
+        return
+
+    if confirm("Upload a previously downloaded attachment archive now?", default=False):
+        run_script(
+            upload_jira_attachments.main,
+            args_upload_attachment_archive(log_level),
+        )
+
+
+def _readiness_table_summary(connection: sqlite3.Connection, table: str) -> tuple[int, str]:
+    """Return row count and latest sync for a table, tolerating older databases."""
+    exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ?",
+        (table,),
+    ).fetchone()
+    if not exists:
+        return 0, ""
+    count = connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
+    columns = {
+        row[1] for row in connection.execute(f'PRAGMA table_info("{table}")').fetchall()
+    }
+    latest = ""
+    if "synced_at" in columns:
+        latest = connection.execute(
+            f'SELECT COALESCE(MAX(synced_at), "") FROM "{table}"'
+        ).fetchone()[0]
+    return count, latest
+
+
+def show_migration_readiness() -> None:
+    """Display advisory workspace-level readiness from the active SQLite snapshot."""
+    db_path = active_db_path()
+    print(f"\n=== Migration Readiness ===\nDatabase: {db_path}")
+    if not db_path.exists():
+        print("[ ] Database has not been created for this client.")
+        return
+
+    checks = [
+        ("Asana projects", "projects"),
+        ("Asana tasks", "tasks"),
+        ("Atlassian user mappings", "user_atlassian_accounts"),
+        ("Team/project Jira mappings", "team_project_jira_mappings"),
+        ("Project migration decisions", "project_jira_decisions"),
+        ("Task Jira mappings", "task_jira_mappings"),
+        ("Attachment archives", "attachment_archives"),
+        ("Jira attachment uploads", "attachment_jira_uploads"),
+    ]
+    connection = sqlite3.connect(str(db_path))
+    try:
+        for label, table in checks:
+            count, latest = _readiness_table_summary(connection, table)
+            marker = "x" if count else " "
+            suffix = f", latest {latest}" if latest else ""
+            print(f"[{marker}] {label}: {count:,}{suffix}")
+    finally:
+        connection.close()
+    print("\nStatus is advisory; select a report or operation for project-level scope.")
+
+
 def build_init_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Run initial metadata (teams + memberships, users, service user Asana team access, projects, custom fields)", lambda: run_initial_metadata(log_level)),
@@ -1874,6 +2003,140 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
     }
 
 
+def build_client_environment_menu(
+    reference_path: Path = PROJECT_ROOT,
+) -> Dict[str, MenuItem]:
+    return {
+        "1": MenuItem("1", "Switch active client profile", lambda: switch_profile(reference_path)),
+        "2": MenuItem("2", "Create a new client profile", lambda: bootstrap_credentials(reference_path)),
+        "3": MenuItem("3", "Toggle Jira environment (Sandbox <-> Production)", toggle_environment),
+        "4": MenuItem("4", "View or update credentials", lambda: manage_credentials(reference_path)),
+        "5": MenuItem("5", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(reference_path)),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
+def build_discover_refresh_menu(log_level: str) -> Dict[str, MenuItem]:
+    return {
+        "1": MenuItem("1", "Guided full Asana refresh", lambda: run_guided_asana_refresh(log_level)),
+        "2": MenuItem("2", "Refresh workspace metadata", lambda: run_initial_metadata(log_level)),
+        "3": MenuItem("3", "Sync project tasks", lambda: run_task_sync_flow(log_level)),
+        "4": MenuItem("4", "Sync task comments and attachment metadata", lambda: run_script(get_task_extras.main, args_get_task_extras(log_level))),
+        "5": MenuItem("5", "Sync project status updates", lambda: run_script(get_project_status_updates.main, args_get_project_status_updates(log_level))),
+        "6": MenuItem("6", "Sync portfolios", lambda: run_script(get_portfolios.main, args_portfolios(log_level))),
+        "7": MenuItem("7", "Sync personal tasks", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
+        "8": MenuItem("8", "Run incremental Asana refresh", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
+def build_assess_plan_menu(log_level: str) -> Dict[str, MenuItem]:
+    reports = build_reports_menu(log_level)
+    def report_item(key: str, report_key: str) -> MenuItem:
+        item = reports[report_key]
+        return MenuItem(key, item.label, item.handler)
+
+    return {
+        "1": MenuItem("1", "Guided migration readiness review", lambda: run_guided_migration_review(log_level)),
+        "2": report_item("2", "1"),
+        "3": report_item("3", "2"),
+        "4": report_item("4", "3"),
+        "5": report_item("5", "a"),
+        "6": report_item("6", "9"),
+        "7": report_item("7", "4"),
+        "8": report_item("8", "5"),
+        "9": report_item("9", "6"),
+        "10": report_item("10", "7"),
+        "11": report_item("11", "8"),
+        "12": MenuItem("12", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
+def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
+    def run_team_project_export() -> None:
+        args = args_report_defaults(log_level)
+        if confirm("Include projects with 0 tasks?", default=False):
+            args.append("--include-empty-projects")
+        run_script(export_team_project_jira_csv.main, args)
+
+    return {
+        "1": MenuItem("1", "Update Atlassian user mappings", lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level))),
+        "2": MenuItem("2", "Export Team -> Epic / Project -> Task CSV", run_team_project_export),
+        "3": MenuItem("3", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
+        "4": MenuItem("4", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
+        "5": MenuItem("5", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
+def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
+    return {
+        "1": MenuItem("1", "Guided project migration", lambda: run_guided_project_migration(log_level)),
+        "2": MenuItem("2", "Export active project tasks for Jira CSV import", lambda: run_export_project_to_jira(log_level)),
+        "3": MenuItem("3", "Export archival project tasks for Jira CSV import", lambda: run_script(export_archival_project_jira_csv.main, args_export_archival_project(log_level))),
+        "4": MenuItem("4", "Import Jira task keys after CSV import", lambda: run_script(import_jira_task_keys.main, args_import_jira_keys(log_level))),
+        "5": MenuItem("5", "Recover Jira task keys from External IDs", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
+        "6": MenuItem("6", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
+        "7": MenuItem("7", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
+        "8": MenuItem("8", "Sync Jira attachments immediately (legacy path)", lambda: run_sync_attachments(log_level)),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
+def build_maintain_validate_menu(log_level: str) -> Dict[str, MenuItem]:
+    return {
+        "1": MenuItem("1", "Show migration readiness summary", show_migration_readiness),
+        "2": MenuItem("2", "Run incremental Asana refresh", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
+        "3": MenuItem("3", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
+        "4": MenuItem("4", "Recover or reconcile Jira task keys by External ID", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
+        "5": MenuItem("5", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "6": MenuItem("6", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
+def build_advanced_recovery_menu(log_level: str) -> Dict[str, MenuItem]:
+    def run_recovery_action(label: str, action: Callable[[], None]) -> None:
+        client = _session.profile_label if _session else "current client"
+        environment = _session.environment_label if _session else "current environment"
+        if confirm(
+            f"{label} for {client} ({environment})? This changes saved migration state",
+            default=False,
+        ):
+            action()
+
+    def reset_direct_api_mappings() -> None:
+        args = args_create_team_project_jira_issues(log_level)
+        args.append("--reset")
+        run_script(create_team_project_jira_issues.main, args)
+
+    return {
+        "1": MenuItem("1", "Clear Jira task-key mappings", lambda: run_recovery_action("Clear Jira task-key mappings", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level)))),
+        "2": MenuItem("2", "Clear Jira project associations", lambda: run_recovery_action("Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, build_common_args(log_level) + ["--clear-jira-project-map"]))),
+        "3": MenuItem("3", "Clear export-ID history", lambda: run_recovery_action("Clear export-ID history", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level)))),
+        "4": MenuItem("4", "Reset direct-API Team/Project mappings", lambda: run_recovery_action("Reset direct-API Team/Project mappings", reset_direct_api_mappings)),
+        "5": MenuItem("5", "Legacy Initialization menu", lambda: run_group("Legacy Initialization", build_init_menu(log_level))),
+        "6": MenuItem("6", "Legacy Tasks menu", lambda: run_group("Legacy Tasks", build_tasks_menu(log_level))),
+        "7": MenuItem("7", "Legacy Atlassian menu", lambda: run_group("Legacy Atlassian", build_atlassian_menu(log_level))),
+        "8": MenuItem("8", "Legacy Reports menu", lambda: run_group("Legacy Reports", build_reports_menu(log_level))),
+        "b": MenuItem("b", "Back", lambda: None),
+    }
+
+
+def build_top_menu(log_level: str) -> Dict[str, MenuItem]:
+    return {
+        "1": MenuItem("1", "Client & Environment", lambda: run_group("Client & Environment", build_client_environment_menu(PROJECT_ROOT))),
+        "2": MenuItem("2", "Discover & Refresh Asana", lambda: run_group("Discover & Refresh Asana", build_discover_refresh_menu(log_level))),
+        "3": MenuItem("3", "Assess & Plan Migration", lambda: run_group("Assess & Plan Migration", build_assess_plan_menu(log_level))),
+        "4": MenuItem("4", "Prepare Jira", lambda: run_group("Prepare Jira", build_prepare_jira_menu(log_level))),
+        "5": MenuItem("5", "Migrate Projects", lambda: run_group("Migrate Projects", build_migrate_projects_menu(log_level))),
+        "6": MenuItem("6", "Maintain & Validate", lambda: run_group("Maintain & Validate", build_maintain_validate_menu(log_level))),
+        "7": MenuItem("7", "Advanced & Recovery", lambda: run_group("Advanced & Recovery", build_advanced_recovery_menu(log_level))),
+        "q": MenuItem("q", "Quit", lambda: sys.exit(0)),
+    }
+
+
 def _menu_sort_key(k: str) -> tuple:
     """Order menu keys: numeric first (numerically), then other letters, then Back, then Quit.
 
@@ -1912,19 +2175,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         # Existing profile (ensure didn't bootstrap, which sets the session itself).
         _set_session(PROJECT_ROOT, env_path, use_prod=False)
         offer_legacy_db_adoption()
-    top_menu = {
-        "1": MenuItem("1", "Initialization (metadata only)", lambda: run_group("Initialization", build_init_menu(args.log_level))),
-        "2": MenuItem("2", "Tasks (full/extras/incremental)", lambda: run_group("Tasks", build_tasks_menu(args.log_level))),
-        "3": MenuItem("3", "Atlassian (exports, mappings, attachments)", lambda: run_group("Atlassian", build_atlassian_menu(args.log_level))),
-        "4": MenuItem("4", "Reports (projects, users, memberships, team summary, portfolios)", lambda: run_group("Reports", build_reports_menu(args.log_level))),
-        "5": MenuItem("5", "Credentials (create or change env file)", lambda: run_group("Credentials", build_credentials_menu())),
-        "6": MenuItem("6", "Profile & Environment (switch profile, toggle Sandbox/Production)", lambda: run_group("Profile & Environment", build_profile_env_menu(PROJECT_ROOT))),
-        "q": MenuItem("q", "Quit", lambda: sys.exit(0)),
-    }
+    top_menu = build_top_menu(args.log_level)
 
     while True:
         print_session_header()
-        print_menu("Asana Toolkit Interactive CLI", top_menu)
+        print_menu("Asana -> Jira Migration Toolkit", top_menu)
         choice = input("Select a category: ").strip()
         if choice not in top_menu:
             print("Invalid choice. Please try again.")
