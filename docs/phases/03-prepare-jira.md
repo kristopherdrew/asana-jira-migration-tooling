@@ -24,7 +24,8 @@ field set used by the direct-API hierarchy flow.
 ### Update Atlassian user mappings
 
 Runs `scripts.atlassian.update_atlassian_user_map`. It maps Asana users to Atlassian
-account IDs so Jira assignee and owner fields can be populated correctly.
+account IDs so Jira assignee and owner fields can be populated correctly. The guided
+CLI asks for a raw Atlassian user export and matches its users to Asana users by email.
 
 ### Import Jira project associations
 

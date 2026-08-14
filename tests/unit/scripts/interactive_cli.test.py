@@ -235,9 +235,19 @@ class IncrementalArgsBuilderTest(TestCase):
             ):
                 user_args = interactive_cli.args_update_user_map("INFO")
                 project_args = interactive_cli.args_import_jira_project_map("INFO")
-        expected = ["--log-level", "INFO", "--csv", str(csv_path.resolve())]
-        self.assertEqual(user_args, expected)
-        self.assertEqual(project_args, expected)
+        self.assertEqual(
+            user_args,
+            [
+                "--log-level",
+                "INFO",
+                "--atlassian-export",
+                str(csv_path.resolve()),
+            ],
+        )
+        self.assertEqual(
+            project_args,
+            ["--log-level", "INFO", "--csv", str(csv_path.resolve())],
+        )
 
     def test_attachment_sync_accepts_project_gids_file(self) -> None:
         with patch(
