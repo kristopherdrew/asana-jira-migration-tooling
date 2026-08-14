@@ -48,6 +48,7 @@ from scripts import (  # noqa: E402
     export_field_section_review_report,
     export_project_members_report,
     export_project_last_updated_report,
+    export_jira_migration_validation,
     export_all_reports_xlsx,
 )
 from scripts.atlassian import (  # noqa: E402
@@ -158,23 +159,40 @@ class CliExit(Exception):
     """Signal a user-requested graceful exit from any interactive prompt."""
 
 
-def _with_exit_hint(text: str) -> str:
-    """Make the global quit action visible without duplicating existing hints."""
-    if "q to quit" in text.lower() or "'q' to quit" in text.lower():
+class CliBack(Exception):
+    """Signal a user-requested return to the previous interactive menu."""
+
+
+_menu_depth = 0
+
+
+def _with_navigation_hint(text: str) -> str:
+    """Make the available global navigation actions visible on every prompt."""
+    lowered = text.lower()
+    actions = []
+    if _menu_depth > 0 and "b to go back" not in lowered and "'b' to go back" not in lowered:
+        actions.append("b to go back")
+    if "q to quit" not in lowered and "'q' to quit" not in lowered:
+        actions.append("q to quit")
+    if not actions:
         return text
+    hint = ", ".join(actions)
     if text.endswith(": "):
-        return f"{text[:-2]} (q to quit): "
-    return f"{text} (q to quit)"
+        return f"{text[:-2]} ({hint}): "
+    return f"{text} ({hint})"
 
 
 def input(text: str) -> str:
-    """Read a prompt, treating ``q``, Ctrl-C, and Ctrl-D as global exits."""
+    """Read a prompt, treating navigation keys and interrupts consistently."""
     try:
-        value = builtins.input(_with_exit_hint(text))
+        value = builtins.input(_with_navigation_hint(text))
     except (EOFError, KeyboardInterrupt) as exc:
         raise CliExit from exc
-    if value.strip().lower() == "q":
+    navigation = value.strip().lower()
+    if navigation == "q":
         raise CliExit
+    if navigation == "b" and _menu_depth > 0:
+        raise CliBack
     return value
 
 
@@ -596,8 +614,8 @@ def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
             if kind == "secret" and values[field]:
                 display = f"******** (set, {secret_backend})"
             print(f"  [{index}] {env_name} = {display}")
-        choice = input("Select a number to update, 's' to save, 'c' to cancel, or 'q' to quit: ").strip().lower()
-        if choice == "c":
+        choice = input("Select a number to update, 's' to save, or 'b' to go back: ").strip().lower()
+        if choice in {"b", "c"}:
             print("No changes saved.")
             return env_path
         if choice == "s":
@@ -606,7 +624,7 @@ def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
                 return env_path
             candidate = Credentials(**values)
             if not report_credential_checks(candidate):
-                print("Not saved. Fix the flagged values and try again, or 'c' to cancel.")
+                print("Not saved. Fix the flagged values and try again, or 'b' to go back.")
                 continue
             write_credentials_file(env_path, candidate)
             print(f"Updated credentials saved to {env_path}.")
@@ -616,7 +634,7 @@ def edit_existing_credentials(env_path: Path, current: Credentials) -> Path:
             _edit_credential_field(field, env_name, kind, values)
             dirty = True
         else:
-            print("Invalid choice. Enter a number, 's', or 'q'.")
+            print("Invalid choice. Enter a number, 's', 'b', or 'q'.")
 
 
 def manage_credentials(reference_path: Path = PROJECT_ROOT) -> Path:
@@ -842,7 +860,7 @@ def select_jira_site(*, make_default: bool = False) -> None:
             markers.append("default")
         suffix = f" ({', '.join(markers)})" if markers else ""
         print(f"  [{index}] {site.name} — {site.base_url}{suffix}")
-    choice = prompt("Pick a number (Enter to cancel)", default="")
+    choice = prompt("Pick a number (Enter to go back)", default="")
     if not choice:
         return
     if not (choice.isdigit() and 1 <= int(choice) <= len(_session.jira_sites)):
@@ -901,7 +919,7 @@ def switch_profile(reference_path: Path = PROJECT_ROOT) -> None:
         marker = " (active)" if path == active else ""
         label = name or path.name
         print(f"  [{index}] {label} — {path}{marker}")
-    choice = prompt("Pick a number (Enter to cancel)", default="")
+    choice = prompt("Pick a number (Enter to go back)", default="")
     if not choice:
         print("No profile selected.")
         return
@@ -948,9 +966,12 @@ def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[
     original_input = builtins.input
 
     def session_input(text: str = "") -> str:
-        value = original_input(_with_exit_hint(text))
-        if value.strip().lower() == "q":
+        value = original_input(_with_navigation_hint(text))
+        navigation = value.strip().lower()
+        if navigation == "q":
             raise CliExit
+        if navigation == "b" and _menu_depth > 0:
+            raise CliBack
         return value
 
     builtins.input = session_input
@@ -1637,6 +1658,45 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             args.extend(["--team-gid", team_gid])
         run_script(export_project_last_updated_report.main, args)
 
+    def run_jira_migration_validation() -> None:
+        args = args_report_defaults(log_level)
+        append_jira_env_flag(args)
+        print("\nSelect Jira migration validation scope:")
+        print("[1] Team lookup")
+        print("[2] Migration wave project GID file")
+        print("[3] Paste project GIDs")
+        print("[4] Task GID file")
+        print("[5] Paste task GIDs")
+        print("[6] All associated projects")
+        scope = input("Choice (default 1): ").strip() or "1"
+        if scope == "1":
+            team_gid = _prompt_team_gid_from_lookup(
+                "Jira migration validation", "Team GID to validate"
+            )
+            if not team_gid:
+                raise SystemExit("Team GID is required.")
+            args.extend(["--team-gid", team_gid])
+        elif scope == "2":
+            args.extend(
+                ["--project-gids-file", _prompt_project_gids_file("Jira migration validation")]
+            )
+        elif scope == "3":
+            project_gids = prompt_required("Project GIDs (comma-separated)")
+            args.extend(["--project-gids", project_gids])
+        elif scope == "4":
+            args.extend(["--task-gids-file", _prompt_task_gids_file("Jira migration validation")])
+        elif scope == "5":
+            task_gids = prompt_required("Task GIDs (comma-separated)")
+            args.extend(["--task-gids", task_gids])
+        elif scope != "6":
+            raise SystemExit("Invalid validation scope.")
+        run_script(export_jira_migration_validation.main, args)
+        if confirm("Export every missing task for focused reimport?", default=True):
+            run_script(
+                export_jira_migration_validation.main,
+                args + ["--export-missing", "--export-only"],
+            )
+
     return {
         "1": MenuItem(
             "1",
@@ -1687,6 +1747,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "a",
             "Export project last-updated report",
             run_project_last_updated_report,
+        ),
+        "c": MenuItem(
+            "c",
+            "Validate Jira task migration coverage",
+            run_jira_migration_validation,
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
@@ -1893,23 +1958,30 @@ def args_get_jira_migration_decisions(log_level: str) -> List[str]:
 
 
 def run_group(title: str, menu: Dict[str, MenuItem]) -> None:
-    while True:
-        print_menu(title, menu)
-        choice = input("Select an option: ").strip()
-        if choice not in menu:
-            print("Invalid choice. Please try again.")
-            continue
-        if choice == "b":
-            return
-        item = menu[choice]
-        try:
-            item.handler()
-        except CliExit:
-            raise
-        except Exception as exc:  # pragma: no cover - defensive
-            logging.exception("Step failed: %s", exc)
-        else:
-            logging.info("Step '%s' completed.", item.label)
+    global _menu_depth
+    _menu_depth += 1
+    try:
+        while True:
+            print_menu(title, menu)
+            try:
+                choice = input("Select an option: ").strip()
+                if choice not in menu:
+                    print("Invalid choice. Please try again.")
+                    continue
+                if choice == "b":
+                    return
+                item = menu[choice]
+                item.handler()
+            except CliBack:
+                return
+            except CliExit:
+                raise
+            except Exception as exc:  # pragma: no cover - defensive
+                logging.exception("Step failed: %s", exc)
+            else:
+                logging.info("Step '%s' completed.", item.label)
+    finally:
+        _menu_depth -= 1
 
 
 # ---------------------- Menu handlers ---------------------- #
@@ -2240,8 +2312,9 @@ def build_maintain_validate_menu(log_level: str) -> Dict[str, MenuItem]:
         "2": MenuItem("2", "Run incremental Asana refresh", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
         "3": MenuItem("3", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
         "4": MenuItem("4", "Recover or reconcile Jira task keys by External ID", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
-        "5": MenuItem("5", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
-        "6": MenuItem("6", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
+        "5": MenuItem("5", "Validate Jira task migration coverage", build_reports_menu(log_level)["c"].handler),
+        "6": MenuItem("6", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "7": MenuItem("7", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -2308,6 +2381,8 @@ def print_menu(title: str, menu: Dict[str, MenuItem]) -> None:
     for key in sorted(menu, key=_menu_sort_key):
         item = menu[key]
         print(f"[{item.key}] {item.label}")
+    if "b" in menu and "q" not in menu:
+        print("[q] Quit")
 
 
 def parse_cli_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
