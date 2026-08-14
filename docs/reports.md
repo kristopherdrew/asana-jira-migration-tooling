@@ -7,7 +7,7 @@ All report date columns export as `YYYY-MM-DD` with zero-padded month and day va
 ← Back to [README](../README.md)
 
 ### Combined Reports Workbook (.xlsx)
-Runs every report below **except** the Team→Project Jira CSV and combines them into a single multi-tab `.xlsx` workbook — handy for handing the whole migration inventory to stakeholders in one file. Tabs: an `Overview` index (generation time, source DB, per-tab row counts) followed by `Projects`, `Users`, `Team Memberships`, `Teams`, `Custom Field Usage`, `Portfolios`, and `Portfolio Items`. Each report is run into a temporary directory (reusing its own `main()`), so the data matches the standalone CSVs exactly. Headers are bold and frozen; numeric columns are typed as numbers, while long identifiers (Asana GIDs) are kept as text to avoid Excel's 15-digit precision loss. The reports run unfiltered (all teams).
+Runs every non-Jira inventory report below and combines them into a single multi-tab `.xlsx` workbook — handy for handing the whole migration inventory to stakeholders in one file. Jira migration/export validation reports are intentionally separate. Tabs: an `Overview` index (generation time, source DB, per-tab row counts) followed by `Projects`, `Users`, `Team Memberships`, `Teams`, `Custom Field Usage`, `Portfolios`, and `Portfolio Items`. Each report is run into a temporary directory (reusing its own `main()`), so the data matches the standalone CSVs exactly. Headers are bold and frozen; numeric columns are typed as numbers, while long identifiers (Asana GIDs) are kept as text to avoid Excel's 15-digit precision loss. The reports run unfiltered (all teams).
 
 The workbook is written by the dependency-free `src/lib/xlsx_writer.py` (which hand-writes OOXML via `zipfile`), so this report — like every other script here — needs only the Python standard library and runs anywhere Python does.
 ```bash
@@ -190,3 +190,38 @@ Optional flags:
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 In the interactive Reports menu, this export can also search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
+### Jira Task Migration Validation
+
+Validates the distinct Asana tasks belonging to projects in the selected site's Asana
+Project → Jira Space associations. It compares those task GIDs to `task_jira_mappings` and
+prints the associated task total, valid Jira-key count, missing count, and migration coverage
+percentage. Shared tasks are counted once. The command makes no Jira API calls; run the Jira
+key recovery command first so the database reflects current External IDs.
+
+```bash
+python3 -m scripts.export_jira_migration_validation --jira-site production_jira
+python3 -m scripts.export_jira_migration_validation --jira-site production_jira --export-missing
+python3 -m scripts.export_jira_migration_validation \
+  --jira-site production_jira \
+  --project-gids-file inputs/wave-07-project-gids.txt \
+  --export-missing
+```
+
+When `--export-missing` is supplied, the command writes a detailed CSV containing
+`task_gid`, task name, completion state, and associated project IDs/names. It also writes a
+`<stem>_task_gids.txt` companion that can be passed directly to:
+
+```bash
+python3 -m scripts.export_project_to_jira_csv --task-gids-file exports/jira_missing_tasks_<timestamp>_task_gids.txt
+```
+
+Optional flags:
+- `--jira-site <key>` selects the Jira site; it is inferred when associations exist for exactly one site.
+- `--team-gid <gid>` validates distinct tasks in that team's Jira-associated projects.
+- `--project-gids <gid1,gid2>` or `--project-gids-file <path>` limits validation to the exact projects in one migration wave. Every requested project must exist locally and have a Jira Space association for the selected site; omit both for cumulative validation of every associated project.
+- `--task-gids <gid1,gid2>` or `--task-gids-file <path>` validates an exact task set. Every requested task must exist locally and belong to at least one project associated with the selected Jira site.
+- `--export-missing` writes the missing-task CSV and focused-reimport GID list.
+- `--database <path>`, `--output-dir <path>`, `--filename <name>`, and `--log-level <LEVEL>` use the standard report conventions.
+
+The Interactive CLI offers fuzzy team lookup, project GIDs pasted or loaded from a file,
+task GIDs pasted or loaded from a file, and cumulative all-associated-project validation.

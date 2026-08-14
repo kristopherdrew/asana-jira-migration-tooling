@@ -1055,6 +1055,33 @@ class MenuSortingTest(TestCase):
                 interactive_cli.prompt("Any value")
         self.assertIn("q to quit", mock_input.call_args.args[0])
 
+    def test_b_goes_back_from_any_prompt_inside_a_command_group(self) -> None:
+        original_depth = interactive_cli._menu_depth
+        interactive_cli._menu_depth = 1
+        try:
+            with patch("builtins.input", return_value=" B ") as mock_input:
+                with self.assertRaises(interactive_cli.CliBack):
+                    interactive_cli.prompt("Any value")
+            rendered_prompt = mock_input.call_args.args[0]
+            self.assertIn("b to go back", rendered_prompt)
+            self.assertIn("q to quit", rendered_prompt)
+        finally:
+            interactive_cli._menu_depth = original_depth
+
+    def test_b_from_nested_script_returns_to_command_group(self) -> None:
+        def prompting_script(_argv) -> None:
+            input("Nested script prompt: ")
+
+        menu = {
+            "1": interactive_cli.MenuItem(
+                "1", "Prompting command", lambda: interactive_cli.run_script(prompting_script, [])
+            ),
+            "b": interactive_cli.MenuItem("b", "Back", lambda: None),
+        }
+        with patch("builtins.input", side_effect=["1", "b"]), redirect_stdout(io.StringIO()):
+            interactive_cli.run_group("Test", menu)
+        self.assertEqual(interactive_cli._menu_depth, 0)
+
     def test_terminal_interrupts_exit_from_any_prompt(self) -> None:
         for interruption in (KeyboardInterrupt(), EOFError()):
             with self.subTest(interruption=type(interruption).__name__), patch(
@@ -1126,6 +1153,17 @@ class MenuSortingTest(TestCase):
             lines,
             ["[1] One", "[9] Nine", "[a] Letter A", "[b] Back", "[q] Quit"],
         )
+
+    def test_print_menu_adds_quit_to_submenu(self) -> None:
+        menu = {
+            "1": interactive_cli.MenuItem("1", "One", lambda: None),
+            "b": interactive_cli.MenuItem("b", "Back", lambda: None),
+        }
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            interactive_cli.print_menu("Submenu", menu)
+        self.assertIn("[b] Back", buffer.getvalue())
+        self.assertIn("[q] Quit", buffer.getvalue())
 
 
 class LifecycleMenuTest(TestCase):
