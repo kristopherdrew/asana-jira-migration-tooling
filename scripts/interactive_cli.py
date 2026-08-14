@@ -1757,9 +1757,9 @@ def args_update_user_map(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     csv_path = _prompt_csv_file(
         "Atlassian user-map update",
-        "Atlassian user-map CSV",
+        "Raw Atlassian user export CSV",
     )
-    args.extend(["--csv", csv_path])
+    args.extend(["--atlassian-export", csv_path])
     return args
 
 
@@ -2102,7 +2102,7 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
         "4": MenuItem("4", "Clear Jira task keys", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level))),
         "5": MenuItem(
             "5",
-            "Update Atlassian user map (template: Sample Data/atlassian_user_map_template.csv)",
+            "Update Atlassian user map from Atlassian export",
             lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level)),
         ),
         "6": MenuItem("6", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
