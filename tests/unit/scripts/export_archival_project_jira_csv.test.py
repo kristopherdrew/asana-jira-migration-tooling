@@ -9,11 +9,14 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from src.lib.database import Database
+from src.lib.jira_csv_partition import CsvPart
 from scripts.atlassian.export_archival_project_jira_csv import (
     ARCHIVAL_FIELDS_HEADING,
     build_archival_description,
+    build_default_filename,
     export_archival_project,
     main,
+    verify_csv_part_counts,
 )
 from src.lib.task_scope import parse_task_gids, resolve_task_projects
 
@@ -298,6 +301,82 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertTrue((output_dir / "link_modifications").is_dir())
         self.assertTrue((output_dir / "section_counts").is_dir())
         self.assertTrue((output_dir / "user_associations").is_dir())
+
+    def test_main_keeps_duplicate_project_names_in_separate_exports(self) -> None:
+        self.connection.execute(
+            "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
+            ("proj_2", "Archive Me", self.sync_time.isoformat()),
+        )
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_3",
+                "name": "Second Project Task",
+                "resource_type": "task",
+                "resource_subtype": "default_task",
+                "created_at": "2025-02-27T12:45:00Z",
+                "modified_at": "2025-03-06T16:00:00Z",
+                "completed": False,
+                "memberships": [
+                    {"project": {"gid": "proj_2", "name": "Archive Me"}}
+                ],
+            },
+            self.sync_time,
+        )
+        self.connection.commit()
+        output_dir = self.workspace / "duplicate-names"
+
+        with patch(
+            "scripts.atlassian.export_archival_project_jira_csv.load_credentials"
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ):
+            main(
+                [
+                    "--project-gids",
+                    "proj_1,proj_2",
+                    "--database",
+                    str(self.db_path),
+                    "--output-dir",
+                    str(output_dir),
+                ]
+            )
+
+        project_files = sorted(
+            path
+            for path in (output_dir / "tasks").glob("Archive_Me-*-*_archival_tasks.csv")
+            if not path.name.startswith("_Consolidated-")
+        )
+        self.assertEqual(len(project_files), 2)
+        self.assertTrue(any("-proj_1-" in path.name for path in project_files))
+        self.assertTrue(any("-proj_2-" in path.name for path in project_files))
+        consolidated = next((output_dir / "tasks").glob("_Consolidated-*.csv"))
+        with consolidated.open("r", newline="", encoding="utf-8") as handle:
+            ids = {row["External issue ID"] for row in csv.DictReader(handle)}
+        self.assertEqual(
+            ids,
+            {
+                "proj_1::archival::epic",
+                "task_1",
+                "task_2",
+                "proj_2::archival::epic",
+                "task_3",
+            },
+        )
+
+    def test_default_filename_includes_project_gid(self) -> None:
+        first = build_default_filename("Archive Me", "proj_1")
+        second = build_default_filename("Archive Me", "proj_2")
+        self.assertIn("Archive_Me-proj_1-", first)
+        self.assertIn("Archive_Me-proj_2-", second)
+        self.assertNotEqual(first, second)
+
+    def test_count_check_rejects_replaced_project_csv(self) -> None:
+        path = self.workspace / "replaced.csv"
+        path.write_text("task_gid\nonly-row\n", encoding="utf-8")
+        with self.assertRaisesRegex(SystemExit, "expected 2 issues, found 1"):
+            verify_csv_part_counts([CsvPart(path, 2)], "Per-project")
 
     def test_main_groups_default_output_by_export_id(self) -> None:
         grouped_dir = self.workspace / "exports" / "export-01-archive-wave"
