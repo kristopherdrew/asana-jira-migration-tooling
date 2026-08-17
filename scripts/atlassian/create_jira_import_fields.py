@@ -71,6 +71,11 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     for result in results:
         field_id = f" ({result['id']})" if result["id"] else ""
         logger.info("%-8s %s%s", result["status"].upper(), result["name"], field_id)
+        if result.get("duplicates"):
+            logger.warning(
+                "         %s same-name fields already exist; no additional field was created.",
+                result["duplicates"],
+            )
         if result.get("options"):
             logger.info("         Added options: %s", result["options"])
     logger.info(

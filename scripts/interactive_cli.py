@@ -60,6 +60,7 @@ from scripts.atlassian import (  # noqa: E402
     export_archival_project_jira_csv,
     export_project_to_jira_csv,
     export_team_project_jira_csv,
+    generate_jira_csv_import_config,
     get_jira_migration_decisions,
     search_jira_external_ids,
     sync_jira_attachments,
@@ -1508,10 +1509,14 @@ def args_export_archival_project(log_level: str) -> List[str]:
     workspace_gid = prompt("Workspace GID for Asana project links (optional; inferred by default)", default="")
     if workspace_gid:
         args.extend(["--workspace-gid", workspace_gid])
-    if confirm("Generate Jira CSV importer configuration files?", default=False):
-        args.append("--generate-jira-config")
-        if confirm("Reconfigure all saved Archive importer mappings?", default=False):
-            args.append("--configure-jira-import")
+    return args
+
+
+def args_generate_jira_csv_import_config(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    append_jira_env_flag(args)
+    if confirm("Review every saved Jira CSV mapping?", default=False):
+        args.append("--configure")
     return args
 
 
@@ -2225,6 +2230,14 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
                 args_upload_attachment_archive(log_level),
             ),
         ),
+        "17": MenuItem(
+            "17",
+            "Generate Jira CSV importer configuration",
+            lambda: run_script(
+                generate_jira_csv_import_config.main,
+                args_generate_jira_csv_import_config(log_level),
+            ),
+        ),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -2288,6 +2301,7 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
         "4": MenuItem("4", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
         "5": MenuItem("5", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
         "6": MenuItem("6", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "7": MenuItem("7", "Generate Jira CSV importer configuration", lambda: run_script(generate_jira_csv_import_config.main, args_generate_jira_csv_import_config(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

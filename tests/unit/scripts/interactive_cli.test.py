@@ -305,14 +305,13 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIn("--task-gids", args)
         self.assertIn("task_1,task_2", args)
 
-    def test_archival_export_can_request_importer_configuration(self) -> None:
+    def test_jira_csv_importer_configuration_is_standalone(self) -> None:
         with patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1", "", "", "", "y", "n"],
+            side_effect=["y"],
         ):
-            args = interactive_cli.args_export_archival_project("INFO")
-        self.assertIn("--generate-jira-config", args)
-        self.assertNotIn("--configure-jira-import", args)
+            args = interactive_cli.args_generate_jira_csv_import_config("INFO")
+        self.assertIn("--configure", args)
 
     def test_regular_export_accepts_inline_task_gids(self) -> None:
         with patch(

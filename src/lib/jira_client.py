@@ -138,6 +138,27 @@ class JiraClient:
         values = data.get("values", []) if isinstance(data, dict) else []
         return [field for field in values if isinstance(field, dict)]
 
+    def get_custom_fields(self) -> List[Dict[str, object]]:
+        """Return Jira's complete paginated custom-field administration catalog."""
+        fields: List[Dict[str, object]] = []
+        start_at = 0
+        while True:
+            path = (
+                "/rest/api/3/field/search?type=custom&orderBy=name"
+                f"&startAt={start_at}&maxResults=100"
+            )
+            data = self._request_json("GET", path)
+            values = data.get("values", []) if isinstance(data, dict) else []
+            page = [field for field in values if isinstance(field, dict)]
+            fields.extend(page)
+            if data.get("isLast") is True or not page:
+                break
+            total = data.get("total")
+            start_at += len(page)
+            if isinstance(total, int) and start_at >= total:
+                break
+        return fields
+
     def create_custom_field(self, payload: Dict[str, object]) -> Dict[str, object]:
         """Create a site-wide Jira custom field via ``POST /rest/api/3/field``."""
         return self._request_json("POST", "/rest/api/3/field", payload=payload)

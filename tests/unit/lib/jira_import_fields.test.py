@@ -15,7 +15,7 @@ class FakeClient:
         self.created = []
         self.created_options = []
 
-    def get_fields(self):
+    def get_custom_fields(self):
         return self.fields
 
     def create_custom_field(self, payload):
@@ -98,17 +98,22 @@ class EnsureStandardImportFieldsTest(TestCase):
         self.assertEqual(results, [{"name": "Asana Section", "status": "existing", "id": "customfield_9"}])
         self.assertEqual(client.created, [])
 
-    def test_wrong_type_and_duplicate_names_are_rejected(self) -> None:
+    def test_wrong_type_is_rejected(self) -> None:
         wrong_type = FakeClient([{"name": "Asana Section", "schema": {"custom": URL_FIELD_TYPE}}])
         with self.assertRaisesRegex(ValueError, "expected"):
             ensure_standard_import_fields(wrong_type, definitions=STANDARD_IMPORT_FIELDS[:1])
 
+    def test_duplicate_existing_fields_are_skipped_without_creating_another(self) -> None:
         duplicates = FakeClient([
-            {"name": "Asana Section", "schema": {"custom": TEXT_FIELD_TYPE}},
-            {"name": "asana section", "schema": {"custom": TEXT_FIELD_TYPE}},
+            {"id": "customfield_1", "name": "Asana Section", "schema": {"custom": TEXT_FIELD_TYPE}},
+            {"id": "customfield_2", "name": "asana section", "schema": {"custom": TEXT_FIELD_TYPE}},
         ])
-        with self.assertRaisesRegex(ValueError, "Multiple"):
-            ensure_standard_import_fields(duplicates, definitions=STANDARD_IMPORT_FIELDS[:1])
+        results = ensure_standard_import_fields(
+            duplicates, definitions=STANDARD_IMPORT_FIELDS[:1]
+        )
+        self.assertEqual(results[0]["status"], "existing")
+        self.assertEqual(results[0]["duplicates"], "2")
+        self.assertEqual(duplicates.created, [])
 
     def test_all_conflicts_are_checked_before_any_creation(self) -> None:
         client = FakeClient([{

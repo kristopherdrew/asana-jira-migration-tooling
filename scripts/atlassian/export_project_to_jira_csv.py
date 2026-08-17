@@ -35,6 +35,7 @@ from src.lib.jira_csv_partition import (
     partition_project_csv,
     write_partition_manifest,
 )
+from src.lib.jira_csv_import_config import copy_active_profile_import_config
 
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
@@ -3440,6 +3441,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                     writer.writerows(merged_rows)
                 logger.info("Wrote consolidated user association report to %s", consolidated_assoc)
 
+    copied_config = copy_active_profile_import_config(output_dir)
+    if copied_config:
+        logger.info("Included active profile Jira importer configuration: %s", copied_config)
     organize_outputs(output_dir)
 
     if failures:
