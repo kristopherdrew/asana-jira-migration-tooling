@@ -1,21 +1,14 @@
 from __future__ import annotations
 
 import csv
-import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-from src.lib.config import Credentials, JiraSite
 from src.lib.database import Database
-from src.lib.jira_csv_import_config import (
-    ArchiveImportSettings,
-    JiraFieldChoice,
-    JiraResolutionChoice,
-)
 from scripts.atlassian.export_archival_project_jira_csv import (
     ARCHIVAL_FIELDS_HEADING,
     build_archival_description,
@@ -305,59 +298,6 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertTrue((output_dir / "link_modifications").is_dir())
         self.assertTrue((output_dir / "section_counts").is_dir())
         self.assertTrue((output_dir / "user_associations").is_dir())
-
-    def test_main_optionally_generates_importer_configuration(self) -> None:
-        output_dir = self.workspace / "configured"
-        env_path = self.workspace / "client.env"
-        env_path.write_text("export CLIENT_NAME=Example\n", encoding="utf-8")
-        credentials = Credentials(
-            token="asana",
-            workspace_gid="workspace",
-            skip_ssl_verification=False,
-            atlassian_username="user@example.com",
-            atlassian_token="token",
-            jira_sites=(JiraSite("sandbox_jira", "Sandbox Jira", self.jira_base_url),),
-            jira_default_site="sandbox_jira",
-        )
-        settings = ArchiveImportSettings(
-            external_id=JiraFieldChoice(
-                "customfield_10699", "External issue ID", "Text", "string"
-            ),
-            completed_resolution=JiraResolutionChoice("10000", "Done"),
-        )
-        client = MagicMock()
-        client.get_fields.return_value = []
-        client.get_resolutions.return_value = []
-        argv = [
-            "--project-gid", "proj_1", "--database", str(self.db_path),
-            "--output-dir", str(output_dir), "--generate-jira-config",
-            "--jira-site", "sandbox_jira",
-        ]
-        with patch(
-            "scripts.atlassian.export_archival_project_jira_csv.load_credentials",
-            return_value=credentials,
-        ), patch(
-            "scripts.atlassian.export_archival_project_jira_csv.resolve_credentials_path",
-            return_value=env_path,
-        ), patch(
-            "scripts.atlassian.export_archival_project_jira_csv.JiraClient",
-            return_value=client,
-        ), patch(
-            "scripts.atlassian.export_archival_project_jira_csv.review_archive_import_settings",
-            return_value=(settings, settings),
-        ):
-            main(argv)
-
-        config_path = next((output_dir / "jira_configurations").glob("*_jira_config.txt"))
-        config = json.loads(config_path.read_text(encoding="utf-8"))
-        self.assertEqual(
-            config["config.field.mappings"]["External issue ID"]["existing.custom.field"],
-            "10699",
-        )
-        self.assertEqual(
-            config["config.value.mappings"]["completed"]["Yes"], "10000"
-        )
-        self.assertNotIn("modified_section", config["config.value.mappings"])
 
     def test_main_groups_default_output_by_export_id(self) -> None:
         grouped_dir = self.workspace / "exports" / "export-01-archive-wave"

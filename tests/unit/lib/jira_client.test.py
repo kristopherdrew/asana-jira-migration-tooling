@@ -66,6 +66,23 @@ class CreateIssueTest(TestCase):
         self.assertEqual(client.calls[0]["path"], "/rest/api/3/field")
         self.assertEqual(json.loads(client.calls[0]["data"].decode("utf-8")), payload)
 
+    def test_get_custom_fields_reads_every_admin_catalog_page(self) -> None:
+        client = _RecordingClient([
+            b'{"startAt":0,"maxResults":1,"total":2,"isLast":false,'
+            b'"values":[{"id":"customfield_1","name":"Asana Section"}]}',
+            b'{"startAt":1,"maxResults":1,"total":2,"isLast":true,'
+            b'"values":[{"id":"customfield_2","name":"Asana Task Link"}]}',
+        ])
+        fields = client.get_custom_fields()
+        self.assertEqual([field["id"] for field in fields], ["customfield_1", "customfield_2"])
+        self.assertEqual(
+            [call["path"] for call in client.calls],
+            [
+                "/rest/api/3/field/search?type=custom&orderBy=name&startAt=0&maxResults=100",
+                "/rest/api/3/field/search?type=custom&orderBy=name&startAt=1&maxResults=100",
+            ],
+        )
+
     def test_custom_field_context_and_option_endpoints(self) -> None:
         client = _RecordingClient([
             b'{"values":[{"id":"10000"}]}',

@@ -82,27 +82,30 @@ def ensure_standard_import_fields(
 ) -> List[Dict[str, str]]:
     """Create missing standard fields and report existing/created/planned results.
 
-    Exact, case-insensitive name matches make re-runs safe. A duplicate name or a
-    same-name field of another Jira type is rejected because either could make a
-    CSV import map data to the wrong destination.
+    Exact, case-insensitive name matches make re-runs safe. Existing duplicates
+    of the expected type are retained and reported, while a name found only with
+    another Jira type is rejected.
     """
-    catalog = client.get_fields()
+    catalog = client.get_custom_fields()
     matches_by_name: Dict[str, List[Dict[str, object]]] = {}
     for definition in definitions:
         matches = [
             field for field in catalog
             if str(field.get("name", "")).strip().casefold() == definition.name.casefold()
         ]
-        if len(matches) > 1:
-            raise ValueError(f"Multiple Jira fields are named {definition.name!r}; resolve the duplicates before continuing.")
         if matches:
-            existing = matches[0]
-            existing_type = _field_type(existing)
-            if existing_type != definition.field_type:
+            correctly_typed = [
+                field for field in matches if _field_type(field) == definition.field_type
+            ]
+            if not correctly_typed:
+                existing_types = sorted(
+                    {_field_type(field) or "unknown" for field in matches}
+                )
                 raise ValueError(
                     f"Jira field {definition.name!r} already exists as type "
-                    f"{existing_type or 'unknown'}, expected {definition.field_type}."
+                    f"{', '.join(existing_types)}, expected {definition.field_type}."
                 )
+            matches = correctly_typed
         matches_by_name[definition.name] = matches
 
     results: List[Dict[str, str]] = []
@@ -110,7 +113,14 @@ def ensure_standard_import_fields(
         matches = matches_by_name[definition.name]
         if matches:
             existing = matches[0]
-            results.append({"name": definition.name, "status": "existing", "id": str(existing.get("id", ""))})
+            result = {
+                "name": definition.name,
+                "status": "existing",
+                "id": str(existing.get("id", "")),
+            }
+            if len(matches) > 1:
+                result["duplicates"] = str(len(matches))
+            results.append(result)
             continue
         if dry_run:
             results.append({"name": definition.name, "status": "planned", "id": ""})
