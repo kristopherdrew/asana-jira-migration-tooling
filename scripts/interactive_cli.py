@@ -212,6 +212,8 @@ def _apply_session_env() -> None:
         os.environ[ASANA_JIRA_DB_PATH_ENV] = str(_session.db_path)
         if _session.jira_site_key:
             os.environ[ASANA_JIRA_SITE_KEY_ENV] = _session.jira_site_key
+        else:
+            os.environ.pop(ASANA_JIRA_SITE_KEY_ENV, None)
 
 
 def _set_session(reference_path: Path, env_path: Path, *, use_prod: Optional[bool] = None) -> CliSession:
@@ -900,6 +902,48 @@ def add_jira_site() -> None:
     if not _session.jira_site_key:
         _session.jira_site_key = key
     print(f"Added {name} ({url}).")
+
+
+def remove_jira_site() -> None:
+    """Remove a named Jira site from the active client profile."""
+    if _session is None:
+        return
+    if not _session.jira_sites:
+        print("No Jira sites are configured for this profile.")
+        return
+
+    print("\nRemove a Jira site:")
+    for index, site in enumerate(_session.jira_sites, start=1):
+        print(f"  [{index}] {site.name} — {site.base_url}")
+    choice = prompt("Pick a number (Enter to go back)", default="")
+    if not choice:
+        return
+    if not (choice.isdigit() and 1 <= int(choice) <= len(_session.jira_sites)):
+        print("Invalid selection.")
+        return
+
+    site = _session.jira_sites[int(choice) - 1]
+    if not confirm(f"Remove Jira site '{site.name}' ({site.base_url})?", default=False):
+        print("Jira site was not removed.")
+        return
+
+    sites = tuple(candidate for candidate in _session.jira_sites if candidate.key != site.key)
+    default = _session.default_jira_site_key
+    if default == site.key:
+        default = sites[0].key if sites else None
+    active = _session.jira_site_key
+    if active == site.key:
+        active = default or (sites[0].key if sites else None)
+
+    write_profile_jira_sites(_session.env_path, sites, default)
+    _session.jira_sites = sites
+    _session.default_jira_site_key = default
+    _session.jira_site_key = active
+    if active:
+        os.environ[ASANA_JIRA_SITE_KEY_ENV] = active
+    else:
+        os.environ.pop(ASANA_JIRA_SITE_KEY_ENV, None)
+    print(f"Removed {site.name}.")
 
 
 def toggle_environment() -> None:
@@ -1784,24 +1828,35 @@ def run_sync_attachments(log_level: str) -> None:
 
 
 def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
+    def append_project_report_scope(args: List[str], context: str) -> None:
+        """Prompt for a project-oriented report scope."""
+        print(f"\nSelect {context} scope:")
+        print("[1] Team lookup")
+        print("[2] Paste project GIDs")
+        print("[3] Project GID file")
+        print("[4] Whole workspace")
+        choice = input("Choice (default 1): ").strip() or "1"
+        if choice == "1":
+            team_gid = _prompt_team_gid_from_lookup(
+                context, f"Team GID to scope {context} (blank = all teams)"
+            )
+            if team_gid:
+                args.extend(["--team-gid", team_gid])
+        elif choice == "2":
+            args.extend(["--project-gids", prompt_required("Project GIDs (comma-separated)")])
+        elif choice == "3":
+            args.extend(["--project-gids-file", _prompt_project_gids_file(context)])
+        elif choice != "4":
+            raise SystemExit("Invalid report scope.")
+
     def run_project_details_report() -> None:
         args = args_report_defaults(log_level)
-        team_gid = _prompt_team_gid_from_lookup(
-            "project details",
-            "Team GID to filter project details (blank = all teams)",
-        )
-        if team_gid:
-            args.extend(["--team-gid", team_gid])
+        append_project_report_scope(args, "project details")
         run_script(export_project_details_report.main, args)
 
     def run_custom_field_usage_report() -> None:
         args = args_report_defaults(log_level)
-        team_gid = _prompt_team_gid_from_lookup(
-            "custom field usage",
-            "Team GID to filter custom field usage (blank = all teams)",
-        )
-        if team_gid:
-            args.extend(["--team-gid", team_gid])
+        append_project_report_scope(args, "custom field usage")
         run_script(export_custom_field_usage_report.main, args)
 
     def run_team_memberships_report() -> None:
@@ -1832,12 +1887,7 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
     def run_project_members_report() -> None:
         args = args_report_defaults(log_level)
-        team_gid = _prompt_team_gid_from_lookup(
-            "project members",
-            "Team GID to scope project members (blank = all teams)",
-        )
-        if team_gid:
-            args.extend(["--team-gid", team_gid])
+        append_project_report_scope(args, "project members")
         run_script(export_project_members_report.main, args)
 
     def run_field_section_review_report() -> None:
@@ -1847,6 +1897,7 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         print("[2] Owner-centric (one project owner's projects)")
         print("[3] Whole workspace")
         print("[4] By Jira key(s) (projects behind migrated Jira Task keys)")
+        print("[5] Explicit project GID list")
         choice = input("Choice (default 1): ").strip() or "1"
         if choice == "1":
             team_gid = _prompt_team_gid_from_lookup(
@@ -1881,16 +1932,22 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
                         _prompt_jira_keys_file("field & section review"),
                     ]
                 )
+        elif choice == "5":
+            print("\nProvide project GIDs:")
+            print("[1] Paste project GIDs (comma-separated)")
+            print("[2] Project GID file")
+            project_scope = input("Choice (default 1): ").strip() or "1"
+            if project_scope == "1":
+                args.extend(["--project-gids", prompt_required("Project GIDs (comma-separated)")])
+            elif project_scope == "2":
+                args.extend(["--project-gids-file", _prompt_project_gids_file("field & section review")])
+            else:
+                raise SystemExit("Invalid project GID scope.")
         run_script(export_field_section_review_report.main, args)
 
     def run_project_last_updated_report() -> None:
         args = args_report_defaults(log_level)
-        team_gid = _prompt_team_gid_from_lookup(
-            "project last updated",
-            "Team GID to scope the report (blank = all teams)",
-        )
-        if team_gid:
-            args.extend(["--team-gid", team_gid])
+        append_project_report_scope(args, "project last updated")
         run_script(export_project_last_updated_report.main, args)
 
     def run_jira_migration_validation() -> None:
@@ -2649,7 +2706,8 @@ def build_client_environment_menu(
         "3": MenuItem("3", "Select active Jira site", select_jira_site),
         "4": MenuItem("4", "Set default Jira site", lambda: select_jira_site(make_default=True)),
         "5": MenuItem("5", "Add Jira site", add_jira_site),
-        "6": MenuItem("6", "View or update shared credentials", lambda: manage_credentials(reference_path)),
+        "6": MenuItem("6", "Remove Jira site", remove_jira_site),
+        "7": MenuItem("7", "View or update shared credentials", lambda: manage_credentials(reference_path)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
