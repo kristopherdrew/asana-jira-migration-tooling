@@ -226,6 +226,12 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         header, by_gid = self._run_export()
         for column in ("Section", "parent_gid", "completed", "notes", "Comment", "Tags"):
             self.assertIn(column, header)
+        for excluded_column in (
+            "assignee_atlassian_email",
+            "creator_atlassian_email",
+            "start_at",
+        ):
+            self.assertNotIn(excluded_column, header)
         # Native comment column keeps the Jira comment format (not folded away).
         self.assertEqual(
             by_gid["task_1"][header.index("Comment")],
