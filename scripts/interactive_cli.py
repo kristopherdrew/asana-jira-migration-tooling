@@ -2241,6 +2241,11 @@ def _readiness_table_summary(connection: sqlite3.Connection, table: str) -> tupl
     return count, latest
 
 
+def _readiness_date(value: str) -> str:
+    """Render an ISO-like sync value as the operator-facing calendar date."""
+    return value[:10] if value else ""
+
+
 def show_migration_readiness() -> None:
     """Display advisory workspace-level readiness from the active SQLite snapshot."""
     db_path = active_db_path()
@@ -2264,7 +2269,7 @@ def show_migration_readiness() -> None:
         for label, table in checks:
             count, latest = _readiness_table_summary(connection, table)
             marker = "x" if count else " "
-            suffix = f", latest {latest}" if latest else ""
+            suffix = f", latest {_readiness_date(latest)}" if latest else ""
             print(f"[{marker}] {label}: {count:,}{suffix}")
     finally:
         connection.close()
@@ -2376,7 +2381,8 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
         ).fetchone()[0]
         print(
             "[x] Core data sync: "
-            f"projects {project_latest or 'not recorded'} / tasks {task_latest or 'not recorded'}"
+            f"projects {_readiness_date(project_latest) or 'not recorded'} / "
+            f"tasks {_readiness_date(task_latest) or 'not recorded'}"
         )
 
         extras_parameters = selected_task_parameters
@@ -2393,8 +2399,9 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
         extras_marker = "x" if comment_count or attachment_count else "!"
         print(
             f"[{extras_marker}] Task extras: {comment_count:,} comments "
-            f"(latest {comment_latest or 'not recorded'}); {attachment_count:,} attachments "
-            f"(latest {attachment_latest or 'not recorded'})"
+            f"(latest {_readiness_date(comment_latest) or 'not recorded'}); "
+            f"{attachment_count:,} attachments "
+            f"(latest {_readiness_date(attachment_latest) or 'not recorded'})"
         )
         if not comment_count and not attachment_count:
             print("[!] No task-extras metadata found for this scope; run the task-extras sync.")
