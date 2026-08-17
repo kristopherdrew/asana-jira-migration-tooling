@@ -295,6 +295,7 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIn("/repo/projects.csv", regular_args)
         self.assertIn("--project-gids-file", archival_args)
         self.assertIn("/repo/projects.csv", archival_args)
+        self.assertNotIn("--workspace-gid", archival_args)
 
     def test_archival_export_accepts_inline_task_gids(self) -> None:
         with patch(
@@ -1275,6 +1276,64 @@ class LifecycleMenuTest(TestCase):
         self.assertIn("[ ] Asana tasks: 0", rendered)
         self.assertIn("[x] Atlassian user mappings: 1", rendered)
         self.assertIn("[ ] Task Jira mappings: 0", rendered)
+
+    def test_scoped_export_readiness_is_advisory_when_csv_config_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "readiness.sqlite"
+            connection = interactive_cli.sqlite3.connect(str(db_path))
+            connection.executescript(
+                """
+                CREATE TABLE projects (gid TEXT, team_gid TEXT);
+                INSERT INTO projects VALUES ('p1', 'team-1');
+                CREATE TABLE tasks (gid TEXT);
+                INSERT INTO tasks VALUES ('t1');
+                CREATE TABLE task_projects (task_gid TEXT, project_gid TEXT);
+                INSERT INTO task_projects VALUES ('t1', 'p1');
+                """
+            )
+            connection.commit()
+            connection.close()
+            output = io.StringIO()
+            with patch("scripts.interactive_cli.active_db_path", return_value=db_path), \
+                    patch("scripts.interactive_cli.latest_profile_import_config_path", return_value=None), \
+                    redirect_stdout(output):
+                interactive_cli.show_export_readiness(
+                    ["--team-gid", "team-1"], "Jira task CSV", jira_csv=True
+                )
+        rendered = output.getvalue()
+        self.assertIn("[x] Selected data: 1 projects / 1 tasks", rendered)
+        self.assertIn("[!] Jira CSV configuration: no saved profile", rendered)
+        self.assertIn("warnings do not prevent export", rendered)
+
+    def test_scoped_export_readiness_uses_project_gid_column_and_reports_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            db_path = root / "readiness.sqlite"
+            scope_file = root / "project-map.csv"
+            scope_file.write_text(
+                "project_gid,project_key,project_name\np1,FAC-1,Found\np2,FAC-2,Missing\n"
+            )
+            connection = interactive_cli.sqlite3.connect(str(db_path))
+            connection.executescript(
+                """
+                CREATE TABLE projects (gid TEXT, team_gid TEXT);
+                INSERT INTO projects VALUES ('p1', 'team-1');
+                CREATE TABLE tasks (gid TEXT);
+                INSERT INTO tasks VALUES ('t1');
+                CREATE TABLE task_projects (task_gid TEXT, project_gid TEXT);
+                INSERT INTO task_projects VALUES ('t1', 'p1');
+                """
+            )
+            connection.commit()
+            connection.close()
+            output = io.StringIO()
+            with patch("scripts.interactive_cli.active_db_path", return_value=db_path), redirect_stdout(output):
+                interactive_cli.show_export_readiness(
+                    ["--project-gids-file", str(scope_file)], "Jira task CSV", jira_csv=True
+                )
+        rendered = output.getvalue()
+        self.assertIn("1 of 2 requested projects / 1 tasks", rendered)
+        self.assertIn("1 requested project GID(s) were not found", rendered)
 
     @patch("scripts.interactive_cli.args_clear_jira_keys")
     @patch("scripts.interactive_cli.run_script")
