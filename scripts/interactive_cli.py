@@ -968,7 +968,6 @@ def log_run(step: str, argv: Sequence[str], status: str, error: Optional[str] = 
 def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[str]):
     export_mains = {
         export_all_reports_xlsx.main,
-        export_archival_project_jira_csv.main,
         export_custom_field_usage_report.main,
         export_field_section_review_report.main,
         export_jira_migration_validation.main,
@@ -976,18 +975,13 @@ def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[
         export_project_details_report.main,
         export_project_last_updated_report.main,
         export_project_members_report.main,
-        export_project_to_jira_csv.main,
         export_team_memberships.main,
         export_team_project_jira_csv.main,
         export_team_report.main,
         export_users.main,
     }
     if main_func in export_mains:
-        jira_csv = main_func in {
-            export_archival_project_jira_csv.main,
-            export_project_to_jira_csv.main,
-            export_team_project_jira_csv.main,
-        }
+        jira_csv = main_func is export_team_project_jira_csv.main
         show_export_readiness(argv, main_func.__module__.rsplit(".", 1)[-1], jira_csv)
     original_input = builtins.input
 
@@ -1450,6 +1444,10 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     else:
         raise SystemExit(f"Invalid export scope choice: {choice}")
 
+    show_export_readiness(args, "Jira task CSV", jira_csv=True)
+    if not confirm("Continue with this export scope?", default=True):
+        raise CliBack
+
     if not confirm("Prompt to select custom fields during export?", default=True):
         args.append("--no-custom-field-prompt")
 
@@ -1600,6 +1598,10 @@ def args_export_archival_project(log_level: str) -> List[str]:
     else:
         raise SystemExit(f"Invalid export scope choice: {choice}")
 
+    show_export_readiness(args, "archival Jira task CSV", jira_csv=True)
+    if not confirm("Continue with this export scope?", default=True):
+        raise CliBack
+
     append_jira_env_flag(args)
     fallback_atl = prompt("Fallback Atlassian account ID for unmapped users (optional)", default="")
     if fallback_atl:
@@ -1650,6 +1652,24 @@ def run_export_archival_project(log_level: str) -> None:
     args = args_export_archival_project(log_level)
     run_script(export_archival_project_jira_csv.main, args)
     print_rerun_command("scripts.atlassian.export_archival_project_jira_csv", args)
+
+
+def run_export_tasks_to_jira(log_level: str) -> None:
+    """Choose the custom-field representation, then run the matching CSV exporter."""
+    print("\nCustom-field handling:")
+    print("[1] Keep custom fields as Jira CSV columns")
+    print("[2] Consolidate all populated custom fields into Description")
+    choice = prompt("Choice", default="1")
+    if choice == "1":
+        run_export_project_to_jira(log_level)
+    elif choice == "2":
+        print(
+            "Using archival-style export: one synthetic Epic per project, with the "
+            "existing hierarchy-safe Epic and CSV limits."
+        )
+        run_export_archival_project(log_level)
+    else:
+        raise SystemExit("Invalid custom-field handling choice.")
 
 
 def run_sync_attachments(log_level: str) -> None:
@@ -2173,7 +2193,7 @@ def run_guided_project_migration(log_level: str) -> None:
                 import_jira_project_map.main,
                 args_import_jira_project_map(log_level),
             )
-        run_export_project_to_jira(log_level)
+        run_export_tasks_to_jira(log_level)
         print("\nImport the generated CSV through Jira's external-import wizard.")
         if confirm("Is the Jira import complete and ready for Jira-key recovery?", default=False):
             run_script(
@@ -2277,7 +2297,7 @@ def _scope_values(args: Sequence[str], flag: str) -> List[str]:
             return parse_gid_list(read_project_gids_file(file_name))
         contents = Path(file_name).read_text().replace(",", "\n")
         return [line.strip() for line in contents.splitlines() if line.strip()]
-    except OSError:
+    except (OSError, SystemExit):
         return []
 
 
@@ -2299,13 +2319,16 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
     try:
         if task_gids:
             placeholders = ",".join("?" for _ in task_gids)
+            selected_task_sql = f"SELECT gid FROM tasks WHERE gid IN ({placeholders})"
+            selected_task_parameters = task_gids
+            selected_project_sql = (
+                "SELECT DISTINCT project_gid FROM task_projects "
+                f"WHERE task_gid IN ({placeholders})"
+            )
             project_count = connection.execute(
                 "SELECT COUNT(DISTINCT project_gid) FROM task_projects "
                 f"WHERE task_gid IN ({placeholders})",
                 task_gids,
-            ).fetchone()[0]
-            task_count = connection.execute(
-                f"SELECT COUNT(*) FROM tasks WHERE gid IN ({placeholders})", task_gids
             ).fetchone()[0]
         else:
             where, parameters = "", []
@@ -2314,14 +2337,18 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
                 where, parameters = f"WHERE p.gid IN ({placeholders})", project_gids
             elif team_gid:
                 where, parameters = "WHERE p.team_gid = ?", [team_gid]
+            selected_task_sql = (
+                "SELECT DISTINCT tp.task_gid FROM task_projects tp "
+                f"JOIN projects p ON p.gid = tp.project_gid {where}"
+            )
+            selected_task_parameters = parameters
+            selected_project_sql = f"SELECT p.gid FROM projects p {where}"
             project_count = connection.execute(
                 f"SELECT COUNT(*) FROM projects p {where}", parameters
             ).fetchone()[0]
-            task_count = connection.execute(
-                "SELECT COUNT(DISTINCT tp.task_gid) FROM task_projects tp "
-                f"JOIN projects p ON p.gid = tp.project_gid {where}",
-                parameters,
-            ).fetchone()[0]
+        task_count = connection.execute(
+            f"SELECT COUNT(*) FROM ({selected_task_sql})", selected_task_parameters
+        ).fetchone()[0]
         marker = "x" if project_count and task_count else "!"
         if requested_project_count:
             print(
@@ -2337,6 +2364,68 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
             print(f"[{marker}] Selected data: {project_count:,} projects / {task_count:,} tasks")
         if not task_count:
             print("[!] No selected tasks were found; verify the scope or run a task sync.")
+        task_latest = connection.execute(
+            f"SELECT COALESCE(MAX(synced_at), '') FROM tasks "
+            f"WHERE gid IN ({selected_task_sql})",
+            selected_task_parameters,
+        ).fetchone()[0]
+        project_latest = connection.execute(
+            f"SELECT COALESCE(MAX(synced_at), '') FROM projects "
+            f"WHERE gid IN ({selected_project_sql})",
+            selected_task_parameters,
+        ).fetchone()[0]
+        print(
+            "[x] Core data sync: "
+            f"projects {project_latest or 'not recorded'} / tasks {task_latest or 'not recorded'}"
+        )
+
+        extras_parameters = selected_task_parameters
+        comment_count, comment_latest = connection.execute(
+            "SELECT COUNT(*), COALESCE(MAX(synced_at), '') FROM task_comments "
+            f"WHERE task_gid IN ({selected_task_sql})",
+            extras_parameters,
+        ).fetchone()
+        attachment_count, attachment_latest = connection.execute(
+            "SELECT COUNT(*), COALESCE(MAX(synced_at), '') FROM task_attachments "
+            f"WHERE task_gid IN ({selected_task_sql})",
+            extras_parameters,
+        ).fetchone()
+        extras_marker = "x" if comment_count or attachment_count else "!"
+        print(
+            f"[{extras_marker}] Task extras: {comment_count:,} comments "
+            f"(latest {comment_latest or 'not recorded'}); {attachment_count:,} attachments "
+            f"(latest {attachment_latest or 'not recorded'})"
+        )
+        if not comment_count and not attachment_count:
+            print("[!] No task-extras metadata found for this scope; run the task-extras sync.")
+
+        referenced_user_sql = (
+            "SELECT assignee_gid AS user_gid FROM tasks "
+            f"WHERE gid IN ({selected_task_sql}) AND assignee_gid <> '' "
+            "UNION SELECT created_by_gid FROM tasks "
+            f"WHERE gid IN ({selected_task_sql}) AND created_by_gid <> '' "
+            "UNION SELECT created_by_gid FROM task_comments "
+            f"WHERE task_gid IN ({selected_task_sql}) AND created_by_gid <> ''"
+        )
+        referenced_parameters = selected_task_parameters * 3
+        referenced_count, mapped_count = connection.execute(
+            "SELECT COUNT(*), SUM(CASE WHEN uaa.atlassian_account_id <> '' "
+            "THEN 1 ELSE 0 END) FROM ("
+            f"{referenced_user_sql}"
+            ") referenced LEFT JOIN user_atlassian_accounts uaa "
+            "ON uaa.user_gid = referenced.user_gid",
+            referenced_parameters,
+        ).fetchone()
+        mapped_count = mapped_count or 0
+        mapping_marker = "x" if mapped_count == referenced_count else "!"
+        print(
+            f"[{mapping_marker}] Atlassian user mapping: {mapped_count:,} of "
+            f"{referenced_count:,} referenced users mapped"
+        )
+        if mapped_count != referenced_count:
+            print(
+                f"[!] {referenced_count - mapped_count:,} referenced users lack an Atlassian account ID."
+            )
         if jira_csv:
             config_path = latest_profile_import_config_path(resolve_credentials_path())
             if config_path:
@@ -2375,7 +2464,7 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
         run_script(export_team_project_jira_csv.main, args)
 
     return {
-        "1": MenuItem("1", "Export project to Jira CSV", lambda: run_export_project_to_jira(log_level)),
+        "1": MenuItem("1", "Export project tasks to Jira CSV", lambda: run_export_tasks_to_jira(log_level)),
         "2": MenuItem("2", "Export team/project Jira CSV", run_team_project_jira_export),
         "3": MenuItem("3", "Recover Jira task keys from project associations", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "4": MenuItem("4", "Clear Jira task keys", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level))),
@@ -2402,11 +2491,6 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
             "12",
             "Set project 'Last working day' field on Jira issues",
             lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level)),
-        ),
-        "13": MenuItem(
-            "13",
-            "Export archival project to Jira CSV (custom fields folded into description)",
-            lambda: run_export_archival_project(log_level),
         ),
         "14": MenuItem(
             "14",
@@ -2511,8 +2595,7 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
 def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Guided project migration", lambda: run_guided_project_migration(log_level)),
-        "2": MenuItem("2", "Export active project tasks for Jira CSV import", lambda: run_export_project_to_jira(log_level)),
-        "3": MenuItem("3", "Export archival project tasks for Jira CSV import", lambda: run_export_archival_project(log_level)),
+        "2": MenuItem("2", "Export project tasks for Jira CSV import", lambda: run_export_tasks_to_jira(log_level)),
         "4": MenuItem("4", "Recover Jira task keys from project associations", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "5": MenuItem("5", "Recover Jira task keys from External IDs", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "6": MenuItem("6", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),

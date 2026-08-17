@@ -286,7 +286,10 @@ class IncrementalArgsBuilderTest(TestCase):
             return_value="/repo/projects.csv",
         ), patch(
             "builtins.input",
-            side_effect=["2", "y", "", "n", "n", "", "", "2", "y", "", "", "", ""],
+            side_effect=[
+                "2", "y", "", "n", "n", "", "", "",
+                "2", "y", "", "", "",
+            ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
             archival_args = interactive_cli.args_export_archival_project("INFO")
@@ -296,6 +299,18 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIn("--project-gids-file", archival_args)
         self.assertIn("/repo/projects.csv", archival_args)
         self.assertNotIn("--workspace-gid", archival_args)
+
+    @patch("scripts.interactive_cli.run_export_project_to_jira")
+    def test_unified_task_export_uses_column_mode_by_default(self, mock_regular) -> None:
+        with patch("builtins.input", side_effect=[""]):
+            interactive_cli.run_export_tasks_to_jira("INFO")
+        mock_regular.assert_called_once_with("INFO")
+
+    @patch("scripts.interactive_cli.run_export_archival_project")
+    def test_unified_task_export_uses_archival_mode_for_consolidation(self, mock_archival) -> None:
+        with patch("builtins.input", side_effect=["2"]):
+            interactive_cli.run_export_tasks_to_jira("INFO")
+        mock_archival.assert_called_once_with("INFO")
 
     def test_archival_export_accepts_inline_task_gids(self) -> None:
         with patch(
@@ -320,7 +335,7 @@ class IncrementalArgsBuilderTest(TestCase):
             side_effect=SystemExit,
         ), patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", ""],
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", ""],
         ):
             args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
         self.assertFalse(allow_merge)
@@ -336,7 +351,10 @@ class IncrementalArgsBuilderTest(TestCase):
             return_value="/repo/missing-task-gids.txt",
         ), patch(
             "builtins.input",
-            side_effect=["4", "y", "", "n", "n", "", "", "4", "y", "", "", "", ""],
+            side_effect=[
+                "4", "y", "", "n", "n", "n", "", "",
+                "4", "y", "", "", "",
+            ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
             archival_args = interactive_cli.args_export_archival_project("INFO")
@@ -1283,12 +1301,15 @@ class LifecycleMenuTest(TestCase):
             connection = interactive_cli.sqlite3.connect(str(db_path))
             connection.executescript(
                 """
-                CREATE TABLE projects (gid TEXT, team_gid TEXT);
-                INSERT INTO projects VALUES ('p1', 'team-1');
-                CREATE TABLE tasks (gid TEXT);
-                INSERT INTO tasks VALUES ('t1');
+                CREATE TABLE projects (gid TEXT, team_gid TEXT, synced_at TEXT);
+                INSERT INTO projects VALUES ('p1', 'team-1', '2026-08-17T00:00:00Z');
+                CREATE TABLE tasks (gid TEXT, synced_at TEXT, assignee_gid TEXT, created_by_gid TEXT);
+                INSERT INTO tasks VALUES ('t1', '2026-08-17T00:00:00Z', '', '');
                 CREATE TABLE task_projects (task_gid TEXT, project_gid TEXT);
                 INSERT INTO task_projects VALUES ('t1', 'p1');
+                CREATE TABLE task_comments (task_gid TEXT, created_by_gid TEXT, synced_at TEXT);
+                CREATE TABLE task_attachments (task_gid TEXT, synced_at TEXT);
+                CREATE TABLE user_atlassian_accounts (user_gid TEXT, atlassian_account_id TEXT);
                 """
             )
             connection.commit()
@@ -1316,12 +1337,15 @@ class LifecycleMenuTest(TestCase):
             connection = interactive_cli.sqlite3.connect(str(db_path))
             connection.executescript(
                 """
-                CREATE TABLE projects (gid TEXT, team_gid TEXT);
-                INSERT INTO projects VALUES ('p1', 'team-1');
-                CREATE TABLE tasks (gid TEXT);
-                INSERT INTO tasks VALUES ('t1');
+                CREATE TABLE projects (gid TEXT, team_gid TEXT, synced_at TEXT);
+                INSERT INTO projects VALUES ('p1', 'team-1', '2026-08-17T00:00:00Z');
+                CREATE TABLE tasks (gid TEXT, synced_at TEXT, assignee_gid TEXT, created_by_gid TEXT);
+                INSERT INTO tasks VALUES ('t1', '2026-08-17T00:00:00Z', '', '');
                 CREATE TABLE task_projects (task_gid TEXT, project_gid TEXT);
                 INSERT INTO task_projects VALUES ('t1', 'p1');
+                CREATE TABLE task_comments (task_gid TEXT, created_by_gid TEXT, synced_at TEXT);
+                CREATE TABLE task_attachments (task_gid TEXT, synced_at TEXT);
+                CREATE TABLE user_atlassian_accounts (user_gid TEXT, atlassian_account_id TEXT);
                 """
             )
             connection.commit()
