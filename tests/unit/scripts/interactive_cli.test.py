@@ -1323,6 +1323,8 @@ class LifecycleMenuTest(TestCase):
                 )
         rendered = output.getvalue()
         self.assertIn("[x] Selected data: 1 projects / 1 tasks", rendered)
+        self.assertIn("projects 2026-08-17 / tasks 2026-08-17", rendered)
+        self.assertNotIn("2026-08-17T00:00:00Z", rendered)
         self.assertIn("[!] Jira CSV configuration: no saved profile", rendered)
         self.assertIn("warnings do not prevent export", rendered)
 
