@@ -10,6 +10,7 @@ from typing import Iterable, List, Sequence
 
 
 MAX_JIRA_ISSUES_PER_CSV = 8_000
+MAX_ISSUES_PER_SYNTHETIC_EPIC = 1_000
 ID_COLUMNS = ("External issue ID", "task_gid")
 PARENT_COLUMN = "jira_parent_gid"
 DEPTH_COLUMN = "jira_hierarchy_depth"
@@ -118,7 +119,7 @@ def _split_oversized_synthetic_group(
     id_index: int,
     parent_index: int,
     depth_index: int,
-    limit: int,
+    child_limit: int,
 ) -> List[List[List[str]]]:
     root = next((row for row in group if row[parent_index] == ""), group[0])
     depth_value = str(root[depth_index]).strip()
@@ -132,7 +133,14 @@ def _split_oversized_synthetic_group(
     root_id = root[id_index]
     descendants = [row for row in group if row is not root]
     branches = _hierarchy_groups(descendants, id_index, parent_index)
-    bins = _balanced_bins(branches, limit - 1)
+    try:
+        bins = _balanced_bins(branches, child_limit)
+    except SystemExit:
+        raise SystemExit(
+            f"A task hierarchy beneath synthetic Epic {root_id!r} contains more than "
+            f"{child_limit:,} issues and cannot be moved to another Epic without separating "
+            "a parent from its subtasks."
+        ) from None
     id_indexes = [header.index(name) for name in ID_COLUMNS if name in header]
     name_index = header.index(NAME_COLUMN) if NAME_COLUMN in header else None
     split_groups: List[List[List[str]]] = []
@@ -157,13 +165,14 @@ def _split_oversized_synthetic_group(
 def partition_project_csv(
     path: Path,
     limit: int = MAX_JIRA_ISSUES_PER_CSV,
+    synthetic_epic_limit: int = MAX_ISSUES_PER_SYNTHETIC_EPIC,
 ) -> List[CsvPart]:
-    """Split one project CSV while keeping every Jira parent hierarchy together."""
+    """Apply synthetic-Epic and CSV caps while preserving real task hierarchies."""
     if limit < 1 or limit > MAX_JIRA_ISSUES_PER_CSV:
         raise ValueError(f"CSV issue limit must be between 1 and {MAX_JIRA_ISSUES_PER_CSV}.")
+    if synthetic_epic_limit < 1:
+        raise ValueError("Synthetic Epic issue limit must be at least 1.")
     header, rows = _read_csv(path)
-    if len(rows) <= limit:
-        return [CsvPart(path, len(rows))]
 
     id_index = _column_index(header, ID_COLUMNS)
     parent_index = _column_index(header, (PARENT_COLUMN,))
@@ -172,16 +181,28 @@ def partition_project_csv(
     expanded: List[List[List[str]]] = []
     try:
         for group in groups:
-            if len(group) > limit:
+            root = next((row for row in group if row[parent_index] == ""), group[0])
+            depth_value = str(root[depth_index]).strip()
+            try:
+                is_synthetic = int(depth_value) < 0
+            except ValueError:
+                is_synthetic = depth_value.casefold() == "epic"
+
+            if is_synthetic and len(group) - 1 > synthetic_epic_limit:
                 split = _split_oversized_synthetic_group(
-                    group, header, id_index, parent_index, depth_index, limit
+                    group,
+                    header,
+                    id_index,
+                    parent_index,
+                    depth_index,
+                    synthetic_epic_limit,
                 )
-                if split == [group]:
-                    raise SystemExit(
-                        f"A real task hierarchy in {path.name} contains {len(group):,} issues and "
-                        f"cannot fit in the {limit:,}-issue Jira CSV limit."
-                    )
                 expanded.extend(split)
+            elif len(group) > limit:
+                raise SystemExit(
+                    f"A real task hierarchy in {path.name} contains {len(group):,} issues and "
+                    f"cannot fit in the {limit:,}-issue Jira CSV limit."
+                )
             else:
                 expanded.append(group)
         bins = _balanced_bins(expanded, limit)
@@ -189,6 +210,13 @@ def partition_project_csv(
         # Never leave behind an oversized CSV that could be imported accidentally.
         path.unlink(missing_ok=True)
         raise
+
+    if len(bins) == 1:
+        flattened = [row for group in bins[0] for row in group]
+        if flattened == rows:
+            return [CsvPart(path, len(rows))]
+        _write_csv(path, header, flattened)
+        return [CsvPart(path, len(flattened))]
 
     parts: List[CsvPart] = []
     try:

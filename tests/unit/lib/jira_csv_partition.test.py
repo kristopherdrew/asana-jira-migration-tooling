@@ -55,7 +55,7 @@ class JiraCsvPartitionTest(TestCase):
             rows = [["epic", "epic", "", "Epic", "Project Epic"]]
             rows.extend([f"t{i}", f"t{i}", "epic", "Task", f"Task {i}"] for i in range(10))
             write_rows(path, rows)
-            parts = partition_project_csv(path, limit=6)
+            parts = partition_project_csv(path, limit=6, synthetic_epic_limit=5)
             self.assertEqual([part.issue_count for part in parts], [6, 6])
             for number, part in enumerate(parts, start=1):
                 with part.path.open("r", newline="", encoding="utf-8") as handle:
@@ -64,6 +64,51 @@ class JiraCsvPartitionTest(TestCase):
                 self.assertEqual(exported[0]["External issue ID"], epic_id)
                 self.assertEqual(exported[0]["task_name"], f"Project Epic — Part {number}")
                 self.assertTrue(all(row["jira_parent_gid"] == epic_id for row in exported[1:]))
+
+    def test_balances_1600_tasks_across_two_synthetic_epics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "tasks.csv"
+            rows = [["epic", "epic", "", "Epic", "Project Epic"]]
+            rows.extend([f"t{i}", f"t{i}", "epic", "Task", f"Task {i}"] for i in range(1600))
+            write_rows(path, rows)
+
+            parts = partition_project_csv(path)
+
+            self.assertEqual(len(parts), 1)
+            with path.open("r", newline="", encoding="utf-8") as handle:
+                exported = list(csv.DictReader(handle))
+            epics = [row for row in exported if row["jira_hierarchy_depth"] == "Epic"]
+            self.assertEqual(len(epics), 2)
+            child_counts = {
+                epic["External issue ID"]: sum(
+                    row["jira_parent_gid"] == epic["External issue ID"] for row in exported
+                )
+                for epic in epics
+            }
+            self.assertEqual(sorted(child_counts.values()), [800, 800])
+
+    def test_keeps_subtask_families_together_when_splitting_synthetic_epic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "tasks.csv"
+            rows = [["epic", "epic", "", "Epic", "Project Epic"]]
+            for number in range(4):
+                parent_id = f"parent{number}"
+                rows.append([parent_id, parent_id, "epic", "Task", f"Parent {number}"])
+                rows.extend(
+                    [f"{parent_id}_sub{i}", f"{parent_id}_sub{i}", parent_id, "Sub-task", f"Sub {i}"]
+                    for i in range(2)
+                )
+            write_rows(path, rows)
+
+            partition_project_csv(path, synthetic_epic_limit=6)
+
+            with path.open("r", newline="", encoding="utf-8") as handle:
+                exported = list(csv.DictReader(handle))
+            by_id = {row["External issue ID"]: row for row in exported}
+            for row in exported:
+                if row["jira_hierarchy_depth"] == "Sub-task":
+                    self.assertIn(row["jira_parent_gid"], by_id)
+                    self.assertEqual(by_id[row["jira_parent_gid"]]["jira_hierarchy_depth"], "Task")
 
     def test_rejects_one_real_hierarchy_larger_than_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

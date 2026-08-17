@@ -30,6 +30,7 @@ from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.task_scope import parse_task_gids, resolve_task_projects
 from src.lib.jira_csv_partition import (
     CsvPart,
+    MAX_ISSUES_PER_SYNTHETIC_EPIC,
     pack_csv_parts,
     partition_project_csv,
     write_partition_manifest,
@@ -3295,7 +3296,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
         if output_path:
             if not args.stats_only and output_path.exists():
-                project_parts = partition_project_csv(output_path)
+                project_parts = partition_project_csv(
+                    output_path,
+                    synthetic_epic_limit=MAX_ISSUES_PER_SYNTHETIC_EPIC,
+                )
                 task_parts.extend(project_parts)
                 if len(project_parts) > 1:
                     logger.info(
