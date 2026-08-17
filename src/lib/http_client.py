@@ -123,7 +123,10 @@ class AsanaHttpClient:
 
                 self._last_rate_limit = self._parse_rate_limit_headers(exc.headers)
                 raise AsanaHttpError(exc.code, exc.reason, parsed_body, rate_limit=self._last_rate_limit) from exc
-            except error.URLError as exc:
+            except (error.URLError, TimeoutError) as exc:
+                # urllib can wrap connection timeouts in URLError, but a read
+                # timeout raised while receiving the response is a bare
+                # TimeoutError. Both are transient transport failures.
                 sleep_for = backoff_factor ** attempt
                 time.sleep(sleep_for)
                 last_error = exc
