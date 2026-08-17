@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import logging
 import os
 import shutil
 import ssl
@@ -24,6 +25,9 @@ from src.lib.jira_client import JiraClient
 
 
 MANIFEST_VERSION = 1
+DOWNLOAD_TIMEOUT_SECONDS = 60
+
+LOGGER = logging.getLogger(__name__)
 
 
 def utc_now() -> str:
@@ -121,7 +125,9 @@ def fetch_download_source(
         },
     )
     try:
-        with request.build_opener(request.HTTPSHandler(context=context)).open(req) as response:
+        with request.build_opener(request.HTTPSHandler(context=context)).open(
+            req, timeout=DOWNLOAD_TIMEOUT_SECONDS
+        ) as response:
             payload = json.loads(response.read().decode("utf-8"))
         download_url = payload.get("data", {}).get("download_url")
         if download_url:
@@ -147,7 +153,9 @@ def download_file(
         context.verify_mode = ssl.CERT_NONE
     req = request.Request(url, headers=headers)
     try:
-        with request.build_opener(request.HTTPSHandler(context=context)).open(req) as response:
+        with request.build_opener(request.HTTPSHandler(context=context)).open(
+            req, timeout=DOWNLOAD_TIMEOUT_SECONDS
+        ) as response:
             with destination.open("wb") as handle:
                 shutil.copyfileobj(response, handle)
     except error.HTTPError as exc:
@@ -284,6 +292,13 @@ def create_archive(
         )
         connection.commit()
 
+    LOGGER.info(
+        "Archive %s: %d Asana-hosted attachment(s) selected; downloading to %s",
+        archive_id,
+        len(sources),
+        archive_dir,
+    )
+
     def process(source: AttachmentSource) -> ArchiveFile:
         destination, relative = _archive_file_path(archive_dir, source)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -335,8 +350,16 @@ def create_archive(
     files: List[ArchiveFile] = []
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
         futures = [executor.submit(process, source) for source in sources]
-        for future in as_completed(futures):
+        total = len(futures)
+        for completed, future in enumerate(as_completed(futures), start=1):
             files.append(future.result())
+            if completed == total or completed == 1 or completed % 25 == 0:
+                LOGGER.info(
+                    "Archive %s: downloaded %d/%d attachment(s)",
+                    archive_id,
+                    completed,
+                    total,
+                )
     files.sort(key=lambda item: (item.task_gid, item.attachment_gid))
 
     manifest_path, manifest_hash = _write_manifest(
@@ -361,6 +384,13 @@ def create_archive(
             ),
         )
         connection.commit()
+    LOGGER.info(
+        "Archive %s: %s (%d/%d attachment(s) ready)",
+        archive_id,
+        status,
+        len(ready),
+        len(files),
+    )
     return manifest_path
 
 

@@ -67,6 +67,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     if not any((args.project_gid, args.project_gids, args.project_gids_file, args.all)):
         raise SystemExit("Choose a project scope or pass --all.")
     archive_id = args.archive_id or datetime.now().strftime("attachment-wave-%Y%m%d-%H%M%S")
+    logging.info(
+        "Starting attachment archive %s (up to %d concurrent downloads).",
+        archive_id,
+        max(1, args.workers),
+    )
     manifest = create_archive(
         database_path=args.database,
         archive_root=Path(args.archive_root),
