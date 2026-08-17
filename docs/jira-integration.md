@@ -151,7 +151,7 @@ Required flags:
 Optional flags:
 - `--database <path>` to point at a different SQLite file (default resolves to the active profile's database).
 - `--output-dir <path>` to change where the CSV(s) are written (default `exports/`).
-- `--filename <name>` to override the auto-generated `<ProjectName>-<YYYYMMDD-HHMM>_archival_tasks.csv` filename (single-project runs only).
+- `--filename <name>` to override the auto-generated `<ProjectName>-<ProjectGID>-<YYYYMMDD-HHMM>_archival_tasks.csv` filename (single-project runs only). Including the GID prevents duplicate Asana project names from overwriting each other. Before consolidation, the exporter recounts every source and consolidated CSV and aborts rather than write a manifest if any row count differs from the expected issue count.
 - `--fallback-atlassian-id <account_id>` to substitute an Atlassian account ID anywhere a mapping is missing.
 - `--export-id <value>` to record exported task GIDs and skip tasks already exported under the same identifier, matching the regular exporter.
 - `--workspace-gid <gid>` to override the workspace used in `Asana Project Link` and `Asana Task Link`; otherwise it is inferred from the selected project's tasks or the local database.

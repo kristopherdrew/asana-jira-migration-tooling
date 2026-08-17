@@ -63,6 +63,7 @@ from src.lib.task_scope import parse_task_gids, resolve_task_projects
 from src.lib.jira_csv_partition import (
     CsvPart,
     MAX_ISSUES_PER_SYNTHETIC_EPIC,
+    count_csv_issues,
     pack_csv_parts,
     partition_project_csv,
     write_partition_manifest,
@@ -123,10 +124,27 @@ def _sort_task_key(task: dict) -> tuple:
     return (depth_key, created_key, gid_key)
 
 
-def build_default_filename(project_name: Optional[str]) -> str:
+def build_default_filename(project_name: Optional[str], project_gid: str) -> str:
+    """Return a unique per-project export filename.
+
+    Asana permits duplicate project names, so the GID is part of the filename
+    rather than relying on a display name and minute-level timestamp alone.
+    """
     base = sanitize_filename_component(project_name or "project")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
-    return f"{base}-{stamp}_archival_tasks.csv"
+    return f"{base}-{project_gid}-{stamp}_archival_tasks.csv"
+
+
+def verify_csv_part_counts(parts: Iterable[CsvPart], label: str) -> None:
+    """Fail before import artifacts are written if a source CSV was replaced."""
+    for part in parts:
+        actual_count = count_csv_issues(part.path)
+        if actual_count != part.issue_count:
+            raise SystemExit(
+                f"{label} CSV count mismatch for {part.path}: expected "
+                f"{part.issue_count:,} issues, found {actual_count:,}. "
+                "The export was not consolidated."
+            )
 
 
 def build_epic_description(
@@ -576,7 +594,11 @@ def export_archival_project(
             rows = [[row[idx] for idx in columns_to_keep] for row in rows]
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        export_filename = ensure_tasks_suffix(filename) if filename else build_default_filename(project_name or project_gid)
+        export_filename = (
+            ensure_tasks_suffix(filename)
+            if filename
+            else build_default_filename(project_name or project_gid, project_gid)
+        )
         output_path = output_dir / export_filename
         with output_path.open("w", newline="", encoding="utf-8") as fp:
             writer = csv.writer(fp)
@@ -764,6 +786,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 output_path,
                 synthetic_epic_limit=MAX_ISSUES_PER_SYNTHETIC_EPIC,
             )
+            verify_csv_part_counts(project_parts, "Per-project")
             task_parts.extend(project_parts)
             if len(project_parts) > 1:
                 logger.info(
@@ -791,6 +814,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     consolidated_parts: List[CsvPart] = []
     if task_parts:
+        verify_csv_part_counts(task_parts, "Per-project")
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
         batches = pack_csv_parts(task_parts)
         for number, batch in enumerate(batches, start=1):
@@ -803,6 +827,13 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 strip_suffix=None,
             )
             issue_count = sum(part.issue_count for part in batch)
+            actual_count = count_csv_issues(consolidated_path)
+            if actual_count != issue_count:
+                raise SystemExit(
+                    f"Consolidated CSV count mismatch for {consolidated_path}: expected "
+                    f"{issue_count:,} issues, found {actual_count:,}. "
+                    "The manifest was not written."
+                )
             consolidated_parts.append(CsvPart(consolidated_path, issue_count))
             logger.info(
                 "Wrote consolidated archival tasks to %s (%s issues)",
