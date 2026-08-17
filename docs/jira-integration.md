@@ -302,7 +302,7 @@ The exporter also walks each task’s description and comments to augment embedd
 
 When `--stats-only` is supplied, the script prints summary information to stdout instead of writing a file: the project snapshot counts from `projects`, total task count, counts by hierarchy depth, a roster of users referenced by the project (including Atlassian IDs/emails when available), and custom field usage counts.
 
-Task-centric user columns pair the human-readable details with Atlassian IDs and Atlassian emails (e.g., `assignee`, `assignee_email`, `assignee_atlassian_id`, `assignee_atlassian_email`, and the same quartet for `creator`). The export also surfaces scheduling and scope metadata (`current_project`, aggregated `projects`, `start_on`, `start_at`, `created_at`, `due_date`, `actual_time_minutes`) and includes semicolon-separated `Tags` columns. Every export also writes a companion `<filename>_field_counts.csv` listing each detected custom field, how many tasks populated it, and whether it was included in the primary CSV.
+Task-centric user columns pair human-readable names and emails with Atlassian IDs (for example, `assignee`, `assignee_email`, and `assignee_atlassian_id`, with the same three columns for `creator`). Redundant Atlassian-email columns are omitted. The export also surfaces scheduling and scope metadata (`current_project`, aggregated `projects`, date-only `start_on`, `created_at`, `due_date`, `actual_time_minutes`); `start_at` is omitted. Repeated `Tags` columns preserve task tags. Every export also writes a companion `<filename>_field_counts.csv` listing each detected custom field, how many tasks populated it, and whether it was included in the primary CSV.
 
 ### Download Durable Asana Attachment Archives
 
