@@ -158,7 +158,7 @@ Optional flags:
 - `--prod` to build the “External issue ID” JQL search links against the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
-Also available under Interactive CLI **Migrate Projects** ("Export archival project tasks for Jira CSV import"). The CLI infers Workspace GID and offers an Export ID picker to start a new wave, resume an existing wave, remove one wave's recorded history, or run without persistent history. Exporting only produces CSVs and companion audit/manifest files; Jira importer configuration is a separate step.
+The Interactive CLI has one **Migrate Projects** task-export entry. It prompts whether to keep custom fields as CSV columns or consolidate them into Description; consolidation selects this archival-style exporter, including one synthetic Epic per project and its hierarchy-safe Epic and CSV limits. Immediately after scope selection, the CLI shows the targeted readiness report and asks whether to continue, so operators can return to remediation before completing export setup. The CLI infers Workspace GID and offers an Export ID picker to start a new wave, resume an existing wave, remove one wave's recorded history, or run without persistent history. Exporting only produces CSVs and companion audit/manifest files; Jira importer configuration is a separate step.
 
 ### Generate Jira CSV Importer Configuration
 Generates a reusable Jira importer configuration directly from the task export's canonical columns. No existing CSV is required:
