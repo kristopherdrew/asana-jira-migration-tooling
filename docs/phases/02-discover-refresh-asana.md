@@ -32,6 +32,15 @@ Runs these scripts in order:
 4. `scripts.get_projects` captures projects and task-count snapshots.
 5. `scripts.get_custom_fields` captures workspace custom-field definitions.
 
+### Discover and sync newly found projects
+
+Refreshes active project metadata, compares the resulting project GIDs with the
+snapshot from immediately before the refresh, and lists projects first seen by
+that run. Choose all or selected numbered projects, then optionally add the
+service account, sync their tasks, sync task comments/attachment metadata, and
+sync project status updates. This is the focused routine for projects created
+after the baseline refresh; it deliberately does not include archived projects.
+
 ### Sync project tasks
 
 Runs `scripts.get_tasks` for a selected team, project list, or all teams. It captures

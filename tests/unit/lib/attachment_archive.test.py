@@ -75,10 +75,14 @@ class AttachmentArchiveTest(TestCase):
     def test_create_archive_records_verified_file(self, mock_source, mock_download) -> None:
         mock_source.return_value = ("https://temporary", False)
         mock_download.side_effect = lambda _url, destination, *_args: destination.write_bytes(b"content")
-        manifest = create_archive(
-            str(self.db_path), self.root / "archives", "wave-1", self.credentials(),
-            project_gids=["project_1"], workers=2,
-        )
+        with self.assertLogs("src.lib.attachment_archive", level="INFO") as logs:
+            manifest = create_archive(
+                str(self.db_path), self.root / "archives", "wave-1", self.credentials(),
+                project_gids=["project_1"], workers=2,
+            )
+        self.assertIn("1 Asana-hosted attachment(s) selected", logs.output[0])
+        self.assertIn("downloaded 1/1 attachment(s)", logs.output[1])
+        self.assertIn("complete (1/1 attachment(s) ready)", logs.output[2])
         payload = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertEqual(payload["ready_count"], 1)
         self.assertEqual(payload["total_bytes"], 7)

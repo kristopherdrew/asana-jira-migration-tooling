@@ -1055,6 +1055,11 @@ def _candidate_project_gids(task_sync_result) -> List[str]:
 
 def run_task_sync_flow(log_level: str) -> None:
     args = args_get_tasks(log_level)
+    run_task_sync_for_args(args, log_level)
+
+
+def run_task_sync_for_args(args: List[str], log_level: str) -> None:
+    """Run a task sync and offer the standard service-account recovery path."""
     result = run_script(get_tasks.main, args)
     missed_project_gids = _candidate_project_gids(result)
     if not missed_project_gids:
@@ -1079,6 +1084,106 @@ def run_task_sync_flow(log_level: str) -> None:
     retry_args = _strip_task_scope_args(args)
     retry_args.extend(["--project-gids", ",".join(missed_project_gids)])
     run_script(get_tasks.main, retry_args)
+
+
+def _known_project_gids() -> Set[str]:
+    """Return project GIDs in the active snapshot before a metadata refresh."""
+    db_path = active_db_path()
+    if not db_path.exists():
+        return set()
+    with _open_sqlite(db_path) as connection:
+        return {
+            row["gid"]
+            for row in connection.execute("SELECT gid FROM projects")
+            if row["gid"]
+        }
+
+
+def _new_projects_after_refresh(known_gids: Set[str]) -> List[sqlite3.Row]:
+    """List projects discovered by the immediately preceding project refresh."""
+    with _open_sqlite(active_db_path()) as connection:
+        rows = connection.execute(
+            """
+            SELECT gid, name, team_name, num_tasks, num_incomplete_tasks
+            FROM projects
+            ORDER BY lower(COALESCE(team_name, '')), lower(name), gid
+            """
+        ).fetchall()
+    return [row for row in rows if row["gid"] not in known_gids]
+
+
+def _select_discovered_project_gids(projects: Sequence[sqlite3.Row]) -> List[str]:
+    """Print discovered projects and return the selected project GIDs."""
+    print("\nNew active projects discovered:")
+    for index, project in enumerate(projects, start=1):
+        team = project["team_name"] or "No team"
+        task_count = project["num_tasks"]
+        count_label = "unknown task count" if task_count is None else f"{task_count} task(s)"
+        print(f"[{index}] {project['name']} — {team} ({count_label}) [{project['gid']}]")
+
+    selection = prompt(
+        "Project numbers to sync (comma-separated; blank = all; 0 = cancel)",
+        default="",
+    )
+    if selection == "0":
+        return []
+    if not selection:
+        return [project["gid"] for project in projects]
+
+    selected: List[str] = []
+    try:
+        numbers = [int(value.strip()) for value in selection.split(",") if value.strip()]
+    except ValueError:
+        print("Selection must contain project numbers separated by commas.")
+        return []
+    for number in numbers:
+        if number < 1 or number > len(projects):
+            print(f"Project number {number} is out of range.")
+            return []
+        gid = projects[number - 1]["gid"]
+        if gid not in selected:
+            selected.append(gid)
+    return selected
+
+
+def run_new_project_discovery_flow(log_level: str) -> None:
+    """Discover newly visible active projects and sync selected project data."""
+    print("\nNew-project discovery: refresh active projects, then sync selected projects.")
+    known_gids = _known_project_gids()
+    project_args = build_common_args(log_level) + ["--archived-scope", "active"]
+    run_script(get_projects.main, project_args)
+
+    projects = _new_projects_after_refresh(known_gids)
+    if not projects:
+        print("No new active projects were discovered.")
+        return
+    project_gids = _select_discovered_project_gids(projects)
+    if not project_gids:
+        print("No projects selected; nothing to sync.")
+        return
+
+    scope = ",".join(project_gids)
+    if confirm("Add the service account to the selected projects first?", default=True):
+        run_script(
+            add_service_user_to_projects.main,
+            build_common_args(log_level) + ["--project-gids", scope],
+        )
+    if confirm("Sync tasks for the selected projects now?", default=True):
+        workers = prompt("Workers (default 5)", default="5")
+        task_args = build_common_args(log_level) + ["--project-gids", scope]
+        if workers:
+            task_args.extend(["--workers", workers])
+        run_task_sync_for_args(task_args, log_level)
+    if confirm("Sync task comments and attachment metadata now?", default=True):
+        run_script(
+            get_task_extras.main,
+            build_common_args(log_level) + ["--project-gids", scope],
+        )
+    if confirm("Sync project status updates now?", default=False):
+        run_script(
+            get_project_status_updates.main,
+            build_common_args(log_level) + ["--project-gids", scope],
+        )
 
 
 def print_rerun_command(module: str, argv: Sequence[str]) -> None:
@@ -2559,6 +2664,7 @@ def build_discover_refresh_menu(log_level: str) -> Dict[str, MenuItem]:
         "6": MenuItem("6", "Sync portfolios", lambda: run_script(get_portfolios.main, args_portfolios(log_level))),
         "7": MenuItem("7", "Sync personal tasks", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
         "8": MenuItem("8", "Run incremental Asana refresh", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
+        "9": MenuItem("9", "Discover and sync newly found projects", lambda: run_new_project_discovery_flow(log_level)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

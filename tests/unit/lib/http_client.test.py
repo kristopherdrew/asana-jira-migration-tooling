@@ -2,6 +2,7 @@ import io
 import json
 from typing import Dict, Optional
 from unittest import TestCase
+from unittest.mock import patch
 from urllib import error
 
 from src.lib.http_client import AsanaHttpClient, AsanaHttpError
@@ -40,6 +41,18 @@ class Always429Opener:
     def open(self, request, timeout=None):
         self.calls += 1
         return _raise_http_error(request.full_url, self.headers)
+
+
+class TimeoutThenSuccessOpener:
+    def __init__(self, response: FakeResponse):
+        self._response = response
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        self.calls += 1
+        if self.calls == 1:
+            raise TimeoutError("The read operation timed out")
+        return self._response
 
 
 def _raise_http_error(url: str, headers: Dict[str, str]):
@@ -105,3 +118,13 @@ class HttpClientRateLimitTest(TestCase):
         self.assertEqual(opener.last_request.method, "POST")
         self.assertEqual(opener.last_request.full_url, "https://app.asana.com/api/1.0/teams/team_1/addUser")
         self.assertEqual(opener.last_request.data, json.dumps(payload).encode("utf-8"))
+
+    @patch("src.lib.http_client.time.sleep")
+    def test_read_timeout_is_retried(self, mock_sleep) -> None:
+        opener = TimeoutThenSuccessOpener(FakeResponse({"data": []}))
+        client = AsanaHttpClient(token="token")
+        client._opener = opener  # type: ignore[attr-defined]
+
+        self.assertEqual(client.get("/users/me"), {"data": []})
+        self.assertEqual(opener.calls, 2)
+        mock_sleep.assert_called_once_with(1.0)

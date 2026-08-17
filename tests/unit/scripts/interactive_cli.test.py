@@ -1214,6 +1214,44 @@ class LifecycleMenuTest(TestCase):
         for menu in menus:
             self.assertEqual(list(menu), [item.key for item in menu.values()])
 
+    def test_discover_menu_exposes_new_project_workflow(self) -> None:
+        menu = interactive_cli.build_discover_refresh_menu("INFO")
+        self.assertEqual(menu["9"].label, "Discover and sync newly found projects")
+
+    @patch("scripts.interactive_cli.run_task_sync_for_args")
+    @patch("scripts.interactive_cli.run_script")
+    @patch("scripts.interactive_cli._select_discovered_project_gids", return_value=["proj_1", "proj_2"])
+    @patch("scripts.interactive_cli._new_projects_after_refresh", return_value=[object()])
+    @patch("scripts.interactive_cli._known_project_gids", return_value={"existing"})
+    @patch("scripts.interactive_cli.confirm", side_effect=[True, True, True, False])
+    @patch("scripts.interactive_cli.prompt", return_value="6")
+    def test_new_project_discovery_syncs_selected_projects(
+        self,
+        mock_prompt,
+        mock_confirm,
+        mock_known,
+        mock_new,
+        mock_select,
+        mock_run_script,
+        mock_task_sync,
+    ) -> None:
+        interactive_cli.run_new_project_discovery_flow("INFO")
+
+        mock_new.assert_called_once_with({"existing"})
+        mock_select.assert_called_once()
+        self.assertEqual(
+            [call.args for call in mock_run_script.call_args_list],
+            [
+                (interactive_cli.get_projects.main, ["--log-level", "INFO", "--archived-scope", "active"]),
+                (interactive_cli.add_service_user_to_projects.main, ["--log-level", "INFO", "--project-gids", "proj_1,proj_2"]),
+                (interactive_cli.get_task_extras.main, ["--log-level", "INFO", "--project-gids", "proj_1,proj_2"]),
+            ],
+        )
+        mock_task_sync.assert_called_once_with(
+            ["--log-level", "INFO", "--project-gids", "proj_1,proj_2", "--workers", "6"],
+            "INFO",
+        )
+
     def test_token_migration_is_only_in_advanced_recovery(self) -> None:
         client_menu = interactive_cli.build_client_environment_menu()
         advanced_menu = interactive_cli.build_advanced_recovery_menu("INFO")
