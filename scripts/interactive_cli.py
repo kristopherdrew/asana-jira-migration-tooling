@@ -2603,7 +2603,6 @@ def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Guided project migration", lambda: run_guided_project_migration(log_level)),
         "2": MenuItem("2", "Export project tasks for Jira CSV import", lambda: run_export_tasks_to_jira(log_level)),
-        "4": MenuItem("4", "Recover Jira task keys from project associations", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "5": MenuItem("5", "Recover Jira task keys from External IDs", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "6": MenuItem("6", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
         "7": MenuItem("7", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
