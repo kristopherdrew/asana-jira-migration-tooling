@@ -1310,6 +1310,22 @@ class ExportProjectToJiraCsvTest(TestCase):
 
         self.assertEqual(result, [("proj_archived", "Archived Project"), ("proj_1", "Example Project")])
 
+    def test_parse_project_list_reads_project_gid_column_from_csv(self) -> None:
+        scope_file = self.workspace / "project-map.csv"
+        scope_file.write_text(
+            "project_gid,project_key,project_name\nproj_1,OPS-1,Example Project\n"
+        )
+
+        result = parse_project_list(
+            self.connection,
+            project_gid=None,
+            project_gids_file=str(scope_file),
+            team_gid=None,
+            archived_scope="active",
+        )
+
+        self.assertEqual(result, [("proj_1", "Example Project")])
+
     def test_parse_project_list_team_gid_respects_archived_scope(self) -> None:
         self.connection.execute(
             """

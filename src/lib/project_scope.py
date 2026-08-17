@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+from io import StringIO
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional
 
@@ -28,7 +30,7 @@ def parse_gid_list(raw: Optional[str]) -> List[str]:
 
 
 def read_project_gids_file(path_value: str) -> str:
-    """Read newline- or comma-separated project GIDs and return normalized CSV text."""
+    """Read project GIDs from a plain list or a CSV ``project_gid`` column."""
     path = Path(path_value).expanduser()
     if not path.is_file():
         raise SystemExit(f"Project GID file not found: {path_value}")
@@ -36,7 +38,21 @@ def read_project_gids_file(path_value: str) -> str:
         raw = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise SystemExit(f"Could not read project GID file {path_value}: {exc}") from exc
-    project_gids = ",".join(raw.replace("\r", "\n").splitlines())
+    # Migration worksheets commonly retain context columns such as
+    # ``project_key`` and ``project_name``.  Honor their explicit gid column
+    # instead of treating each whole CSV row as an invalid gid.
+    reader = csv.DictReader(StringIO(raw))
+    if reader.fieldnames and "project_gid" in {
+        (name or "").strip().lower() for name in reader.fieldnames
+    }:
+        gid_column = next(
+            name for name in reader.fieldnames if (name or "").strip().lower() == "project_gid"
+        )
+        project_gids = ",".join(
+            (row.get(gid_column) or "").strip() for row in reader if row.get(gid_column)
+        )
+    else:
+        project_gids = ",".join(raw.replace("\r", "\n").splitlines())
     if not parse_gid_list(project_gids):
         raise SystemExit(f"No valid project GIDs found in file: {path_value}")
     return project_gids

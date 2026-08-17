@@ -114,7 +114,7 @@ Optional flags:
 - `--add-section-epics` to inject one synthetic epic per section and re-parent top-level tasks to the first section they belong to. The same balanced 1,000-child cap applies to section Epics.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
-When you provide `--export-id`, every exported task GID is persisted to the `exported_tasks` table along with the project it came from. Subsequent runs that reuse the same `--export-id` omit any task already logged. Use `--clear-export-ids` before a new migration wave if you want a clean slate.
+When you provide `--export-id`, every exported task GID is persisted to the `exported_tasks` table along with the project it came from. Subsequent runs that reuse the same `--export-id` omit any task already logged. Tasks are also deduplicated within every individual multi-project export, including runs without an export ID. Use `--clear-export-ids` before a new migration wave if you want a clean slate.
 
 When `--export-id` is present and you're writing to the default `exports/` directory, each run (even single-project exports) now uses a dedicated `exports/export-XX-<export-id>` folder so the task CSV, field counts, link modifications, and skipped-task reports stay grouped together.
 
@@ -158,7 +158,7 @@ Optional flags:
 - `--prod` to build the “External issue ID” JQL search links against the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
-Also available under Interactive CLI **Migrate Projects** ("Export archival project tasks for Jira CSV import"). Exporting only produces CSVs and companion audit/manifest files; Jira importer configuration is a separate step.
+Also available under Interactive CLI **Migrate Projects** ("Export archival project tasks for Jira CSV import"). The CLI infers Workspace GID and offers an Export ID picker to start a new wave, resume an existing wave, remove one wave's recorded history, or run without persistent history. Exporting only produces CSVs and companion audit/manifest files; Jira importer configuration is a separate step.
 
 ### Generate Jira CSV Importer Configuration
 Generates a reusable Jira importer configuration directly from the task export's canonical columns. No existing CSV is required:

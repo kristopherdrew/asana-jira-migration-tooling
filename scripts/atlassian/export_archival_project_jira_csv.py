@@ -165,6 +165,7 @@ def export_archival_project(
     skipped_log: Optional[List[Dict[str, str]]] = None,
     workspace_gid: Optional[str] = None,
     task_gids: Optional[Set[str]] = None,
+    seen_task_gids: Optional[Set[str]] = None,
 ) -> Optional[Path]:
     jira_base_url = normalize_jira_base_url(jira_base_url)
     if not jira_base_url:
@@ -248,6 +249,17 @@ def export_archival_project(
                     export_id,
                 )
                 return None
+
+        if seen_task_gids is not None:
+            tasks = [task for task in tasks if task["gid"] not in seen_task_gids]
+            if not tasks:
+                logger.info(
+                    "All tasks for archival project %s were already included in this export run; "
+                    "skipping.",
+                    project_gid,
+                )
+                return None
+        exported_in_this_project = {task["gid"] for task in tasks if task.get("gid")}
 
         field_meta = bundle["field_meta"]
         single_map = bundle["single_map"]
@@ -615,6 +627,8 @@ def export_archival_project(
                 export_id,
                 project_gid,
             )
+        if seen_task_gids is not None:
+            seen_task_gids.update(exported_in_this_project)
         return output_path
     finally:
         connection.close()
@@ -719,6 +733,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     task_parts: List[CsvPart] = []
     skipped_empty_projects: List[tuple[str, str]] = []
     skipped_log: List[Dict[str, str]] = []
+    seen_task_gids: Set[str] = set()
     for project_gid, project_name in projects:
         logger.info("Starting archival export for project %s (%s)", project_name, project_gid)
         try:
@@ -733,6 +748,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 skipped_log=skipped_log,
                 workspace_gid=args.workspace_gid,
                 task_gids=task_filters.get(project_gid),
+                seen_task_gids=seen_task_gids,
             )
         except NoTasksFoundError:
             skipped_empty_projects.append((project_gid, project_name))

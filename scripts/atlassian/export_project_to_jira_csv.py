@@ -28,6 +28,7 @@ from src.lib.database import Database, resolve_default_db_path
 from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.task_scope import parse_task_gids, resolve_task_projects
+from src.lib.project_scope import read_project_gids_file
 from src.lib.jira_csv_partition import (
     CsvPart,
     MAX_ISSUES_PER_SYNTHETIC_EPIC,
@@ -1137,12 +1138,7 @@ def parse_project_list(
         return [(row["gid"], row["name"])]
 
     if project_gids_file:
-        path = Path(project_gids_file)
-        if not path.exists():
-            raise SystemExit(f"Project gids file not found: {project_gids_file}")
-        raw = path.read_text()
-        # Normalize newlines to commas so we can reuse the comma-parsing path below.
-        project_gids = raw.replace("\r", "\n").replace("\n", ",")
+        project_gids = read_project_gids_file(project_gids_file)
 
     if project_gids:
         gids = [gid.strip() for gid in project_gids.split(",") if gid.strip()]
@@ -1674,6 +1670,7 @@ def export_project(
     add_epics: bool = False,
     add_section_epics: bool = False,
     task_gids: Optional[Set[str]] = None,
+    seen_task_gids: Optional[Set[str]] = None,
 ) -> Optional[Path]:
     database = Database(db_path=database_path)
     with database.connect() as refresh_connection:
@@ -1789,6 +1786,16 @@ def export_project(
                     export_id,
                 )
                 return None
+
+        if seen_task_gids is not None:
+            tasks = [task for task in tasks if task["gid"] not in seen_task_gids]
+            if not tasks:
+                logger.info(
+                    "All tasks for project %s were already included in this export run; skipping.",
+                    project_gid,
+                )
+                return None
+        exported_in_this_project = {task["gid"] for task in tasks if task.get("gid")}
 
         # Optionally add a synthetic project epic and re-parent top-level tasks
         if add_epics:
@@ -2758,6 +2765,8 @@ def export_project(
                 export_id,
                 project_gid,
             )
+        if seen_task_gids is not None:
+            seen_task_gids.update(exported_in_this_project)
 
         return output_path
     finally:
@@ -3185,6 +3194,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     cached_custom_field_names: List[str] = []
     reuse_custom_fields = project_count > 1 and not args.stats_only and not args.no_custom_fields
     skipped_log: List[Dict[str, str]] = []
+    seen_task_gids: Set[str] = set()
     per_project_skipped: Dict[str, List[Dict[str, str]]] = defaultdict(list)
     task_parts: List[CsvPart] = []
     field_count_files: List[Path] = []
@@ -3273,6 +3283,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             no_custom_fields=args.no_custom_fields,
             add_section_epics=args.add_section_epics,
             task_gids=task_filters.get(project_gid),
+            seen_task_gids=seen_task_gids,
         )
         if args.stats_only and output_path:
             logger.info("Generated statistics for project %s (%s).", project_name, project_gid)
