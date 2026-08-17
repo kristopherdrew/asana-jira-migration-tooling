@@ -13,8 +13,8 @@ multi-tab ``.xlsx`` (no CSV intermediate), written with the dependency-free
 * **Member Summary** — one row per member: how many projects they belong to and a
   semicolon-separated list of those project names.
 
-Scope with ``--team-gid`` to focus on one team's projects; omit it for the whole
-workspace.
+Scope with ``--team-gid`` or an explicit ``--project-gids`` list; omit both for
+the whole workspace.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from src.lib.config import load_credentials
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.asana_urls import build_project_url, infer_workspace_gid
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.project_scope import parse_gid_list, read_project_gids_file
 from src.lib.xlsx_writer import write_workbook
 
 
@@ -63,6 +64,8 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--team-gid",
         help="Optional team GID to limit the report to one team's projects.",
     )
+    parser.add_argument("--project-gids", action="append", default=None, help="Comma-separated project GIDs to include (may be repeated).")
+    parser.add_argument("--project-gids-file", help="UTF-8 file containing comma- or newline-separated project GIDs.")
     parser.add_argument(
         "--workspace-gid",
         help="Optional Asana workspace GID used to build project URLs.",
@@ -81,11 +84,21 @@ def _bool_to_text(value: Optional[int]) -> str:
     return "true" if bool(value) else "false"
 
 
-def _scope_clause(team_gid: Optional[str], alias: str = "p") -> Tuple[str, List[str]]:
+def _scope_clause(team_gid: Optional[str], project_gids: Optional[List[str]] = None,
+                  alias: str = "p") -> Tuple[str, List[str]]:
     """Return a `` AND ...`` SQL fragment + params to scope on projects ``alias``."""
+    clauses: List[str] = []
+    params: List[str] = []
     if team_gid:
-        return f" AND {alias}.team_gid = ?", [team_gid]
-    return "", []
+        clauses.append(f"{alias}.team_gid = ?")
+        params.append(team_gid)
+    if project_gids is not None:
+        if project_gids:
+            clauses.append(f"{alias}.gid IN (" + ", ".join("?" for _ in project_gids) + ")")
+            params.extend(project_gids)
+        else:
+            clauses.append("1 = 0")
+    return ("" if not clauses else " AND " + " AND ".join(clauses)), params
 
 
 def _membership_rows(connection, scope: str, params: List[str]) -> List[dict]:
@@ -193,9 +206,10 @@ def build_member_sheets(
     connection,
     workspace_gid: Optional[str] = None,
     team_gid: Optional[str] = None,
+    project_gids: Optional[List[str]] = None,
 ) -> List[Tuple[str, List[list]]]:
     """Build the data tabs (each a ``(title, rows)`` with a header row first)."""
-    scope, params = _scope_clause(team_gid)
+    scope, params = _scope_clause(team_gid, project_gids)
     membership_rows = _membership_rows(connection, scope, params)
     return [
         _project_members_sheet(membership_rows, workspace_gid),
@@ -207,9 +221,11 @@ def _build_overview(
     data_sheets: List[Tuple[str, List[list]]],
     database: str,
     team_gid: Optional[str],
+    project_gids: Optional[List[str]],
     generated_at: str,
 ) -> Tuple[str, List[list]]:
-    scope_label = f"team_gid={team_gid}" if team_gid else "whole workspace"
+    scope_label = (f"project_gids={len(project_gids)}" if project_gids is not None
+                   else f"team_gid={team_gid}" if team_gid else "whole workspace")
     overview: List[list] = [
         ["Project membership report", None],
         ["Generated (UTC)", generated_at],
@@ -228,6 +244,7 @@ def export_project_members_report(
     output_dir: Path,
     filename: Optional[str] = None,
     team_gid: Optional[str] = None,
+    project_gids: Optional[List[str]] = None,
     workspace_gid: Optional[str] = None,
 ) -> Path:
     database = Database(db_path=database_path)
@@ -240,10 +257,10 @@ def export_project_members_report(
     with database.connect() as connection:
         database.initialize(connection)
         resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
-        data_sheets = build_member_sheets(connection, resolved_workspace_gid, team_gid)
+        data_sheets = build_member_sheets(connection, resolved_workspace_gid, team_gid, project_gids)
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
-    overview = _build_overview(data_sheets, database_path, team_gid, generated_at)
+    overview = _build_overview(data_sheets, database_path, team_gid, project_gids, generated_at)
     write_workbook(output_path, [overview] + data_sheets)
 
     total_rows = sum(max(len(rows) - 1, 0) for _, rows in data_sheets)
@@ -258,6 +275,9 @@ def export_project_members_report(
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
+    raw_project_gids = list(args.project_gids or [])
+    if args.project_gids_file:
+        raw_project_gids.append(read_project_gids_file(args.project_gids_file))
     try:
         log_level = resolve_log_level(args.log_level)
     except ValueError as exc:  # noqa: BLE001
@@ -276,6 +296,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         output_dir=Path(args.output_dir),
         filename=args.filename,
         team_gid=args.team_gid,
+        project_gids=parse_gid_list(",".join(raw_project_gids)) if raw_project_gids else None,
         workspace_gid=workspace_gid,
     )
     logger.info("Project membership report completed: %s", output_path)

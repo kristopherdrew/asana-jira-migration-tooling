@@ -123,6 +123,17 @@ class ExportProjectMembersReportTest(TestCase):
         summary = self._as_dicts(self._sheets(team_gid="team_1")["Member Summary"])
         self.assertEqual([row["user_gid"] for row in summary], ["u1"])
 
+    def test_project_gid_scope_filters_projects(self) -> None:
+        self._team("team_1", "Team One")
+        self._user("u1", "Ada")
+        self._user("u2", "Alan")
+        self._project("proj_1", "One", "team_1", members=[("u1", "Ada")])
+        self._project("proj_2", "Two", "team_1", members=[("u2", "Alan")])
+        self.connection.commit()
+        sheets = {title: rows for title, rows in build_member_sheets(
+            self.connection, "ws_1", project_gids=["proj_2"])}
+        self.assertEqual([row["project_gid"] for row in self._as_dicts(sheets["Project Members"])], ["proj_2"])
+
     def test_empty_database_yields_header_only_sheets(self) -> None:
         sheets = self._sheets()
         self.assertEqual(set(sheets), {"Project Members", "Member Summary"})

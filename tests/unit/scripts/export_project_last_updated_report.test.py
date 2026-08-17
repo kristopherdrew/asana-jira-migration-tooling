@@ -138,3 +138,11 @@ class ExportProjectLastUpdatedReportTest(TestCase):
 
         self.assertEqual(set(rows), {"proj_1", "proj_3"})
         self.assertNotIn("proj_2", rows)
+
+    def test_project_gids_scope_to_the_explicit_list(self) -> None:
+        self._seed()
+        csv_path = export_project_last_updated_report(
+            str(self.database_path), self.workspace / "exports", filename="selected.csv",
+            project_gids=["proj_2"],
+        )
+        self.assertEqual(set(self._read(csv_path)), {"proj_2"})

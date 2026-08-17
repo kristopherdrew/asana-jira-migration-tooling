@@ -18,6 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.date_formatting import format_report_date
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.project_scope import parse_gid_list, read_project_gids_file
 
 
 DEFAULT_OUTPUT_DIR = "exports"
@@ -49,11 +50,13 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--team-gid",
         help="Optional team GID to scope the report to a single team's projects.",
     )
+    parser.add_argument("--project-gids", action="append", default=None, help="Comma-separated project GIDs to include (may be repeated).")
+    parser.add_argument("--project-gids-file", help="UTF-8 file containing comma- or newline-separated project GIDs.")
     return parser.parse_args(argv)
 
 
 def fetch_project_last_updated(
-    connection, team_gid: Optional[str] = None
+    connection, team_gid: Optional[str] = None, project_gids: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """Return one dict per project with its latest task-update timestamp.
 
@@ -68,9 +71,18 @@ def fetch_project_last_updated(
     """
     params: List[object] = []
     where_clause = ""
+    filters = []
     if team_gid:
-        where_clause = "WHERE p.team_gid = ?"
+        filters.append("p.team_gid = ?")
         params.append(team_gid)
+    if project_gids is not None:
+        if project_gids:
+            filters.append("p.gid IN (" + ", ".join("?" for _ in project_gids) + ")")
+            params.extend(project_gids)
+        else:
+            filters.append("1 = 0")
+    if filters:
+        where_clause = "WHERE " + " AND ".join(filters)
 
     projects = connection.execute(
         f"""
@@ -125,6 +137,7 @@ def export_project_last_updated_report(
     output_dir: Path,
     filename: Optional[str] = None,
     team_gid: Optional[str] = None,
+    project_gids: Optional[List[str]] = None,
 ) -> Path:
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
@@ -139,7 +152,7 @@ def export_project_last_updated_report(
 
     with database.connect() as connection:
         database.initialize(connection)
-        rows = fetch_project_last_updated(connection, team_gid)
+        rows = fetch_project_last_updated(connection, team_gid, project_gids)
 
     if not rows:
         logger.info("No projects found in %s; generated an empty export.", database_path)
@@ -175,6 +188,9 @@ def export_project_last_updated_report(
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
+    raw_project_gids = list(args.project_gids or [])
+    if args.project_gids_file:
+        raw_project_gids.append(read_project_gids_file(args.project_gids_file))
     try:
         log_level = resolve_log_level(args.log_level)
     except ValueError as exc:  # noqa: BLE001
@@ -186,6 +202,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         output_dir=Path(args.output_dir),
         filename=args.filename,
         team_gid=args.team_gid,
+        project_gids=parse_gid_list(",".join(raw_project_gids)) if raw_project_gids else None,
     )
     logger.info("Project last-updated report completed: %s", output_path)
 

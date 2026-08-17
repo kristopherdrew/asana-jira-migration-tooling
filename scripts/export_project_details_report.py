@@ -20,6 +20,7 @@ from src.lib.database import Database, resolve_default_db_path
 from src.lib.date_formatting import format_report_date
 from src.lib.asana_urls import build_project_url, build_team_url, infer_workspace_gid
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.project_scope import parse_gid_list, read_project_gids_file
 
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
@@ -48,6 +49,8 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--team-gid",
         help="Optional team GID to limit the export to projects assigned to one team.",
     )
+    parser.add_argument("--project-gids", action="append", default=None, help="Comma-separated project GIDs to include (may be repeated).")
+    parser.add_argument("--project-gids-file", help="UTF-8 file containing comma- or newline-separated project GIDs.")
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -102,6 +105,7 @@ def export_project_details(
     output_dir: Path,
     filename: Optional[str] = None,
     team_gid: Optional[str] = None,
+    project_gids: Optional[list[str]] = None,
     workspace_gid: Optional[str] = None,
 ) -> Path:
     database = Database(db_path=database_path)
@@ -118,7 +122,18 @@ def export_project_details(
     with database.connect() as connection:
         database.initialize(connection)
         resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
-        team_filter = "WHERE p.team_gid = ?" if team_gid else ""
+        filters = []
+        params = []
+        if team_gid:
+            filters.append("p.team_gid = ?")
+            params.append(team_gid)
+        if project_gids is not None:
+            if project_gids:
+                filters.append("p.gid IN (" + ", ".join("?" for _ in project_gids) + ")")
+                params.extend(project_gids)
+            else:
+                filters.append("1 = 0")
+        project_filter = "WHERE " + " AND ".join(filters) if filters else ""
         query = f"""
             WITH actual_task_counts AS (
                 SELECT
@@ -213,12 +228,9 @@ def export_project_details(
             LEFT JOIN users uo ON uo.gid = p.owner_gid
             LEFT JOIN user_atlassian_accounts uoa ON uoa.user_gid = p.owner_gid
             LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid
-            {team_filter}
+            {project_filter}
             ORDER BY COALESCE(t.name, p.team_name) COLLATE NOCASE, p.name COLLATE NOCASE, p.gid
         """
-        params = []
-        if team_gid:
-            params.append(team_gid)
         rows = connection.execute(query, params).fetchall()
 
     if not rows:
@@ -325,6 +337,9 @@ def export_project_details(
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
+    raw_project_gids = list(args.project_gids or [])
+    if args.project_gids_file:
+        raw_project_gids.append(read_project_gids_file(args.project_gids_file))
     try:
         log_level = resolve_log_level(args.log_level)
     except ValueError as exc:  # noqa: BLE001
@@ -336,6 +351,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         output_dir=Path(args.output_dir),
         filename=args.filename,
         team_gid=args.team_gid,
+        project_gids=parse_gid_list(",".join(raw_project_gids)) if raw_project_gids else None,
         workspace_gid=args.workspace_gid or load_credentials(DEFAULT_CONFIG_ROOT).workspace_gid,
     )
     logger.info("Project details export completed: %s", output_path)

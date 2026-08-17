@@ -630,7 +630,8 @@ class IncrementalArgsBuilderTest(TestCase):
 
         menu["1"].handler()
         menu["2"].handler()
-        menu["3"].handler()
+        with patch("builtins.input", return_value="1"):
+            menu["3"].handler()
         menu["4"].handler()
         menu["5"].handler()
         menu["6"].handler()
@@ -661,7 +662,8 @@ class IncrementalArgsBuilderTest(TestCase):
         mock_open_sqlite.return_value = MagicMock()
         menu = interactive_cli.build_reports_menu("DEBUG")
 
-        menu["3"].handler()
+        with patch("builtins.input", return_value="1"):
+            menu["3"].handler()
 
         self.assertEqual(mock_run_script.call_count, 1)
         self.assertIs(mock_run_script.call_args_list[0].args[0], interactive_cli.export_project_details_report.main)
@@ -1018,6 +1020,31 @@ class ProfileSessionTest(TestCase):
                 interactive_cli.select_jira_site(make_default=True)
             self.assertEqual(interactive_cli._session.jira_site_key, "production_jira")
             self.assertIn("JIRA_DEFAULT_SITE=production_jira", env_path.read_text(encoding="utf-8"))
+
+    def test_remove_active_default_jira_site_selects_remaining_site(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            env_path.write_text(
+                "ASANA_WORKSPACE_GID=w\nJIRA_SITES=production_jira,sandbox_jira\n"
+                "JIRA_DEFAULT_SITE=production_jira\n"
+                "JIRA_SITE_PRODUCTION_JIRA_NAME='Production Jira'\n"
+                "JIRA_SITE_PRODUCTION_JIRA_URL=https://prod.example.net\n"
+                "JIRA_SITE_SANDBOX_JIRA_NAME='Sandbox Jira'\n"
+                "JIRA_SITE_SANDBOX_JIRA_URL=https://sandbox.example.net\n",
+                encoding="utf-8",
+            )
+            interactive_cli._set_session(Path(tmpdir), env_path)
+            with patch("scripts.interactive_cli.prompt", return_value="1"), \
+                patch("scripts.interactive_cli.confirm", return_value=True), \
+                redirect_stdout(io.StringIO()):
+                interactive_cli.remove_jira_site()
+
+            self.assertEqual(interactive_cli._session.jira_site_key, "sandbox_jira")
+            self.assertEqual(interactive_cli._session.default_jira_site_key, "sandbox_jira")
+            saved = env_path.read_text(encoding="utf-8")
+            self.assertIn("JIRA_SITES=sandbox_jira", saved)
+            self.assertIn("JIRA_DEFAULT_SITE=sandbox_jira", saved)
+            self.assertNotIn("JIRA_SITE_PRODUCTION_JIRA_URL", saved)
 
     def test_switch_profile_writes_marker_and_sets_db_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

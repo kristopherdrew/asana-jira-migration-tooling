@@ -59,6 +59,7 @@ from src.lib.config import load_credentials
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.asana_urls import build_project_url, infer_workspace_gid
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.project_scope import parse_gid_list, read_project_gids_file
 from src.lib.team_analysis import build_team_analysis
 from src.lib.xlsx_writer import write_workbook
 from scripts.export_project_members_report import (
@@ -108,6 +109,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--owner-gid",
         help="Optional project-owner user GID to limit the report to one owner's projects.",
     )
+    parser.add_argument("--project-gids", action="append", default=None,
+                        help="Comma-separated project GIDs to include (may be repeated).")
+    parser.add_argument("--project-gids-file",
+                        help="UTF-8 file containing comma- or newline-separated project GIDs.")
     parser.add_argument(
         "--jira-keys",
         action="append",
@@ -854,6 +859,7 @@ def export_field_section_review_report(
     filename: Optional[str] = None,
     team_gid: Optional[str] = None,
     owner_gid: Optional[str] = None,
+    explicit_project_gids: Optional[List[str]] = None,
     jira_keys: Optional[List[str]] = None,
     workspace_gid: Optional[str] = None,
 ) -> Path:
@@ -866,9 +872,9 @@ def export_field_section_review_report(
     with database.connect() as connection:
         database.initialize(connection)
         resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
-        project_gids: Optional[List[str]] = None
+        project_gids = explicit_project_gids
         if jira_keys:
-            project_gids, unmatched = _resolve_project_gids_from_jira_keys(
+            jira_project_gids, unmatched = _resolve_project_gids_from_jira_keys(
                 connection, jira_keys
             )
             if unmatched:
@@ -877,11 +883,12 @@ def export_field_section_review_report(
                     len(unmatched),
                     ", ".join(unmatched),
                 )
-            if not project_gids:
+            if not jira_project_gids:
                 logger.warning(
                     "None of the supplied Jira keys mapped to a project; "
                     "the report will be empty."
                 )
+            project_gids = jira_project_gids
         report_title = (
             f"{_resolve_scope_name(connection, team_gid, owner_gid, jira_keys)}"
             " Migration Review"
@@ -918,6 +925,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     jira_keys = list(args.jira_keys or [])
     if args.jira_keys_file:
         jira_keys.append(_read_jira_keys_file(args.jira_keys_file))
+    raw_project_gids = list(args.project_gids or [])
+    if args.project_gids_file:
+        raw_project_gids.append(read_project_gids_file(args.project_gids_file))
     try:
         log_level = resolve_log_level(args.log_level)
     except ValueError as exc:  # noqa: BLE001
@@ -930,6 +940,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         filename=args.filename,
         team_gid=args.team_gid,
         owner_gid=args.owner_gid,
+        explicit_project_gids=(
+            parse_gid_list(",".join(raw_project_gids)) if raw_project_gids else None
+        ),
         jira_keys=jira_keys,
         workspace_gid=args.workspace_gid or load_credentials(DEFAULT_CONFIG_ROOT).workspace_gid,
     )

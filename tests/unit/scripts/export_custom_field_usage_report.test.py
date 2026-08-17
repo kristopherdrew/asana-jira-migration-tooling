@@ -184,6 +184,20 @@ class ExportCustomFieldUsageReportTest(TestCase):
 
         self.assertEqual([row["project_gid"] for row in rows], ["proj_1"])
 
+    def test_project_gid_filter_restricts_projects(self) -> None:
+        self.database.upsert_project(self.connection, {"gid": "proj_1", "name": "One"}, SYNC_TIME)
+        self.database.upsert_project(self.connection, {"gid": "proj_2", "name": "Two"}, SYNC_TIME)
+        self._custom_field("cf_text", "Note", "text")
+        for gid in ("proj_1", "proj_2"):
+            self.database.upsert_task(self.connection, {"gid": f"task_{gid}", "name": gid,
+                "memberships": [{"project": {"gid": gid}}],
+                "custom_fields": [{"gid": "cf_text", "type": "text", "text_value": "v"}]}, SYNC_TIME)
+        self.connection.commit()
+        output_path = export_custom_field_usage(str(self.db_path), self.workspace / "exports",
+            filename="selected.csv", project_gids=["proj_2"], workspace_gid="ws_1")
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            self.assertEqual([row["project_gid"] for row in csv.DictReader(handle)], ["proj_2"])
+
     def test_empty_database_writes_header_only(self) -> None:
         output_path, rows = self._run("usage.csv")
         self.assertTrue(output_path.exists())

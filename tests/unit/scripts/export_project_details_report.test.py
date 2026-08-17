@@ -314,3 +314,15 @@ class ExportProjectDetailsReportTest(TestCase):
             rows = list(csv.DictReader(handle))
 
         self.assertEqual([row["gid"] for row in rows], ["proj_1"])
+
+    def test_exports_only_explicit_project_gids(self) -> None:
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        for gid in ("proj_1", "proj_2"):
+            self.database.upsert_project(self.connection, {"gid": gid, "name": gid}, sync_time)
+        self.connection.commit()
+        output_path = export_project_details(
+            str(self.db_path), self.workspace / "exports", filename="selected.csv",
+            project_gids=["proj_2"], workspace_gid="ws_1",
+        )
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            self.assertEqual([row["gid"] for row in csv.DictReader(handle)], ["proj_2"])
