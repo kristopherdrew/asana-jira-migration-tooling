@@ -2353,11 +2353,9 @@ def export_project(
             "assignee",
             "assignee_email",
             "assignee_atlassian_id",
-            "assignee_atlassian_email",
             "creator",
             "creator_email",
             "creator_atlassian_id",
-            "creator_atlassian_email",
             "projects",
             "modified_section",
         ]
@@ -2369,7 +2367,6 @@ def export_project(
         header.extend(
             [
                 "start_on",
-                "start_at",
                 "created_at",
                 "due_date",
                 "completed",
@@ -2432,7 +2429,7 @@ def export_project(
             if not _is_explicitly_inactive_atlassian_user(user_map, assignee_gid) or not active_creator_fallback:
                 assignee_display_name = format_user_display_name(task["assignee_gid"], task["assignee_name"])
                 assignee_email = task["assignee_email"] or ""
-                assignee_atl, assignee_atl_email = resolve_atlassian_identity(
+                assignee_atl, _ = resolve_atlassian_identity(
                     user_map, assignee_gid, fallback_atlassian_id
                 )
                 assignee_gid_effective = assignee_gid
@@ -2440,7 +2437,6 @@ def export_project(
                 assignee_display_name = active_creator_fallback["display_name"]
                 assignee_email = active_creator_fallback["email"]
                 assignee_atl = active_creator_fallback["atlassian_id"]
-                assignee_atl_email = active_creator_fallback["atlassian_email"]
                 assignee_gid_effective = active_creator_fallback["user_gid"]
             record_user_association(
                 assignee_gid_effective,
@@ -2459,7 +2455,7 @@ def export_project(
                 except Exception:
                     pass
             creator_gid = task["created_by_gid"]
-            creator_atl, creator_atl_email = resolve_atlassian_identity(
+            creator_atl, _ = resolve_atlassian_identity(
                 user_map, creator_gid, fallback_atlassian_id
             )
             record_user_association(
@@ -2501,7 +2497,6 @@ def export_project(
                 "" if task["actual_time_minutes"] is None else str(task["actual_time_minutes"])
             )
             start_on_value = format_export_datetime(task["start_on"])
-            start_at_value = format_export_datetime(task["start_at"])
             created_at_value = format_export_datetime(task["created_at"])
             completed_at_value = format_export_datetime(task["completed_at"])
 
@@ -2571,11 +2566,9 @@ def export_project(
                 assignee_display_name,
                 assignee_email,
                 assignee_atl,
-                assignee_atl_email,
                 format_user_display_name(task["created_by_gid"], task["creator_name"]),
                 task["creator_email"] or "",
                 creator_atl,
-                creator_atl_email,
                 projects_value,
                 modified_section,
             ]
@@ -2586,7 +2579,6 @@ def export_project(
             row.extend(
                 [
                     start_on_value,
-                    start_at_value,
                     created_at_value,
                     due_date,
                     completed_flag,

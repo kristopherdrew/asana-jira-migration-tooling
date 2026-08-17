@@ -301,11 +301,15 @@ class ExportProjectToJiraCsvTest(TestCase):
         asana_id_index = header.index("External issue ID")
         self.assertNotIn("completed", header)
         assignee_atl_index = header.index("assignee_atlassian_id")
-        assignee_atl_email_index = header.index("assignee_atlassian_email")
         creator_index = header.index("creator")
         creator_email_index = header.index("creator_email")
         creator_atl_index = header.index("creator_atlassian_id")
-        creator_atl_email_index = header.index("creator_atlassian_email")
+        for excluded_column in (
+            "assignee_atlassian_email",
+            "creator_atlassian_email",
+            "start_at",
+        ):
+            self.assertNotIn(excluded_column, header)
         current_project_index = header.index("current_project")
         project_link_index = header.index("Asana Project Link")
         task_link_index = header.index("Asana Task Link")
@@ -325,7 +329,6 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(header.index("notes") + 1, min(comment_columns))
         projects_index = header.index("projects")
         start_on_index = header.index("start_on")
-        start_at_index = header.index("start_at")
         created_at_index = header.index("created_at")
         due_date_index = header.index("due_date")
         completed_at_index = header.index("completed_at")
@@ -357,18 +360,15 @@ class ExportProjectToJiraCsvTest(TestCase):
         )
         self.assertEqual(first_task[section_columns[0]], "Backlog")
         self.assertEqual(first_task[assignee_atl_index], "atl-account-alice")
-        self.assertEqual(first_task[assignee_atl_email_index], "alice.atl@example.com")
         self.assertEqual(first_task[creator_index], "Alice Reviewer")
         self.assertEqual(first_task[creator_email_index], "alice@example.com")
         self.assertEqual(first_task[creator_atl_index], "atl-account-alice")
-        self.assertEqual(first_task[creator_atl_email_index], "alice.atl@example.com")
         self.assertEqual(first_task[current_project_index], "Example Project (proj_1)")
         self.assertEqual(
             first_task[projects_index],
             "Example Project (proj_1); Secondary Project (proj_2)",
         )
         self.assertEqual(first_task[start_on_index], "01/Mar/25 12:00 am")
-        self.assertEqual(first_task[start_at_index], "01/Mar/25 9:00 am")
         self.assertEqual(first_task[created_at_index], "25/Feb/25 10:30 am")
         self.assertEqual(first_task[due_date_index], "10/Mar/25 12:00 am")
         self.assertEqual(first_task[completed_at_index], "04/Mar/25 9:05 am")
@@ -381,16 +381,13 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(second_task[comment_columns[1]], "")
         self.assertEqual(second_task[section_columns[0]], "In Progress")
         self.assertEqual(second_task[assignee_atl_index], "atl-account-bob")
-        self.assertEqual(second_task[assignee_atl_email_index], "bob.atl@example.com")
         self.assertEqual(second_task[creator_index], "Bob Approver")
         self.assertEqual(second_task[creator_email_index], "bob@example.com")
         self.assertEqual(second_task[creator_atl_index], "atl-account-bob")
-        self.assertEqual(second_task[creator_atl_email_index], "bob.atl@example.com")
         self.assertEqual(second_task[asana_id_index], "task_2")
         self.assertEqual(second_task[current_project_index], "Example Project (proj_1)")
         self.assertEqual(second_task[projects_index], "Example Project (proj_1)")
         self.assertEqual(second_task[start_on_index], "02/Mar/25 12:00 am")
-        self.assertEqual(second_task[start_at_index], "02/Mar/25 1:30 pm")
         self.assertEqual(second_task[created_at_index], "26/Feb/25 12:45 pm")
         self.assertEqual(second_task[due_date_index], "12/Mar/25 12:00 am")
         self.assertEqual(second_task[completed_at_index], "")
@@ -708,20 +705,19 @@ class ExportProjectToJiraCsvTest(TestCase):
         assignee_idx = header.index("assignee")
         assignee_email_idx = header.index("assignee_email")
         assignee_atl_idx = header.index("assignee_atlassian_id")
-        assignee_atl_email_idx = header.index("assignee_atlassian_email")
         creator_idx = header.index("creator")
         creator_email_idx = header.index("creator_email")
         creator_atl_idx = header.index("creator_atlassian_id")
-        creator_atl_email_idx = header.index("creator_atlassian_email")
+        self.assertNotIn("assignee_atlassian_email", header)
+        self.assertNotIn("creator_atlassian_email", header)
+        self.assertNotIn("start_at", header)
 
         self.assertEqual(row[assignee_idx], "Alice Reviewer")
         self.assertEqual(row[assignee_email_idx], "alice@example.com")
         self.assertEqual(row[assignee_atl_idx], "atl-account-alice")
-        self.assertEqual(row[assignee_atl_email_idx], "alice.atl@example.com")
         self.assertEqual(row[creator_idx], "Alice Reviewer")
         self.assertEqual(row[creator_email_idx], "alice@example.com")
         self.assertEqual(row[creator_atl_idx], "atl-account-alice")
-        self.assertEqual(row[creator_atl_email_idx], "alice.atl@example.com")
 
     def test_missing_user_snapshot_uses_unknown_user_label(self) -> None:
         missing_gid = "user_missing"
