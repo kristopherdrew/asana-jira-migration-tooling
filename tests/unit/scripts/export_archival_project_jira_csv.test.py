@@ -311,6 +311,35 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertTrue((output_dir / "section_counts").is_dir())
         self.assertTrue((output_dir / "user_associations").is_dir())
 
+    def test_main_prompts_to_map_unmapped_projects_for_selected_jira_site(self) -> None:
+        output_dir = self.workspace / "mapped"
+        with patch(
+            "scripts.atlassian.export_archival_project_jira_csv.load_credentials"
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.prompt_for_unmapped_jira_project",
+            return_value=1,
+        ) as prompt_for_mapping:
+            main(
+                [
+                    "--project-gid",
+                    "proj_1",
+                    "--database",
+                    str(self.db_path),
+                    "--output-dir",
+                    str(output_dir),
+                    "--jira-site",
+                    "sandbox",
+                ]
+            )
+
+        self.assertEqual(
+            prompt_for_mapping.call_args.args[1:],
+            ([('proj_1', 'Archive Me')], 'sandbox'),
+        )
+
     def test_main_keeps_duplicate_project_names_in_separate_exports(self) -> None:
         self.connection.execute(
             "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
