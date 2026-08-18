@@ -167,6 +167,10 @@ class CliBack(Exception):
     """Signal a user-requested return to the previous interactive menu."""
 
 
+class CliCommandError(Exception):
+    """Report an invoked command failure without ending the interactive session."""
+
+
 _menu_depth = 0
 
 
@@ -1071,6 +1075,11 @@ def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[
     builtins.input = session_input
     try:
         return main_func(argv)
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            detail = str(exc) or f"Command exited with status {exc.code}."
+            raise CliCommandError(detail) from exc
+        return None
     except (EOFError, KeyboardInterrupt) as exc:
         raise CliExit from exc
     finally:
@@ -2082,11 +2091,6 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 def args_search_jira_external_ids(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     append_jira_env_flag(args)
-    external_id_field = prompt("External ID field name or key", default="External issue ID")
-    args.extend(["--external-id-field", external_id_field])
-    max_results = prompt("Results per Jira page", default="500")
-    if max_results:
-        args.extend(["--max-results", max_results])
     if confirm("Dry run (fetch and print mappings, write nothing)?", default=True):
         args.append("--dry-run")
     return args
@@ -2298,6 +2302,8 @@ def run_group(title: str, menu: Dict[str, MenuItem]) -> None:
                 return
             except CliExit:
                 raise
+            except CliCommandError as exc:
+                print(f"\nCommand could not complete: {exc}")
             except Exception as exc:  # pragma: no cover - defensive
                 logging.exception("Step failed: %s", exc)
             else:

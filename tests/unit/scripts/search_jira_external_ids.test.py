@@ -3,9 +3,12 @@ from __future__ import annotations
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import patch
 
 from scripts.atlassian import search_jira_external_ids as search_mod
 from src.lib.database import Database
+from src.lib.jira_csv_import_config import ArchiveImportSettings, JiraFieldChoice
 
 
 class FakeClient:
@@ -64,11 +67,18 @@ class SearchJiraExternalIdsTests(unittest.TestCase):
             },
         ]
         client = FakeClient(responses)
-        issues = search_mod.collect_external_ids(client, "project = ENG", "customfield_123", max_results=1)
+        issues = search_mod.collect_external_ids(
+            client,
+            "project = ENG",
+            "customfield_123",
+            max_results=search_mod.JIRA_SEARCH_PAGE_SIZE,
+        )
         self.assertEqual([issue.key for issue in issues], ["ENG-1", "ENG-2"])
         # first batch page, empty page to end batch, second batch page
         self.assertEqual(len(client.calls), 3)
-        self.assertTrue(all(call["max_results"] == 1 for call in client.calls))
+        self.assertTrue(
+            all(call["max_results"] == search_mod.JIRA_SEARCH_PAGE_SIZE for call in client.calls)
+        )
         # ensure cursor exclusion clause uses NOT IN instead of issuekey >
         cursor_call = client.calls[1]  # the first call of second batch
         self.assertIn("issuekey NOT IN", cursor_call["jql"])
@@ -122,9 +132,35 @@ class SearchJiraExternalIdsTests(unittest.TestCase):
             'project IN ("ABC", "XYZ") AND "customfield_123" is not EMPTY',
         )
 
-    def test_clamp_max_results_respects_cap(self) -> None:
-        self.assertEqual(search_mod.clamp_max_results(search_mod.JIRA_MAX_RESULTS_CAP + 5), search_mod.JIRA_MAX_RESULTS_CAP)
-        self.assertEqual(search_mod.clamp_max_results(50), 50)
+    def test_select_external_id_field_prefers_saved_csv_import_mapping(self) -> None:
+        fields = [
+            {"id": "customfield_123", "name": "External issue ID"},
+            {"id": "customfield_456", "name": "Asana Task ID"},
+        ]
+        saved = ArchiveImportSettings(
+            external_id=JiraFieldChoice(
+                "customfield_456", "Asana Task ID", "Text", "string"
+            )
+        )
+        with patch.object(
+            search_mod, "resolve_credentials_path", return_value=Path("client.env")
+        ), patch.object(search_mod, "load_archive_import_settings", return_value=saved):
+            field_id = search_mod.select_external_id_field(fields, None, "sandbox_jira")
+        self.assertEqual(field_id, "customfield_456")
+
+    def test_select_external_id_field_discovers_default_when_no_mapping_is_saved(self) -> None:
+        fields = [{"id": "customfield_123", "name": "External issue ID"}]
+        with patch.object(
+            search_mod,
+            "load_archive_import_settings",
+            return_value=ArchiveImportSettings(),
+        ):
+            field_id = search_mod.select_external_id_field(fields, None, "sandbox_jira")
+        self.assertEqual(field_id, "customfield_123")
+
+    def test_max_results_is_not_a_command_line_option(self) -> None:
+        with self.assertRaises(SystemExit):
+            search_mod.parse_args(["--max-results", "100"])
 
     def test_list_fields_uses_singular_field_endpoint(self) -> None:
         # Regression: Jira Cloud's "Get fields" endpoint is GET /rest/api/3/field

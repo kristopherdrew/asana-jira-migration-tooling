@@ -39,8 +39,7 @@ Flags (supply at least one of `--csv`, `--atlassian-export`, or `--clear`):
 Fetch Jira issues using the v3 `POST /rest/api/3/search/jql` endpoint (nextPageToken pagination), pull the external ID field (e.g., an Asana task GID stored in `customfield_<id>`), and upsert the Jira→Asana mapping into SQLite. The query is always forced to `ORDER BY created ASC, issuekey ASC` to keep pagination deterministic. The Jira base URL comes from the credentials file (`JIRA_SANDBOX_BASE_URL` by default, `JIRA_BASE_URL` with `--prod`). Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials.
 ```bash
 python3 -m scripts.search_jira_external_ids \\
-  --external-id-field customfield_12345 \\
-  --max-results 500
+  --external-id-field customfield_12345
 ```
 The search scope always comes from the distinct Jira space keys in the selected site's
 `jira_project_mappings`. External IDs are unique per Jira site: the first Jira issue found
@@ -48,9 +47,9 @@ for a task is retained and later occurrences are skipped.
 
 Optional flags:
 - `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
-- `--external-id-field <name-or-key>` identifies the external/task ID field; defaults to `External issue ID` and resolves its Jira field ID automatically.
+- `--external-id-field <name-or-key>` explicitly identifies the external/task ID field. Without it, the command uses the External Issue ID field saved for the selected site by the Jira CSV importer configuration; if none is saved (or it no longer exists), it discovers `External issue ID` from Jira automatically.
 - `--jira-site <key>` selects the named site and records recovered task mappings under that same site.
-- `--max-results <n>` page size per search call (default 500; clamped to Jira’s cap).
+- Jira searches always request 100 issues per page, Jira's API limit; next-page-token pagination retrieves larger result sets.
 - `--database <path>` SQLite file to update (default `data/asana.sqlite`).
 - `--dry-run` to print mappings without writing to SQLite.
 - `--log-level <LEVEL>` to adjust verbosity (default `INFO`).
@@ -72,7 +71,7 @@ Optional flags:
 - `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 - `--jql <expression>` to pick the issue set explicitly (order is forced to `created ASC`). Omit to derive the default from stored project keys.
 - `--field-name <name>` display name of the decision field (default `Asana Migration Decision`; resolved case-insensitively and used in the derived JQL).
-- `--max-results <n>` page size per search call (default 500; clamped to Jira’s cap).
+- Jira searches always request 100 issues per page, Jira's API limit; next-page-token pagination retrieves larger result sets.
 - `--include-empty` to store mapped issues even when the decision field is blank (default skips blanks).
 - `--database <path>` SQLite file to update (default `data/asana.sqlite`).
 - `--dry-run` to print decisions without writing to SQLite.
