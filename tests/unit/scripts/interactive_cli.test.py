@@ -1046,6 +1046,31 @@ class ProfileSessionTest(TestCase):
             self.assertIn("JIRA_DEFAULT_SITE=sandbox_jira", saved)
             self.assertNotIn("JIRA_SITE_PRODUCTION_JIRA_URL", saved)
 
+    def test_edit_jira_site_preserves_key_and_updates_saved_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / "client.env"
+            env_path.write_text(
+                "ASANA_WORKSPACE_GID=w\nJIRA_SITES=sandbox_jira\n"
+                "JIRA_DEFAULT_SITE=sandbox_jira\n"
+                "JIRA_SITE_SANDBOX_JIRA_NAME='Sandbox Jira'\n"
+                "JIRA_SITE_SANDBOX_JIRA_URL=https://sandbox.example.net\n",
+                encoding="utf-8",
+            )
+            interactive_cli._set_session(Path(tmpdir), env_path)
+            with patch(
+                "scripts.interactive_cli.prompt",
+                side_effect=["1", "Updated Sandbox", "https://updated.example.net/"],
+            ), redirect_stdout(io.StringIO()):
+                interactive_cli.edit_jira_site()
+
+            site = interactive_cli._session.jira_sites[0]
+            self.assertEqual(site.key, "sandbox_jira")
+            self.assertEqual(site.name, "Updated Sandbox")
+            self.assertEqual(site.base_url, "https://updated.example.net")
+            saved = env_path.read_text(encoding="utf-8")
+            self.assertIn("JIRA_SITE_SANDBOX_JIRA_NAME='Updated Sandbox'", saved)
+            self.assertIn("JIRA_SITE_SANDBOX_JIRA_URL=https://updated.example.net", saved)
+
     def test_switch_profile_writes_marker_and_sets_db_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             project_root = Path(tmpdir)
