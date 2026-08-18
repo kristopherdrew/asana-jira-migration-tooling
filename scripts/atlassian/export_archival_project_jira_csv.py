@@ -48,6 +48,7 @@ from scripts.atlassian.export_project_to_jira_csv import (
     organize_outputs,
     parse_iso_datetime,
     parse_project_list,
+    prompt_for_unmapped_jira_project,
     prefer_html_text_with_links,
     record_user_association,
     resolve_atlassian_identity,
@@ -188,6 +189,7 @@ def export_archival_project(
     workspace_gid: Optional[str] = None,
     task_gids: Optional[Set[str]] = None,
     seen_task_gids: Optional[Set[str]] = None,
+    jira_site_key: Optional[str] = None,
 ) -> Optional[Path]:
     jira_base_url = normalize_jira_base_url(jira_base_url)
     if not jira_base_url:
@@ -201,7 +203,9 @@ def export_archival_project(
         user_display_names = load_user_display_names(connection)
         user_emails = load_user_emails(connection)
         project_names = load_project_names(connection)
-        jira_project_map = database.load_jira_project_mappings(connection)
+        jira_project_map = database.load_jira_project_mappings(
+            connection, jira_site_key=jira_site_key
+        )
 
         def _bundle() -> Dict:
             return build_project_export_data(
@@ -779,6 +783,15 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             )
             task_filters = {}
 
+    added_mappings = prompt_for_unmapped_jira_project(
+        database, projects, args.jira_site
+    )
+    if added_mappings:
+        logger.info(
+            "Added %s Jira project association(s) for previously unmapped selected project(s).",
+            added_mappings,
+        )
+
     if args.filename and len(projects) > 1:
         raise SystemExit("--filename can only be used when exporting a single project.")
 
@@ -801,6 +814,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 workspace_gid=args.workspace_gid,
                 task_gids=task_filters.get(project_gid),
                 seen_task_gids=seen_task_gids,
+                jira_site_key=args.jira_site,
             )
         except NoTasksFoundError:
             skipped_empty_projects.append((project_gid, project_name))
