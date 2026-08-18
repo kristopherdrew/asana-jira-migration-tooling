@@ -20,14 +20,20 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.config import Credentials, load_credentials, resolve_jira_base_url, resolve_jira_site
+from src.lib.config import (
+    Credentials,
+    load_credentials,
+    resolve_credentials_path,
+    resolve_jira_base_url,
+    resolve_jira_site,
+)
 from src.lib.database import Database, DEFAULT_DB_PATH, resolve_default_db_path
+from src.lib.jira_csv_import_config import load_archive_import_settings
 from src.lib.logging_utils import configure_logging, resolve_log_level
 
 
 logger = logging.getLogger(__name__)
-DEFAULT_MAX_RESULTS = 500
-JIRA_MAX_RESULTS_CAP = 5000  # v3 /search/jql cap per RFC-61
+JIRA_SEARCH_PAGE_SIZE = 100
 DEFAULT_FIELDS = ("created",)
 DEFAULT_EXTERNAL_ID_FIELD = "External issue ID"
 
@@ -162,21 +168,6 @@ def ensure_atlassian_credentials(creds: Credentials) -> Tuple[str, str]:
     return creds.atlassian_username, creds.atlassian_token
 
 
-def clamp_max_results(value: int) -> int:
-    if value < 1:
-        logger.warning("maxResults must be positive; defaulting to 1 (received %s).", value)
-        return 1
-    if value > JIRA_MAX_RESULTS_CAP:
-        logger.warning(
-            "Requested maxResults=%s exceeds Jira cap (%s); clamping to %s.",
-            value,
-            JIRA_MAX_RESULTS_CAP,
-            JIRA_MAX_RESULTS_CAP,
-        )
-        return JIRA_MAX_RESULTS_CAP
-    return value
-
-
 def build_jql(base_jql: str, cursor: Optional[JiraIssue]) -> str:
     """Return JQL with deterministic ordering and an optional created cursor.
 
@@ -309,6 +300,44 @@ def resolve_external_field_id(fields: Sequence[Dict[str, object]], requested: st
     raise ValueError(f"Jira field {requested!r} was not found.")
 
 
+def select_external_id_field(
+    fields: Sequence[Dict[str, object]],
+    requested: Optional[str],
+    jira_site_key: str,
+) -> str:
+    """Prefer the CSV-import field saved for this site, then discover the default."""
+    if requested:
+        return resolve_external_field_id(fields, requested)
+
+    saved = load_archive_import_settings(
+        resolve_credentials_path(), jira_site_key
+    ).external_id
+    if saved:
+        try:
+            field_id = resolve_external_field_id(fields, saved.field_id)
+            logger.info(
+                "Using External Issue ID field from the saved Jira CSV importer configuration: %s (%s).",
+                saved.name,
+                field_id,
+            )
+            return field_id
+        except ValueError:
+            logger.warning(
+                "Saved CSV-import External Issue ID field %s is unavailable; "
+                "searching Jira for %r instead.",
+                saved.field_id,
+                DEFAULT_EXTERNAL_ID_FIELD,
+            )
+    field_id = resolve_external_field_id(fields, DEFAULT_EXTERNAL_ID_FIELD)
+    logger.info(
+        "No External Issue ID field is saved in the Jira CSV importer configuration; "
+        "discovered %s (%s) in Jira.",
+        DEFAULT_EXTERNAL_ID_FIELD,
+        field_id,
+    )
+    return field_id
+
+
 def load_mapped_jira_project_keys(database_path: str, jira_site_key: str) -> List[str]:
     database = Database(db_path=database_path)
     with database.connect() as connection:
@@ -376,14 +405,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument(
         "--external-id-field",
-        default=DEFAULT_EXTERNAL_ID_FIELD,
-        help="Field ID or display name storing the Asana task GID (default: 'External issue ID').",
-    )
-    parser.add_argument(
-        "--max-results",
-        type=int,
-        default=DEFAULT_MAX_RESULTS,
-        help=f"maxResults value per search call (default {DEFAULT_MAX_RESULTS}; capped at {JIRA_MAX_RESULTS_CAP}). Larger sets are fetched via nextPageToken paging plus created-timestamp batching.",
+        help=(
+            "Field ID or display name storing the Asana task GID. By default, use the "
+            "field saved by the Jira CSV importer configuration for the selected site, "
+            "then discover 'External issue ID' in Jira."
+        ),
     )
     parser.add_argument(
         "--database",
@@ -420,11 +446,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
-    max_results = clamp_max_results(args.max_results)
     logger.info(
         "Starting Jira search (base=%s, maxResults=%s, dry_run=%s)",
         base_url,
-        max_results,
+        JIRA_SEARCH_PAGE_SIZE,
         args.dry_run,
     )
     client = JiraSearchClient(
@@ -434,7 +459,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
     try:
-        external_field_id = resolve_external_field_id(client.list_fields(), args.external_id_field)
+        external_field_id = select_external_id_field(
+            client.list_fields(), args.external_id_field, selected_site
+        )
         project_keys = load_mapped_jira_project_keys(args.database, selected_site)
         jql = build_mapped_projects_jql(project_keys, external_field_id)
         logger.info("Searching mapped Jira projects/spaces: %s", ", ".join(project_keys))
@@ -445,7 +472,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         client=client,
         base_jql=jql,
         external_field=external_field_id,
-        max_results=max_results,
+        max_results=JIRA_SEARCH_PAGE_SIZE,
     )
     if not issues:
         logger.warning("No issues matched the provided JQL.")

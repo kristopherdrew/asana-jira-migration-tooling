@@ -193,7 +193,7 @@ class IncrementalArgsBuilderTest(TestCase):
         )
 
     def test_search_jira_external_ids_builds_sandbox_dry_run_args(self) -> None:
-        with patch("builtins.input", side_effect=["customfield_10001", "250", "y"]):
+        with patch("builtins.input", side_effect=["y"]):
             args = interactive_cli.args_search_jira_external_ids("DEBUG")
 
         self.assertEqual(
@@ -201,26 +201,22 @@ class IncrementalArgsBuilderTest(TestCase):
             [
                 "--log-level",
                 "DEBUG",
-                "--external-id-field",
-                "customfield_10001",
-                "--max-results",
-                "250",
                 "--dry-run",
             ],
         )
 
     def test_search_jira_external_ids_uses_production_session(self) -> None:
         interactive_cli._session.use_prod = True
-        with patch("builtins.input", side_effect=["customfield_10001", "500", "n"]):
+        with patch("builtins.input", side_effect=["n"]):
             args = interactive_cli.args_search_jira_external_ids("INFO")
 
         self.assertIn("--prod", args)
         self.assertNotIn("--dry-run", args)
 
-    def test_search_jira_external_ids_defaults_external_id_field(self) -> None:
-        with patch("builtins.input", side_effect=["", "500", "y"]):
+    def test_search_jira_external_ids_uses_saved_or_discovered_field_by_default(self) -> None:
+        with patch("builtins.input", side_effect=["y"]):
             args = interactive_cli.args_search_jira_external_ids("INFO")
-        self.assertIn("External issue ID", args)
+        self.assertNotIn("--external-id-field", args)
         self.assertNotIn("--jql", args)
 
     def test_user_and_project_map_imports_use_inputs_csv_picker(self) -> None:
@@ -1151,6 +1147,22 @@ class MenuSortingTest(TestCase):
         with patch("builtins.input", side_effect=["1", "b"]), redirect_stdout(io.StringIO()):
             interactive_cli.run_group("Test", menu)
         self.assertEqual(interactive_cli._menu_depth, 0)
+
+    def test_invoked_script_failure_returns_to_command_group(self) -> None:
+        def failing_script(_argv) -> None:
+            raise SystemExit("No Jira project/space keys are stored for the selected Jira site.")
+
+        menu = {
+            "1": interactive_cli.MenuItem(
+                "1", "Failing command", lambda: interactive_cli.run_script(failing_script, [])
+            ),
+            "b": interactive_cli.MenuItem("b", "Back", lambda: None),
+        }
+        output = io.StringIO()
+        with patch("builtins.input", side_effect=["1", "b"]), redirect_stdout(output):
+            interactive_cli.run_group("Test", menu)
+        self.assertIn("Command could not complete", output.getvalue())
+        self.assertIn("No Jira project/space keys", output.getvalue())
 
     def test_terminal_interrupts_exit_from_any_prompt(self) -> None:
         for interruption in (KeyboardInterrupt(), EOFError()):

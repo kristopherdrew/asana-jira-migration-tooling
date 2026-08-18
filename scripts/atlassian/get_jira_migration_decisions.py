@@ -26,12 +26,10 @@ from src.lib.database import Database, DEFAULT_DB_PATH, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from scripts.atlassian.search_jira_external_ids import (
     DEFAULT_FIELDS,
-    DEFAULT_MAX_RESULTS,
-    JIRA_MAX_RESULTS_CAP,
+    JIRA_SEARCH_PAGE_SIZE,
     JiraIssue,
     JiraSearchClient,
     build_jql,
-    clamp_max_results,
     ensure_atlassian_credentials,
 )
 
@@ -290,15 +288,6 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help=f"Display name of the decision field to resolve (default: {DEFAULT_FIELD_NAME!r}).",
     )
     parser.add_argument(
-        "--max-results",
-        type=int,
-        default=DEFAULT_MAX_RESULTS,
-        help=(
-            f"maxResults per search call (default {DEFAULT_MAX_RESULTS}; capped at "
-            f"{JIRA_MAX_RESULTS_CAP}). Larger sets are paged via nextPageToken plus created-timestamp batching."
-        ),
-    )
-    parser.add_argument(
         "--include-empty",
         action="store_true",
         help="Store mapped issues even when the decision field is blank (default: skip blanks).",
@@ -337,12 +326,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         jql = default_jql_from_database(args.database, args.field_name)
         logger.info("No --jql provided; using derived default: %s", jql)
 
-    max_results = clamp_max_results(args.max_results)
     logger.info(
         "Starting Jira decision pull (base=%s, field=%r, maxResults=%s, dry_run=%s)",
         base_url,
         args.field_name,
-        max_results,
+        JIRA_SEARCH_PAGE_SIZE,
         args.dry_run,
     )
     client = JiraSearchClient(
@@ -357,7 +345,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         client=client,
         base_jql=jql,
         field_id=field_id,
-        max_results=max_results,
+        max_results=JIRA_SEARCH_PAGE_SIZE,
     )
     if not issues:
         logger.warning("No issues matched the provided JQL.")
