@@ -65,6 +65,7 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
                 "notes": "Original description.",
                 "assignee": {"gid": "user_1", "name": "Alice Reviewer"},
                 "created_by": {"gid": "user_1"},
+                "followers": [{"gid": "user_1", "name": "Alice Reviewer"}],
                 "created_at": "2025-02-25T10:30:00Z",
                 "modified_at": "2025-03-04T09:05:00Z",
                 "completed": True,
@@ -220,7 +221,14 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
 
     def test_native_columns_retained(self) -> None:
         header, by_gid = self._run_export()
-        for column in ("Section", "parent_gid", "completed", "notes", "Comment", "Tags"):
+        for column in (
+            "Section",
+            "parent_gid",
+            "completed",
+            "notes",
+            "Comment",
+            "Tags",
+        ):
             self.assertIn(column, header)
         for excluded_column in (
             "assignee_atlassian_email",
@@ -236,6 +244,7 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         # Subtask inherits the parent's section.
         self.assertEqual(by_gid["task_2"][header.index("Section")], "Backlog")
         self.assertEqual(by_gid["task_2"][header.index("parent_gid")], "task_1")
+        self.assertNotIn("Collaborators", header)
 
     def test_adds_project_epic_and_reparents_top_level_tasks(self) -> None:
         header, by_gid = self._run_export()
@@ -267,7 +276,7 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
             "",
         )
         epic_notes = by_gid["proj_1::archival::epic"][header.index("notes")]
-        self.assertIn("Collaborators:\n- Alice Reviewer <alice@example.com>", epic_notes)
+        self.assertIn("Collaborators:\n- None recorded", epic_notes)
         self.assertNotIn("creator_count", epic_notes)
 
     def test_main_writes_consolidated_export_and_organizes_outputs(self) -> None:

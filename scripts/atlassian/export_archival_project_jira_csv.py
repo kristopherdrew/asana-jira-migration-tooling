@@ -36,6 +36,8 @@ from scripts.atlassian.export_project_to_jira_csv import (
     extract_profile_gid_overrides,
     format_export_datetime,
     format_jira_hierarchy_depth,
+    collaborator_column_headers,
+    format_task_collaborator_values,
     format_project_entry,
     format_user_display_name,
     load_project_names,
@@ -156,7 +158,9 @@ def build_epic_description(
     """Describe the archival project and list its task collaborators."""
 
     collaborators: List[str] = []
-    for user_gid in associations:
+    for user_gid, counts in associations.items():
+        if not counts.get("collaborator"):
+            continue
         display_name = (user_display_names.get(user_gid) or "").strip()
         if not display_name:
             display_name = f"unknown_user {user_gid}"
@@ -371,6 +375,11 @@ def export_archival_project(
         rows: List[List[str]] = []
         full_contents: List[Dict[str, str]] = []
         section_counts: Dict[str, int] = {}
+        collaborators_by_task = bundle["collaborators_by_task"]
+        max_collaborators = bundle["max_collaborators"]
+        header[header.index("projects"):header.index("projects")] = collaborator_column_headers(
+            max_collaborators
+        )
 
         for task in tasks:
             due_source = task["due_on"] or task["due_at"] or ""
@@ -425,6 +434,26 @@ def export_archival_project(
                     last_active[completed_by_gid] = max(
                         last_active.get(completed_by_gid, ""), dt_completed.date().isoformat()
                     )
+
+            collaborator_gids = collaborators_by_task.get(task["gid"], [])
+            for collaborator_gid in collaborator_gids:
+                record_user_association(
+                    collaborator_gid,
+                    "collaborator",
+                    user_emails.get(collaborator_gid),
+                    associations,
+                    user_emails,
+                )
+            collaborator_values = format_task_collaborator_values(
+                collaborator_gids,
+                user_display_names,
+                user_emails,
+                user_map,
+                fallback_atlassian_id,
+            )
+            collaborator_values.extend(
+                [""] * (max_collaborators * 3 - len(collaborator_values))
+            )
 
             projects_value = "; ".join(projects_map.get(task["gid"], []))
             actual_time_value = "" if task["actual_time_minutes"] is None else str(task["actual_time_minutes"])
@@ -494,6 +523,7 @@ def export_archival_project(
                 format_user_display_name(task["created_by_gid"], task["creator_name"]),
                 task["creator_email"] or "",
                 creator_atl,
+                *collaborator_values,
                 projects_value,
                 modified_section,
             ]

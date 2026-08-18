@@ -749,6 +749,83 @@ def record_user_association(
         email_map[user_gid] = email
 
 
+def load_task_collaborators(
+    connection: sqlite3.Connection, task_gids: Iterable[str]
+) -> Dict[str, List[str]]:
+    """Return the saved Asana collaborators (followers) for each task."""
+
+    collaborators: Dict[str, List[str]] = defaultdict(list)
+    gids = [gid for gid in task_gids if gid]
+    for start in range(0, len(gids), 500):
+        chunk = gids[start : start + 500]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = connection.execute(
+            f"""
+            SELECT task_gid, user_gid
+            FROM task_followers
+            WHERE task_gid IN ({placeholders})
+            ORDER BY task_gid, user_gid
+            """,
+            chunk,
+        ).fetchall()
+        for row in rows:
+            collaborators[row["task_gid"]].append(row["user_gid"])
+    return collaborators
+
+
+def exclude_task_owner_collaborators(
+    collaborators_by_task: Dict[str, List[str]], tasks: Iterable[Dict]
+) -> Dict[str, List[str]]:
+    """Exclude collaborators already represented by a task's creator or assignee."""
+
+    owner_gids_by_task = {
+        task["gid"]: {task["created_by_gid"], task["assignee_gid"]} - {None, ""}
+        for task in tasks
+        if task["gid"]
+    }
+    return {
+        task_gid: [
+            collaborator_gid
+            for collaborator_gid in collaborator_gids
+            if collaborator_gid not in owner_gids_by_task.get(task_gid, set())
+        ]
+        for task_gid, collaborator_gids in collaborators_by_task.items()
+    }
+
+
+def collaborator_column_headers(max_collaborators: int) -> List[str]:
+    """Build repeated name/email/Atlassian-ID columns for task collaborators."""
+
+    headers: List[str] = []
+    for _ in range(max_collaborators):
+        headers.extend(
+            ["Collaborators", "collaborator_email", "collaborator_atlassian_id"]
+        )
+    return headers
+
+
+def format_task_collaborator_values(
+    collaborator_gids: Iterable[str],
+    user_display_names: Dict[str, str],
+    user_emails: Dict[str, str],
+    user_map: Dict[str, Dict[str, Optional[str]]],
+    fallback_atlassian_id: Optional[str],
+) -> List[str]:
+    """Return aligned display name, email, and Jira account-ID values per collaborator."""
+
+    values: List[str] = []
+    for gid in collaborator_gids:
+        account_id, _ = resolve_atlassian_identity(user_map, gid, fallback_atlassian_id)
+        values.extend(
+            [
+                format_user_display_name(gid, user_display_names.get(gid)),
+                user_emails.get(gid, ""),
+                account_id,
+            ]
+        )
+    return values
+
+
 def filter_missing_account_counts(
     associations: Dict[str, Counter],
     user_map: Dict[str, Dict[str, Optional[str]]],
@@ -792,6 +869,7 @@ def write_missing_account_report(
                 "assignee_count",
                 "completed_by_count",
                 "commenter_count",
+                "collaborator_count",
                 "project",
             ]
         )
@@ -805,6 +883,7 @@ def write_missing_account_report(
                     counts.get("assignee", 0),
                     counts.get("completed_by", 0),
                     counts.get("commenter", 0),
+                    counts.get("collaborator", 0),
                     project_name,
                 ]
             )
@@ -835,6 +914,7 @@ def write_user_association_report(
                 "assignee_count",
                 "completed_by_count",
                 "commenter_count",
+                "collaborator_count",
                 "project",
             ]
         )
@@ -856,6 +936,7 @@ def write_user_association_report(
                     counts.get("assignee", 0),
                     counts.get("completed_by", 0),
                     counts.get("commenter", 0),
+                    counts.get("collaborator", 0),
                     project_name,
                 ]
             )
@@ -1622,10 +1703,16 @@ def build_project_export_data(
     parent_lookup: Dict[str, Optional[str]] = {
         row["gid"]: row["parent_gid"] for row in tasks if row["gid"]
     }
+    collaborators_by_task = exclude_task_owner_collaborators(
+        load_task_collaborators(connection, (row["gid"] for row in tasks)), tasks
+    )
+    max_collaborators = max((len(values) for values in collaborators_by_task.values()), default=0)
 
     bundle = {
         "tasks": tasks,
         "comments_by_task": comments_by_task,
+        "collaborators_by_task": collaborators_by_task,
+        "max_collaborators": max_collaborators,
         "section_map": section_map,
         "tags_map": tags_map,
         "projects_map": projects_map,
@@ -2409,6 +2496,15 @@ def export_project(
             (current_project_row["permalink_url"] or "") if current_project_row else ""
         )
         parent_lookup_local = {row["gid"]: row["parent_gid"] for row in tasks if row["gid"]}
+        collaborators_by_task = exclude_task_owner_collaborators(
+            load_task_collaborators(connection, (row["gid"] for row in tasks)), tasks
+        )
+        max_collaborators = max(
+            (len(values) for values in collaborators_by_task.values()), default=0
+        )
+        header[header.index("projects"):header.index("projects")] = collaborator_column_headers(
+            max_collaborators
+        )
 
         def _sort_task_key(task: dict) -> tuple:
             depth = task.get("hierarchy_depth")
@@ -2489,6 +2585,25 @@ def export_project(
                 None,
                 associations,
                 user_emails,
+            )
+            collaborator_gids = collaborators_by_task.get(task["gid"], [])
+            for collaborator_gid in collaborator_gids:
+                record_user_association(
+                    collaborator_gid,
+                    "collaborator",
+                    user_emails.get(collaborator_gid),
+                    associations,
+                    user_emails,
+                )
+            collaborator_values = format_task_collaborator_values(
+                collaborator_gids,
+                user_display_names,
+                user_emails,
+                user_map,
+                fallback_atlassian_id,
+            )
+            collaborator_values.extend(
+                [""] * (max_collaborators * 3 - len(collaborator_values))
             )
             if task.get("completed_at"):
                 try:
@@ -2577,6 +2692,7 @@ def export_project(
                 format_user_display_name(task["created_by_gid"], task["creator_name"]),
                 task["creator_email"] or "",
                 creator_atl,
+                *collaborator_values,
                 projects_value,
                 modified_section,
             ]
@@ -3444,6 +3560,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                     "assignee_count",
                     "completed_by_count",
                     "commenter_count",
+                    "collaborator_count",
                     "project",
                 ]
                 with consolidated_assoc.open("w", newline="", encoding="utf-8") as handle:
