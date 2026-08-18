@@ -905,6 +905,35 @@ def add_jira_site() -> None:
     print(f"Added {name} ({url}).")
 
 
+def edit_jira_site() -> None:
+    """Edit a named Jira site's display label and URL without changing its key."""
+    if _session is None:
+        return
+    if not _session.jira_sites:
+        print("No Jira sites are configured for this profile.")
+        return
+
+    print("\nEdit a Jira site:")
+    for index, site in enumerate(_session.jira_sites, start=1):
+        print(f"  [{index}] {site.name} — {site.base_url} (key: {site.key})")
+    choice = prompt("Pick a number (Enter to go back)", default="")
+    if not choice:
+        return
+    if not (choice.isdigit() and 1 <= int(choice) <= len(_session.jira_sites)):
+        print("Invalid selection.")
+        return
+
+    site = _session.jira_sites[int(choice) - 1]
+    print(f"Site key '{site.key}' is retained so saved Jira mappings keep working.")
+    name = prompt_required("Jira site label", default=site.name)
+    url = prompt_required("Jira site URL", default=site.base_url).rstrip("/")
+    replacement = JiraSite(site.key, name, url)
+    sites = tuple(replacement if candidate.key == site.key else candidate for candidate in _session.jira_sites)
+    write_profile_jira_sites(_session.env_path, sites, _session.default_jira_site_key)
+    _session.jira_sites = sites
+    print(f"Updated {name} ({url}).")
+
+
 def remove_jira_site() -> None:
     """Remove a named Jira site from the active client profile."""
     if _session is None:
@@ -2791,8 +2820,9 @@ def build_client_environment_menu(
         "3": MenuItem("3", "Select active Jira site", select_jira_site),
         "4": MenuItem("4", "Set default Jira site", lambda: select_jira_site(make_default=True)),
         "5": MenuItem("5", "Add Jira site", add_jira_site),
-        "6": MenuItem("6", "Remove Jira site", remove_jira_site),
-        "7": MenuItem("7", "View or update shared credentials", lambda: manage_credentials(reference_path)),
+        "6": MenuItem("6", "Edit Jira site", edit_jira_site),
+        "7": MenuItem("7", "Remove Jira site", remove_jira_site),
+        "8": MenuItem("8", "View or update shared credentials", lambda: manage_credentials(reference_path)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
