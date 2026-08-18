@@ -13,6 +13,7 @@ from contextlib import redirect_stdout
 
 from src.lib.database import Database
 from scripts.export_project_to_jira_csv import (
+    assign_unmapped_jira_project,
     compute_incremental_refresh_window,
     export_project,
     format_custom_field_names_line,
@@ -1368,6 +1369,27 @@ class ExportProjectToJiraCsvTest(TestCase):
         )
 
         self.assertEqual(result, [("proj_archived", "Archived Project"), ("proj_1", "Example Project")])
+
+    def test_assign_unmapped_jira_project_preserves_existing_associations(self) -> None:
+        self.database.upsert_jira_project_mappings(
+            self.connection,
+            [{"project_gid": "proj_1", "project_name": "Existing Jira", "project_key": "OLD"}],
+            self.sync_time,
+        )
+
+        added = assign_unmapped_jira_project(
+            self.database,
+            [("proj_1", "Example Project"), ("proj_2", "Secondary Project")],
+            "MIG",
+            "Migration",
+        )
+
+        self.assertEqual(added, 1)
+        mappings = self.database.load_jira_project_mappings(self.connection)
+        self.assertEqual(mappings["proj_1"]["jira_project_key"], "OLD")
+        self.assertEqual(mappings["proj_1"]["jira_project_name"], "Existing Jira")
+        self.assertEqual(mappings["proj_2"]["jira_project_key"], "MIG")
+        self.assertEqual(mappings["proj_2"]["jira_project_name"], "Migration")
 
     def test_parse_project_list_reads_project_gid_column_from_csv(self) -> None:
         scope_file = self.workspace / "project-map.csv"

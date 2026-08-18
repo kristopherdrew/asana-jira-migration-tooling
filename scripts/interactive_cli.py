@@ -2634,7 +2634,7 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
             selected_task_sql = f"SELECT gid FROM tasks WHERE gid IN ({placeholders})"
             selected_task_parameters = task_gids
             selected_project_sql = (
-                "SELECT DISTINCT project_gid FROM task_projects "
+                "SELECT DISTINCT project_gid AS project_gid FROM task_projects "
                 f"WHERE task_gid IN ({placeholders})"
             )
             project_count = connection.execute(
@@ -2654,7 +2654,7 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
                 f"JOIN projects p ON p.gid = tp.project_gid {where}"
             )
             selected_task_parameters = parameters
-            selected_project_sql = f"SELECT p.gid FROM projects p {where}"
+            selected_project_sql = f"SELECT p.gid AS project_gid FROM projects p {where}"
             project_count = connection.execute(
                 f"SELECT COUNT(*) FROM projects p {where}", parameters
             ).fetchone()[0]
@@ -2751,6 +2751,34 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
                 f"[!] {referenced_count - mapped_count:,} referenced users lack an Atlassian account ID."
             )
         if jira_csv:
+            jira_site_key = _arg_value(args, "--jira-site")
+            if not jira_site_key and _session is not None:
+                jira_site_key = _session.jira_site_key
+            mapping_table_exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jira_project_mappings'"
+            ).fetchone()
+            mapped_project_count = 0
+            if jira_site_key and mapping_table_exists:
+                mapped_project_count = connection.execute(
+                    "SELECT COUNT(DISTINCT jpm.project_gid) "
+                    f"FROM ({selected_project_sql}) selected "
+                    "JOIN jira_project_mappings jpm "
+                    "ON jpm.project_gid = selected.project_gid AND jpm.jira_site_key = ?",
+                    [*selected_task_parameters, jira_site_key],
+                ).fetchone()[0]
+            if jira_site_key:
+                mapping_marker = "x" if mapped_project_count == project_count else "!"
+                print(
+                    f"[{mapping_marker}] Jira project associations ({jira_site_key}): "
+                    f"{mapped_project_count:,} of {project_count:,} selected projects mapped"
+                )
+                if mapped_project_count != project_count:
+                    print(
+                        f"[!] {project_count - mapped_project_count:,} selected project(s) lack "
+                        "a Jira project association for this site."
+                    )
+            else:
+                print("[!] Jira project associations: no active Jira site selected.")
             config_path = latest_profile_import_config_path(resolve_credentials_path())
             if config_path:
                 print(f"[x] Jira CSV configuration: {config_path.name}")
