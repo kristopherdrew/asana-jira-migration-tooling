@@ -1171,6 +1171,20 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Delete all stored Jira project associations and exit.",
     )
     parser.add_argument(
+        "--map-unmapped-to-jira-project-key",
+        help=(
+            "Assign this Jira project key to selected projects that do not already "
+            "have a Jira project association. Requires --map-unmapped-to-jira-project-name."
+        ),
+    )
+    parser.add_argument(
+        "--map-unmapped-to-jira-project-name",
+        help=(
+            "Assign this Jira project name to selected projects that do not already "
+            "have a Jira project association. Requires --map-unmapped-to-jira-project-key."
+        ),
+    )
+    parser.add_argument(
         "--fallback-atlassian-id",
         help="Optional Atlassian account ID to use when a user is missing from the mapping tables.",
     )
@@ -1258,6 +1272,71 @@ def parse_project_list(
     if not rows:
         raise SystemExit(f"No projects found for team {team_gid} with archived_scope={archived_scope}.")
     return [(row["gid"], row["name"]) for row in rows]
+
+
+def assign_unmapped_jira_project(
+    database: Database,
+    projects: List[Tuple[str, str]],
+    jira_project_key: str,
+    jira_project_name: str,
+    jira_site_key: Optional[str] = None,
+) -> int:
+    """Associate only currently unmapped projects in an export scope with Jira."""
+    with database.connect() as connection:
+        database.initialize(connection)
+        existing = database.load_jira_project_mappings(
+            connection, jira_site_key=jira_site_key
+        )
+        missing = [
+            {
+                "project_gid": gid,
+                "project_name": jira_project_name,
+                "project_key": jira_project_key,
+            }
+            for gid, _asana_name in projects
+            if gid not in existing
+        ]
+        return database.upsert_jira_project_mappings(
+            connection,
+            missing,
+            current_utc_time(),
+            jira_site_key=jira_site_key,
+        )
+
+
+def prompt_for_unmapped_jira_project(
+    database: Database,
+    projects: List[Tuple[str, str]],
+    jira_site_key: Optional[str] = None,
+) -> int:
+    """Offer an interactive batch association when the export scope has gaps."""
+    with database.connect() as connection:
+        database.initialize(connection)
+        existing = database.load_jira_project_mappings(
+            connection, jira_site_key=jira_site_key
+        )
+    missing = [(gid, name) for gid, name in projects if gid not in existing]
+    if not missing or not sys.stdin.isatty():
+        return 0
+
+    print(f"{len(missing)} selected project(s) have no Jira project association.")
+    try:
+        response = input(
+            "Assign one Jira project key and name to all of them? [y/N]: "
+        ).strip().lower()
+        if response not in {"y", "yes"}:
+            return 0
+        jira_project_key = input("Jira project key (e.g. MIG): ").strip()
+        jira_project_name = input("Jira project name: ").strip()
+    except EOFError:
+        logger.info("Skipping Jira project association prompt (input unavailable).")
+        return 0
+    if not jira_project_key or not jira_project_name:
+        logger.warning("Jira project key and name are both required; no associations were added.")
+        return 0
+    return assign_unmapped_jira_project(
+        database, projects, jira_project_key, jira_project_name, jira_site_key
+    )
 
 
 def build_project_export_data(
@@ -1758,6 +1837,7 @@ def export_project(
     add_section_epics: bool = False,
     task_gids: Optional[Set[str]] = None,
     seen_task_gids: Optional[Set[str]] = None,
+    jira_site_key: Optional[str] = None,
 ) -> Optional[Path]:
     database = Database(db_path=database_path)
     with database.connect() as refresh_connection:
@@ -1779,7 +1859,9 @@ def export_project(
         user_display_names = load_user_display_names(connection)
         user_emails = load_user_emails(connection)
         project_names = load_project_names(connection)
-        jira_project_map = database.load_jira_project_mappings(connection)
+        jira_project_map = database.load_jira_project_mappings(
+            connection, jira_site_key=jira_site_key
+        )
         jira_base_url = normalize_jira_base_url(jira_base_url)
         if not jira_base_url:
             raise ValueError("Jira base URL is required.")
@@ -3211,6 +3293,12 @@ def print_project_stats(
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
+    unmapped_jira_project_key = (args.map_unmapped_to_jira_project_key or "").strip()
+    unmapped_jira_project_name = (args.map_unmapped_to_jira_project_name or "").strip()
+    if bool(unmapped_jira_project_key) != bool(unmapped_jira_project_name):
+        raise SystemExit(
+            "--map-unmapped-to-jira-project-key and --map-unmapped-to-jira-project-name must be used together."
+        )
     try:
         log_level = resolve_log_level(args.log_level)
     except ValueError as exc:
@@ -3290,6 +3378,26 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 archived_scope=args.archived_scope,
             )
             task_filters = {}
+
+    if unmapped_jira_project_key:
+        added_mappings = assign_unmapped_jira_project(
+            database,
+            projects,
+            unmapped_jira_project_key,
+            unmapped_jira_project_name,
+            args.jira_site,
+        )
+        logger.info(
+            "Added %s Jira project association(s) for previously unmapped selected project(s).",
+            added_mappings,
+        )
+    else:
+        added_mappings = prompt_for_unmapped_jira_project(database, projects, args.jira_site)
+        if added_mappings:
+            logger.info(
+                "Added %s Jira project association(s) for previously unmapped selected project(s).",
+                added_mappings,
+            )
 
     project_count = len(projects)
     # Suppress repeated per-project breakdown prompts during incremental refresh when exporting many projects.
@@ -3400,6 +3508,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             add_section_epics=args.add_section_epics,
             task_gids=task_filters.get(project_gid),
             seen_task_gids=seen_task_gids,
+            jira_site_key=args.jira_site,
         )
         if args.stats_only and output_path:
             logger.info("Generated statistics for project %s (%s).", project_name, project_gid)

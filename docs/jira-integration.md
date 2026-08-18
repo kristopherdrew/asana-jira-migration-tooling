@@ -104,6 +104,7 @@ Optional flags:
 - `--export-id <value>` to record every exported task under a shared identifier and skip any task already exported with the same ID.
 - `--clear-export-ids` to wipe all recorded export/task mappings from SQLite and exit.
 - `--clear-export-id <value>` to delete recorded mappings for a specific export ID and exit.
+- When an interactive export includes projects without Jira project associations, the exporter offers to assign one Jira project key and name to every currently unmapped project in that selected scope. Existing associations are preserved. For non-interactive runs, use `--map-unmapped-to-jira-project-key <key>` together with `--map-unmapped-to-jira-project-name <name>` to do the same explicitly.
 - `--fallback-atlassian-id <account_id>` to substitute an Atlassian account ID anywhere a mapping is missing.
 - `--incremental-refresh [prompt|yes|no]` to control per-project refresh prompts.
 - `--custom-fields <name_or_gid,...>` to restrict the export to the specified custom fields.

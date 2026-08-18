@@ -1438,6 +1438,12 @@ class LifecycleMenuTest(TestCase):
                 CREATE TABLE task_comments (task_gid TEXT, created_by_gid TEXT, synced_at TEXT);
                 CREATE TABLE task_attachments (task_gid TEXT, synced_at TEXT);
                 CREATE TABLE user_atlassian_accounts (user_gid TEXT, atlassian_account_id TEXT);
+                CREATE TABLE jira_project_mappings (
+                    project_gid TEXT, jira_site_key TEXT, jira_project_name TEXT,
+                    jira_project_key TEXT
+                );
+                INSERT INTO jira_project_mappings VALUES
+                    ('p1', 'sandbox', 'Migration', 'MIG');
                 CREATE TABLE teams (gid TEXT);
                 INSERT INTO teams VALUES ('team-1');
                 CREATE TABLE team_members (
@@ -1461,13 +1467,19 @@ class LifecycleMenuTest(TestCase):
                     "data": {"gid": "service-user", "name": "Migration Service"}
                 }
                 interactive_cli.show_export_readiness(
-                    ["--team-gid", "team-1"], "Jira task CSV", jira_csv=True
+                    ["--team-gid", "team-1", "--jira-site", "sandbox"],
+                    "Jira task CSV",
+                    jira_csv=True,
                 )
         rendered = output.getvalue()
         self.assertIn("[x] Selected data: 1 projects / 1 tasks", rendered)
         self.assertIn("projects 2026-08-17 / tasks 2026-08-17", rendered)
         self.assertNotIn("2026-08-17T00:00:00Z", rendered)
         self.assertIn("[!] Jira CSV configuration: no saved profile", rendered)
+        self.assertIn(
+            "[x] Jira project associations (sandbox): 1 of 1 selected projects mapped",
+            rendered,
+        )
         self.assertIn(
             "[x] Service-account team access (Migration Service): 1 of 1 selected teams",
             rendered,
