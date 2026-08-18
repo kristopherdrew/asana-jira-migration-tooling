@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from src.tasks.projects import fetch_project_task_counts, fetch_workspace_projects
+from src.tasks.projects import fetch_project_task_counts, fetch_team_projects, fetch_workspace_projects
 
 
 class DummyClient:
@@ -29,6 +29,11 @@ class FetchWorkspaceProjectsTest(TestCase):
         self.assertEqual(endpoint, "/workspaces/123/projects")
         self.assertEqual(params["limit"], "100")
         self.assertIn("opt_fields", params)
+
+    def test_uses_team_projects_endpoint(self) -> None:
+        client = DummyClient(payload=[{"gid": "project"}])
+        self.assertEqual(list(fetch_team_projects(client, "team_1"))[0]["gid"], "project")
+        self.assertEqual(client.calls[0][0], "/teams/team_1/projects")
 
 
 class FetchProjectTaskCountsTest(TestCase):
