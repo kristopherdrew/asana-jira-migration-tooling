@@ -93,6 +93,7 @@ from src.lib.config import (  # noqa: E402
 from src.lib.database import ASANA_JIRA_DB_PATH_ENV, ASANA_JIRA_SITE_KEY_ENV  # noqa: E402
 from src.lib import keychain  # noqa: E402
 from src.lib.credential_check import check_credentials  # noqa: E402
+from src.lib.http_client import AsanaHttpClient  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
 from src.lib.jira_csv_import_config import latest_profile_import_config_path  # noqa: E402
 from src.lib.project_scope import parse_gid_list, read_project_gids_file  # noqa: E402
@@ -2408,6 +2409,79 @@ def _readiness_date(value: str) -> str:
     return value[:10] if value else ""
 
 
+def show_service_account_team_access(
+    connection: sqlite3.Connection,
+    team_gids: Optional[Sequence[str]] = None,
+) -> None:
+    """Report active-token membership in all or selected locally synced teams."""
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name IN ('teams', 'team_members')"
+        )
+    }
+    if tables != {"teams", "team_members"}:
+        print("[!] Service-account team access: team memberships have not been synced.")
+        return
+
+    if team_gids:
+        placeholders = ",".join("?" for _ in team_gids)
+        teams = connection.execute(
+            f"SELECT gid FROM teams WHERE gid IN ({placeholders})", team_gids
+        ).fetchall()
+        scope = "selected"
+    else:
+        teams = connection.execute("SELECT gid FROM teams").fetchall()
+        scope = "all"
+    resolved_team_gids = [row[0] for row in teams]
+    if not resolved_team_gids:
+        print(f"[!] Service-account team access: no {scope} teams are available to check.")
+        return
+
+    try:
+        credentials = load_credentials(PROJECT_ROOT)
+        payload = AsanaHttpClient(
+            token=credentials.token,
+            skip_ssl_verification=credentials.skip_ssl_verification,
+        ).get("/users/me")
+        service_user = (payload or {}).get("data") or {}
+        service_user_gid = str(service_user.get("gid") or "").strip()
+        if not service_user_gid:
+            raise ValueError("Asana did not return a user GID")
+    except Exception as exc:  # noqa: BLE001 - readiness must remain non-blocking
+        print(f"[!] Service-account team access: could not identify the active token account ({exc}).")
+        return
+
+    placeholders = ",".join("?" for _ in resolved_team_gids)
+    member_count = connection.execute(
+        "SELECT COUNT(DISTINCT team_gid) FROM team_members "
+        f"WHERE user_gid = ? AND team_gid IN ({placeholders}) "
+        "AND COALESCE(is_active, 1) = 1",
+        [service_user_gid, *resolved_team_gids],
+    ).fetchone()[0]
+    latest = connection.execute(
+        f"SELECT COALESCE(MAX(synced_at), '') FROM team_members "
+        f"WHERE team_gid IN ({placeholders})",
+        resolved_team_gids,
+    ).fetchone()[0]
+    marker = "x" if member_count == len(resolved_team_gids) else "!"
+    display_name = service_user.get("name") or service_user.get("email") or service_user_gid
+    latest_suffix = f", rosters latest {_readiness_date(latest)}" if latest else ""
+    scope_label = "selected teams" if team_gids else "teams (all teams)"
+    print(
+        f"[{marker}] Service-account team access ({display_name}): {member_count:,} of "
+        f"{len(resolved_team_gids):,} {scope_label}{latest_suffix}"
+    )
+    if member_count != len(resolved_team_gids):
+        missing_scope = "selected " if team_gids else ""
+        print(
+            f"[!] Active service account is absent from "
+            f"{len(resolved_team_gids) - member_count:,} {missing_scope}team(s); "
+            "refresh team memberships or add it before syncing their projects."
+        )
+
+
 def show_migration_readiness() -> None:
     """Display advisory workspace-level readiness from the active SQLite snapshot."""
     db_path = active_db_path()
@@ -2433,6 +2507,7 @@ def show_migration_readiness() -> None:
             marker = "x" if count else " "
             suffix = f", latest {_readiness_date(latest)}" if latest else ""
             print(f"[{marker}] {label}: {count:,}{suffix}")
+        show_service_account_team_access(connection)
     finally:
         connection.close()
     config_path = latest_profile_import_config_path(resolve_credentials_path())
@@ -2531,6 +2606,16 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
             print(f"[{marker}] Selected data: {project_count:,} projects / {task_count:,} tasks")
         if not task_count:
             print("[!] No selected tasks were found; verify the scope or run a task sync.")
+        selected_team_gids = [
+            row[0]
+            for row in connection.execute(
+                f"SELECT DISTINCT team_gid FROM projects WHERE gid IN ({selected_project_sql}) "
+                "AND COALESCE(team_gid, '') <> ''",
+                selected_task_parameters,
+            )
+        ]
+        if jira_csv and selected_team_gids:
+            show_service_account_team_access(connection, selected_team_gids)
         task_latest = connection.execute(
             f"SELECT COALESCE(MAX(synced_at), '') FROM tasks "
             f"WHERE gid IN ({selected_task_sql})",

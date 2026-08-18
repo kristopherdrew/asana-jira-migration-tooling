@@ -1360,6 +1360,44 @@ class LifecycleMenuTest(TestCase):
         self.assertIn("[x] Atlassian user mappings: 1", rendered)
         self.assertIn("[ ] Task Jira mappings: 0", rendered)
 
+    def test_readiness_reports_current_service_account_team_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "readiness.sqlite"
+            connection = interactive_cli.sqlite3.connect(str(db_path))
+            connection.executescript(
+                """
+                CREATE TABLE projects (gid TEXT, synced_at TEXT);
+                CREATE TABLE tasks (gid TEXT, synced_at TEXT);
+                CREATE TABLE teams (gid TEXT);
+                INSERT INTO teams VALUES ('team-1'), ('team-2');
+                CREATE TABLE team_members (
+                    team_gid TEXT, user_gid TEXT, is_active INTEGER, synced_at TEXT
+                );
+                INSERT INTO team_members VALUES
+                    ('team-1', 'service-user', 1, '2026-08-17T00:00:00Z');
+                """
+            )
+            connection.commit()
+            connection.close()
+            credentials = interactive_cli.Credentials(
+                token="token", workspace_gid="workspace", skip_ssl_verification=False
+            )
+            output = io.StringIO()
+            with patch("scripts.interactive_cli.active_db_path", return_value=db_path), \
+                    patch("scripts.interactive_cli.load_credentials", return_value=credentials), \
+                    patch("scripts.interactive_cli.AsanaHttpClient") as mock_client, \
+                    redirect_stdout(output):
+                mock_client.return_value.get.return_value = {
+                    "data": {"gid": "service-user", "name": "Migration Service"}
+                }
+                interactive_cli.show_migration_readiness()
+        rendered = output.getvalue()
+        self.assertIn(
+            "[!] Service-account team access (Migration Service): 1 of 2 teams (all teams)",
+            rendered,
+        )
+        self.assertIn("Active service account is absent from 1 team(s)", rendered)
+
     def test_scoped_export_readiness_is_advisory_when_csv_config_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "readiness.sqlite"
@@ -1375,6 +1413,13 @@ class LifecycleMenuTest(TestCase):
                 CREATE TABLE task_comments (task_gid TEXT, created_by_gid TEXT, synced_at TEXT);
                 CREATE TABLE task_attachments (task_gid TEXT, synced_at TEXT);
                 CREATE TABLE user_atlassian_accounts (user_gid TEXT, atlassian_account_id TEXT);
+                CREATE TABLE teams (gid TEXT);
+                INSERT INTO teams VALUES ('team-1');
+                CREATE TABLE team_members (
+                    team_gid TEXT, user_gid TEXT, is_active INTEGER, synced_at TEXT
+                );
+                INSERT INTO team_members VALUES
+                    ('team-1', 'service-user', 1, '2026-08-17T00:00:00Z');
                 """
             )
             connection.commit()
@@ -1382,7 +1427,14 @@ class LifecycleMenuTest(TestCase):
             output = io.StringIO()
             with patch("scripts.interactive_cli.active_db_path", return_value=db_path), \
                     patch("scripts.interactive_cli.latest_profile_import_config_path", return_value=None), \
+                    patch("scripts.interactive_cli.load_credentials", return_value=interactive_cli.Credentials(
+                        token="token", workspace_gid="workspace", skip_ssl_verification=False
+                    )), \
+                    patch("scripts.interactive_cli.AsanaHttpClient") as mock_client, \
                     redirect_stdout(output):
+                mock_client.return_value.get.return_value = {
+                    "data": {"gid": "service-user", "name": "Migration Service"}
+                }
                 interactive_cli.show_export_readiness(
                     ["--team-gid", "team-1"], "Jira task CSV", jira_csv=True
                 )
@@ -1391,6 +1443,10 @@ class LifecycleMenuTest(TestCase):
         self.assertIn("projects 2026-08-17 / tasks 2026-08-17", rendered)
         self.assertNotIn("2026-08-17T00:00:00Z", rendered)
         self.assertIn("[!] Jira CSV configuration: no saved profile", rendered)
+        self.assertIn(
+            "[x] Service-account team access (Migration Service): 1 of 1 selected teams",
+            rendered,
+        )
         self.assertIn("warnings do not prevent export", rendered)
 
     def test_scoped_export_readiness_uses_project_gid_column_and_reports_missing(self) -> None:
