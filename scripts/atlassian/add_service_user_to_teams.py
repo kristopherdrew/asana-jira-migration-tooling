@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add a service user to every team stored in SQLite."""
+"""Add a service user to each stored team they do not already belong to."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import csv
 import logging
 import sqlite3
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
@@ -26,6 +27,7 @@ from src.tasks.users import resolve_service_user_gid
 DEFAULT_OUTPUT_DIR = "exports"
 DEFAULT_CONFIG_ROOT = "."
 USER_SEARCH_PAGE_SIZE = 20
+DEFAULT_WORKERS = 5
 PROGRESS_INTERVAL = 10
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,15 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--search-users",
         action="store_true",
         help="Search the current users in SQLite and pick the service user GID interactively.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=(
+            "Number of concurrent Asana addUser requests "
+            f"(default: {DEFAULT_WORKERS})."
+        ),
     )
     parser.add_argument(
         "--log-level",
@@ -162,10 +173,43 @@ def build_add_user_payload(user_gid: str) -> dict:
     }
 
 
+def existing_service_user_team_gids(
+    connection: sqlite3.Connection,
+    user_gid: str,
+) -> set[str]:
+    """Return teams whose most recently synced roster includes the service user."""
+    return {
+        row[0]
+        for row in connection.execute(
+            "SELECT team_gid FROM team_members WHERE user_gid = ?", (user_gid,)
+        )
+    }
+
+
+def record_service_user_team_membership(
+    connection: sqlite3.Connection,
+    team_gid: str,
+    user_gid: str,
+) -> None:
+    """Keep the local roster current after a successful add-user request."""
+    connection.execute(
+        """
+        INSERT INTO team_members (team_gid, user_gid, role, is_admin, is_active, synced_at)
+        VALUES (?, ?, '', 1, 1, ?)
+        ON CONFLICT(team_gid, user_gid) DO UPDATE SET
+            is_admin = 1,
+            is_active = 1,
+            synced_at = excluded.synced_at
+        """,
+        (team_gid, user_gid, datetime.now(timezone.utc).isoformat()),
+    )
+
+
 def add_service_user_to_teams(
     connection: sqlite3.Connection,
     client: AsanaHttpClient,
     user_gid: str,
+    workers: int = DEFAULT_WORKERS,
 ) -> Tuple[int, List[Tuple[str, str]]]:
     rows = connection.execute(
         """
@@ -178,20 +222,44 @@ def add_service_user_to_teams(
         raise SystemExit("No teams found in the database. Run get_teams.py first.")
 
     payload = build_add_user_payload(user_gid)
-    success_count = 0
-    failures: List[Tuple[str, str]] = []
-    for index, row in enumerate(rows, start=1):
+    existing_team_gids = existing_service_user_team_gids(connection, user_gid)
+    missing_rows = [row for row in rows if row["gid"] not in existing_team_gids]
+    skipped_count = len(rows) - len(missing_rows)
+    if skipped_count:
+        logger.info(
+            "Service user %s is already a member of %s team(s); skipping them.",
+            user_gid,
+            skipped_count,
+        )
+    def add_one(row: sqlite3.Row) -> Optional[str]:
         team_gid = row["gid"]
-        team_name = row["name"] or team_gid
         try:
             client.post_json(f"/teams/{team_gid}/addUser", payload)
+            return None
+        except Exception as exc:  # noqa: BLE001
+            return str(exc)
+
+    success_count = 0
+    failures: List[Tuple[str, str]] = []
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        results = executor.map(add_one, missing_rows)
+        for index, (row, error_text) in enumerate(zip(missing_rows, results), start=1):
+            team_gid = row["gid"]
+            team_name = row["name"] or team_gid
+            if error_text:
+                failures.append((team_gid, error_text))
+                logger.warning(
+                    "Failed to add service user %s to team %s (%s): %s",
+                    user_gid,
+                    team_name,
+                    team_gid,
+                    error_text,
+                )
+                continue
+            record_service_user_team_membership(connection, team_gid, user_gid)
             success_count += 1
             if index == 1 or index % PROGRESS_INTERVAL == 0:
                 logger.info("Processed %s team(s)...", index)
-        except Exception as exc:  # noqa: BLE001
-            error_text = str(exc)
-            failures.append((team_gid, error_text))
-            logger.warning("Failed to add service user %s to team %s (%s): %s", user_gid, team_name, team_gid, error_text)
     return success_count, failures
 
 
@@ -249,7 +317,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     with database.connect() as connection:
         database.initialize(connection)
         user_gid = _resolve_service_user_gid(client, database, connection, args)
-        success_count, failures = add_service_user_to_teams(connection, client, user_gid)
+        success_count, failures = add_service_user_to_teams(
+            connection, client, user_gid, workers=args.workers
+        )
 
     logger.info("Added service user %s to %s team(s).", user_gid, success_count)
     if failures:
