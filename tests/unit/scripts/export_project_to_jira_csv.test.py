@@ -16,6 +16,7 @@ from scripts.export_project_to_jira_csv import (
     compute_incremental_refresh_window,
     export_project,
     format_custom_field_names_line,
+    main,
     normalize_jira_base_url,
     parse_project_list,
     prompt_and_run_incremental_refresh,
@@ -124,6 +125,10 @@ class ExportProjectToJiraCsvTest(TestCase):
                 "notes": "Task notes",
                 "assignee": {"gid": "user_1", "name": "Alice Reviewer"},
                 "created_by": {"gid": "user_1"},
+                "followers": [
+                    {"gid": "user_1", "name": "Alice Reviewer"},
+                    {"gid": "user_2", "name": "Bob Approver"},
+                ],
                 "created_at": "2025-02-25T10:30:00Z",
                 "modified_at": "2025-03-04T09:05:00Z",
                 "completed_at": "2025-03-04T09:05:00Z",
@@ -718,6 +723,60 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(row[creator_idx], "Alice Reviewer")
         self.assertEqual(row[creator_email_idx], "alice@example.com")
         self.assertEqual(row[creator_atl_idx], "atl-account-alice")
+
+    def test_exports_task_collaborators_and_records_them_in_association_report(self) -> None:
+        output_dir = self.workspace / "exports"
+        csv_path = export_project(
+            str(self.db_path),
+            "proj_1",
+            output_dir,
+            filename="collaborators.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+        )
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        header = rows[0]
+        by_gid = {row[header.index("task_gid")]: row for row in rows[1:]}
+        collaborator_index = header.index("Collaborators")
+        self.assertEqual(header.count("Collaborators"), 1)
+        self.assertEqual(
+            by_gid["task_1"][collaborator_index : collaborator_index + 3],
+            [
+                "Bob Approver",
+                "bob@example.com",
+                "atl-account-bob",
+            ],
+        )
+
+        assoc_path = csv_path.with_name(f"{csv_path.stem}_user_associations.csv")
+        with assoc_path.open("r", newline="", encoding="utf-8") as handle:
+            associations = {row["user_gid"]: row for row in csv.DictReader(handle)}
+        self.assertEqual(associations["user_2"]["collaborator_count"], "1")
+        self.assertEqual(associations["user_1"]["collaborator_count"], "0")
+
+    def test_main_consolidates_collaborator_counts_in_user_association_report(self) -> None:
+        output_dir = self.workspace / "consolidated"
+        with patch("scripts.atlassian.export_project_to_jira_csv.load_credentials"), patch(
+            "scripts.atlassian.export_project_to_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ):
+            main(
+                [
+                    "--project-gid",
+                    "proj_1",
+                    "--database",
+                    str(self.db_path),
+                    "--output-dir",
+                    str(output_dir),
+                    "--no-refresh-prompt",
+                ]
+            )
+        reports = list(output_dir.rglob("*_user_associations.csv"))
+        consolidated = next(path for path in reports if path.name.startswith("_Consolidated-"))
+        with consolidated.open("r", newline="", encoding="utf-8") as handle:
+            rows = {row["user_gid"]: row for row in csv.DictReader(handle)}
+        self.assertEqual(rows["user_2"]["collaborator_count"], "1")
 
     def test_missing_user_snapshot_uses_unknown_user_label(self) -> None:
         missing_gid = "user_missing"

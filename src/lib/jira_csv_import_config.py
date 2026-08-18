@@ -351,6 +351,7 @@ SYSTEM_FIELD_MAPPINGS = {
     "task_gid": {"jira.field": "issue-id", "userChanged": "false", "manualMapping": "false"},
     "creator_atlassian_id": {"jira.field": "reporter", "userChanged": "false", "manualMapping": "false"},
     "assignee_atlassian_id": {"jira.field": "assignee", "userChanged": "false", "manualMapping": "false"},
+    "collaborator_atlassian_id": {"jira.field": "watches", "userChanged": "false", "manualMapping": "false"},
     "Tags": {"jira.field": "labels", "userChanged": "false", "manualMapping": "false"},
 }
 

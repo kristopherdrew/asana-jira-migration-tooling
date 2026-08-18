@@ -192,3 +192,22 @@ class JiraCsvImportConfigTest(TestCase):
             self.assertNotIn("modified_section", config["config.value.mappings"])
             self.assertNotIn("completed", config["config.value.mappings"])
             json.dumps(config)
+
+    def test_config_maps_collaborator_atlassian_ids_to_watches(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            csv_path = Path(tmpdir) / "tasks.csv"
+            csv_path.write_text(
+                "task_name,collaborator_atlassian_id\nTask,atl-account-bob\n",
+                encoding="utf-8",
+            )
+
+            config = build_archive_import_config(csv_path, ArchiveImportSettings())
+
+        self.assertEqual(
+            config["config.field.mappings"]["collaborator_atlassian_id"],
+            {
+                "jira.field": "watches",
+                "userChanged": "false",
+                "manualMapping": "false",
+            },
+        )
