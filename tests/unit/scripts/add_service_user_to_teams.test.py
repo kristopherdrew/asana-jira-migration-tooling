@@ -71,6 +71,10 @@ class AddServiceUserToTeamsTest(TestCase):
             )
             connection.commit()
 
+    def test_defaults_to_the_team_sync_worker_count(self) -> None:
+        self.assertEqual(service_user_script.parse_args([]).workers, 5)
+        self.assertEqual(service_user_script.parse_args(["--workers", "2"]).workers, 2)
+
     def test_add_service_user_to_teams_writes_failure_report(self) -> None:
         self._initialize_database()
         client = FakeClient(failing_team_gid="team_2")
@@ -108,6 +112,34 @@ class AddServiceUserToTeamsTest(TestCase):
             report_path.read_text(encoding="utf-8"),
             "team_gid,error\nteam_2,boom\n",
         )
+
+    def test_add_service_user_to_teams_skips_existing_memberships(self) -> None:
+        self._initialize_database()
+        client = FakeClient()
+
+        with self.database.connect() as connection:
+            self.database.initialize(connection)
+            self.database.upsert_team_members(
+                connection,
+                "team_2",
+                [{"user": {"gid": "user_1", "is_active": True}, "is_admin": True}],
+                self.now,
+            )
+            success_count, failures = service_user_script.add_service_user_to_teams(
+                connection, client, "user_1"
+            )
+            roster = connection.execute(
+                "SELECT team_gid FROM team_members WHERE user_gid = ? ORDER BY team_gid",
+                ("user_1",),
+            ).fetchall()
+
+        self.assertEqual(success_count, 2)
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            [endpoint for endpoint, _ in client.calls],
+            ["/teams/team_1/addUser", "/teams/team_3/addUser"],
+        )
+        self.assertEqual([row[0] for row in roster], ["team_1", "team_2", "team_3"])
 
     def test_prompt_for_service_user_gid_searches_local_users(self) -> None:
         self._initialize_database()

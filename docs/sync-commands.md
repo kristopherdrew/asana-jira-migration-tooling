@@ -71,7 +71,7 @@ Optional flags:
 - `--workers <n>` concurrent workers for the My Tasks GID fetch pass (default 4).
 
 ### Add Service User to Teams
-Adds one service user to every Asana team stored in SQLite using Asana's `addUser` endpoint. By default the service user is resolved automatically as the token's own account (`GET /users/me`) and upserted into the `users` table so it becomes searchable; no prompt is shown. Pass `--user-gid` to override, or `--search-users` to pick from the local `users` table interactively. If `/users/me` cannot be reached, the script falls back to the interactive search/GID prompt.
+Adds one service user to each Asana team stored in SQLite whose latest synced roster does not already contain that user, using Asana's `addUser` endpoint. By default the service user is resolved automatically as the token's own account (`GET /users/me`) and upserted into the `users` table so it becomes searchable; no prompt is shown. Pass `--user-gid` to override, or `--search-users` to pick from the local `users` table interactively. If `/users/me` cannot be reached, the script falls back to the interactive search/GID prompt. Successfully added memberships are recorded locally, so a repeat run skips them even before the next membership refresh.
 ```bash
 python3 -m scripts.add_service_user_to_teams
 ```
@@ -83,6 +83,7 @@ Optional flags:
 - `--output-dir <path>` to choose where failure exports are written (default `exports/`).
 - `--user-gid <gid>` to override the token account and use a specific service user.
 - `--search-users` to pick the service user from the local `users` table interactively instead of using the token account.
+- `--workers <n>` to control concurrent `addUser` requests (default `5`, matching the team-membership sync).
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
 If one or more team updates fail, the script writes `service_user_team_add_failures_<timestamp>.csv` into the output directory with the failed team GIDs and the captured error text.
