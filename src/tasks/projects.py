@@ -68,6 +68,21 @@ def fetch_workspace_projects(
     yield from client.get_paginated(endpoint, params=params)
 
 
+def fetch_team_projects(
+    client: AsanaHttpClient,
+    team_gid: str,
+    opt_fields: Optional[Iterable[str]] = None,
+    page_size: int = 100,
+    archived: Optional[bool] = None,
+) -> Generator[Dict, None, None]:
+    """Yield projects for one team, handling pagination."""
+    fields = ",".join(opt_fields or PROJECT_FIELDS_DEFAULT)
+    params = {"opt_fields": fields, "limit": str(page_size)}
+    if archived is not None:
+        params["archived"] = "true" if archived else "false"
+    yield from client.get_paginated(f"/teams/{team_gid}/projects", params=params)
+
+
 def fetch_project_task_counts(client: AsanaHttpClient, project_gid: str) -> Dict[str, Optional[int] | str]:
     """Fetch the current task-count snapshot for a project."""
     endpoint = f"/projects/{project_gid}/task_counts"

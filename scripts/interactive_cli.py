@@ -2334,6 +2334,47 @@ def run_initial_metadata(log_level: str) -> None:
             raise
 
 
+def _missing_service_account_team_gids() -> tuple[str, List[str]]:
+    """Return the active token's GID and locally synced teams missing that user."""
+    credentials = load_credentials(PROJECT_ROOT)
+    payload = AsanaHttpClient(
+        token=credentials.token,
+        skip_ssl_verification=credentials.skip_ssl_verification,
+    ).get("/users/me")
+    user_gid = str(((payload or {}).get("data") or {}).get("gid") or "").strip()
+    if not user_gid:
+        raise ValueError("Asana did not return the active service-account GID.")
+    with _open_sqlite(active_db_path()) as connection:
+        rows = connection.execute(
+            "SELECT t.gid FROM teams t LEFT JOIN team_members tm "
+            "ON tm.team_gid = t.gid AND tm.user_gid = ? "
+            "WHERE tm.user_gid IS NULL ORDER BY t.gid",
+            (user_gid,),
+        ).fetchall()
+    return user_gid, [row["gid"] for row in rows]
+
+
+def run_add_service_account_to_missing_teams(log_level: str) -> None:
+    """Add the token account to missing teams, then refresh only their projects."""
+    try:
+        user_gid, team_gids = _missing_service_account_team_gids()
+    except Exception as exc:  # noqa: BLE001
+        print(f"Could not determine missing service-account teams: {exc}")
+        return
+    if not team_gids:
+        print("The active service account is already a member of every synced team.")
+        return
+    print(f"Adding the service account to {len(team_gids)} missing team(s)...")
+    run_script(
+        add_service_user_to_teams.main,
+        build_common_args(log_level) + ["--user-gid", user_gid],
+    )
+    run_script(
+        get_projects.main,
+        build_common_args(log_level) + ["--team-gids", ",".join(team_gids)],
+    )
+
+
 def run_guided_asana_refresh(log_level: str) -> None:
     """Run the Asana refresh layers in dependency order, with manual scope prompts."""
     print("\nGuided Asana refresh: metadata -> tasks -> task-derived data")
@@ -2838,6 +2879,7 @@ def build_discover_refresh_menu(log_level: str) -> Dict[str, MenuItem]:
         "7": MenuItem("7", "Sync personal tasks", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
         "8": MenuItem("8", "Run incremental Asana refresh", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
         "9": MenuItem("9", "Discover and sync newly found projects", lambda: run_new_project_discovery_flow(log_level)),
+        "10": MenuItem("10", "Add service account to missing teams and sync their project metadata", lambda: run_add_service_account_to_missing_teams(log_level)),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

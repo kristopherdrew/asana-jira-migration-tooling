@@ -11,7 +11,7 @@ from src.lib.config import load_credentials
 from src.lib.database import Database, synced_at_timestamp, resolve_default_db_path
 from src.lib.http_client import AsanaHttpClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
-from src.tasks.projects import fetch_project_task_counts, fetch_workspace_projects
+from src.tasks.projects import fetch_project_task_counts, fetch_team_projects, fetch_workspace_projects
 
 
 DEFAULT_CONFIG_ROOT = "."
@@ -45,6 +45,10 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         default="active",
         help="Which projects to include: active (default), archived, or all.",
     )
+    parser.add_argument(
+        "--team-gids",
+        help="Comma-separated team GIDs whose projects to sync instead of the workspace.",
+    )
     return parser.parse_args(argv)
 
 
@@ -77,12 +81,14 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     project_count = 0
     custom_field_links = 0
     custom_field_setting_links = 0
+    team_gids = [gid.strip() for gid in (args.team_gids or "").split(",") if gid.strip()]
 
     logger.info("Starting project sync for workspace %s", workspace_gid)
 
     with database.connect() as connection:
         database.initialize(connection)
 
+        seen_project_gids = set()
         for archived_flag in _archived_filters(args.archived_scope):
             scope_label = (
                 "archived"
@@ -91,14 +97,21 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 if archived_flag is False
                 else "all"
             )
-            logger.info("Fetching %s projects...", scope_label)
-            for project in fetch_workspace_projects(
-                client=client,
-                workspace_gid=workspace_gid,
-                page_size=args.page_size,
-                archived=archived_flag,
-            ):
+            logger.info("Fetching %s projects%s...", scope_label, " for selected teams" if team_gids else "")
+            project_sources = (
+                (
+                    project
+                    for team_gid in team_gids
+                    for project in fetch_team_projects(client, team_gid, page_size=args.page_size, archived=archived_flag)
+                )
+                if team_gids
+                else fetch_workspace_projects(client, workspace_gid, page_size=args.page_size, archived=archived_flag)
+            )
+            for project in project_sources:
                 project_gid = project.get("gid")
+                if project_gid in seen_project_gids:
+                    continue
+                seen_project_gids.add(project_gid)
                 if project_gid:
                     try:
                         project.update(fetch_project_task_counts(client, project_gid))

@@ -30,6 +30,7 @@ Optional flags:
 - `--workspace-gid <gid>` to override the workspace ID from the resolved credentials.
 - `--page-size <n>` to adjust the Asana pagination size (default 100).
 - `--archived-scope <active|archived|all>` to decide which lifecycle state(s) to sync.
+- `--team-gids <gid1,gid2>` to sync project metadata only for those teams; the Discover & Refresh menu uses this after adding the service account to missing teams.
 
 ### Sync Portfolios
 Captures Asana portfolios and everything attached to them. Because Asana cannot list portfolios workspace-wide (`GET /portfolios` requires an `owner`), the script iterates over every user in the `users` table (run `get_users` first) and lists the portfolios each one owns. For every discovered portfolio it stores the record (`portfolios`), its member projects and nested portfolios (`portfolio_items`), portfolio-scoped custom field settings (`portfolio_custom_field_settings`), memberships (`portfolio_memberships`), and full status-update history (`portfolio_updates`). Items whose `resource_type` is `portfolio` are recursed into and fetched even when no listed user owns them, with a cycle/dedup guard so each portfolio is captured once.
