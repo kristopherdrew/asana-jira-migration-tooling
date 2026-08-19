@@ -246,6 +246,34 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertEqual(by_gid["task_2"][header.index("parent_gid")], "task_1")
         self.assertNotIn("Collaborators", header)
 
+    def test_export_substitutes_dated_placeholders_for_blank_titles_and_comments(self) -> None:
+        self.connection.execute("UPDATE tasks SET name = ? WHERE gid = ?", ("", "task_1"))
+        self.database.replace_task_comments(
+            self.connection,
+            "task_2",
+            [{
+                "gid": "cmt_blank",
+                "created_at": "2025-03-06T08:15:00Z",
+                "created_by": {"gid": "user_1"},
+                "text": "  ",
+            }],
+            self.sync_time,
+        )
+        self.connection.commit()
+
+        header, by_gid = self._run_export()
+        self.assertEqual(
+            by_gid["task_1"][header.index("task_name")],
+            "--Blank Title--2025-02-25",
+        )
+        comment_columns = [index for index, name in enumerate(header) if name == "Comment"]
+        self.assertTrue(
+            any(
+                "--Blank Comment--2025-03-06" in by_gid["task_2"][index]
+                for index in comment_columns
+            )
+        )
+
     def test_adds_project_epic_and_reparents_top_level_tasks(self) -> None:
         header, by_gid = self._run_export()
         epic_gid = "proj_1::archival::epic"
