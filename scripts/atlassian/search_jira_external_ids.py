@@ -7,6 +7,7 @@ import argparse
 import base64
 import json
 import logging
+import re
 import ssl
 import sys
 import time
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 JIRA_SEARCH_PAGE_SIZE = 100
 DEFAULT_FIELDS = ("created",)
 DEFAULT_EXTERNAL_ID_FIELD = "External issue ID"
+CUSTOM_FIELD_ID_PATTERN = re.compile(r"customfield_\d+", re.IGNORECASE)
 
 
 class JiraSearchError(Exception):
@@ -283,7 +285,12 @@ def load_known_task_gids(connection) -> set[str]:
 
 
 def resolve_external_field_id(fields: Sequence[Dict[str, object]], requested: str) -> str:
-    """Resolve a Jira field ID from either its ID or display name."""
+    """Resolve a Jira field ID from either its ID or display name.
+
+    Jira's field catalog can omit a custom field that remains searchable in a
+    project.  Preserve an explicit ``customfield_<number>`` ID in that case and
+    let the subsequent JQL request provide the authoritative validation.
+    """
     requested = requested.strip()
     for field in fields:
         if str(field.get("id") or "") == requested:
@@ -297,6 +304,12 @@ def resolve_external_field_id(fields: Sequence[Dict[str, object]], requested: st
         return matches[0]
     if len(matches) > 1:
         raise ValueError(f"Jira field name {requested!r} is ambiguous; pass its customfield ID instead.")
+    if CUSTOM_FIELD_ID_PATTERN.fullmatch(requested):
+        logger.warning(
+            "Jira field %s was absent from the field catalog; using the explicit ID and letting Jira search validate it.",
+            requested,
+        )
+        return requested
     raise ValueError(f"Jira field {requested!r} was not found.")
 
 

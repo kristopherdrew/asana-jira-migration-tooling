@@ -47,7 +47,7 @@ for a task is retained and later occurrences are skipped.
 
 Optional flags:
 - `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
-- `--external-id-field <name-or-key>` explicitly identifies the external/task ID field. Without it, the command uses the External Issue ID field saved for the selected site by the Jira CSV importer configuration; if none is saved (or it no longer exists), it discovers `External issue ID` from Jira automatically.
+- `--external-id-field <name-or-key>` explicitly identifies the external/task ID field. Without it, the command uses the External Issue ID field saved for the selected site by the Jira CSV importer configuration; if none is saved (or it no longer exists), it discovers `External issue ID` from Jira automatically. A `customfield_<number>` ID is retained even when Jira omits it from its field catalog; the subsequent Jira search validates it.
 - `--jira-site <key>` selects the named site and records recovered task mappings under that same site.
 - Jira searches always request 100 issues per page, Jira's API limit; next-page-token pagination retrieves larger result sets.
 - `--database <path>` SQLite file to update (default `data/asana.sqlite`).

@@ -132,6 +132,12 @@ class SearchJiraExternalIdsTests(unittest.TestCase):
             'project IN ("ABC", "XYZ") AND "customfield_123" is not EMPTY',
         )
 
+    def test_resolve_external_field_accepts_catalog_hidden_custom_field_id(self) -> None:
+        self.assertEqual(
+            search_mod.resolve_external_field_id([], "customfield_10509"),
+            "customfield_10509",
+        )
+
     def test_select_external_id_field_prefers_saved_csv_import_mapping(self) -> None:
         fields = [
             {"id": "customfield_123", "name": "External issue ID"},
