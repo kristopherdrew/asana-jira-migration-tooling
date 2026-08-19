@@ -103,7 +103,7 @@ Optional flags:
 - `--export-id <value>` to record every exported task under a shared identifier and skip any task already exported with the same ID.
 - `--clear-export-ids` to wipe all recorded export/task mappings from SQLite and exit.
 - `--clear-export-id <value>` to delete recorded mappings for a specific export ID and exit.
-- When an interactive export includes projects without Jira project associations, the exporter offers to assign one Jira project key and name to every currently unmapped project in that selected scope. Existing associations are preserved. For non-interactive runs, use `--map-unmapped-to-jira-project-key <key>` together with `--map-unmapped-to-jira-project-name <name>` to do the same explicitly.
+- When an interactive export includes projects without Jira project associations, the exporter asks for one Jira project key, looks up its name on the selected Jira site, and assigns that verified pair to every currently unmapped project in the selected scope. Existing associations are preserved. For non-interactive runs, use `--map-unmapped-to-jira-project-key <key>` together with `--map-unmapped-to-jira-project-name <name>` to do the same explicitly.
 - `--fallback-atlassian-id <account_id>` to substitute an Atlassian account ID anywhere a mapping is missing.
 - `--incremental-refresh [prompt|yes|no]` to control per-project refresh prompts.
 - `--custom-fields <name_or_gid,...>` to restrict the export to the specified custom fields.
@@ -122,7 +122,7 @@ When launched from an interactive terminal and `--custom-fields` isn’t provide
 
 Each user-authored comment appears in its own `Comment` column (the header repeats for every additional comment). Comment cells follow Jira’s expected format `dd/MMM/yy h:mm AM/PM;<atlassian_account_id>; <comment text>` and preserve multiline content via CSV quoting. Comment author IDs are resolved through the `user_atlassian_accounts` table using the task creator’s Asana GID; refresh it via `scripts.update_atlassian_user_map` whenever Atlassian account assignments change.
 
-Jira project metadata columns (`jira_project_name`, `jira_project_key`) come from `scripts.atlassian.import_jira_project_map`; populate that table before exporting to carry the Jira identifiers alongside each task row. In an interactive terminal, either task CSV exporter also offers to assign one Jira project key/name to all unmapped projects in the selected scope; use the association import when projects need different destinations.
+Jira project metadata columns (`jira_project_name`, `jira_project_key`) come from `scripts.atlassian.import_jira_project_map`; populate that table before exporting to carry the Jira identifiers alongside each task row. In an interactive terminal, either task CSV exporter can look up a Jira project name from a provided key and assign that pair to all unmapped projects in the selected scope; use the association import when projects need different destinations.
 `jira_project_type` is emitted as `software` for every exported row so Jira imports have the project type context inline.
 
 Every export also writes a `<filename>_link_modifications.csv` companion that lists every Asana URL the script augmented (plus full field contents when relevant). Each entry includes `task_gid`, field, original, modified, and optional full content.

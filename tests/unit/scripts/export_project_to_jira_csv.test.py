@@ -11,6 +11,7 @@ from unittest import TestCase
 from unittest.mock import Mock, patch
 from contextlib import redirect_stdout
 
+from src.lib.config import Credentials
 from src.lib.database import Database
 from scripts.export_project_to_jira_csv import (
     assign_unmapped_jira_project,
@@ -22,6 +23,8 @@ from scripts.export_project_to_jira_csv import (
     parse_project_list,
     prompt_and_run_incremental_refresh,
     print_project_stats,
+    lookup_jira_project_name,
+    prompt_for_unmapped_jira_project,
 )
 
 
@@ -1390,6 +1393,65 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(mappings["proj_1"]["jira_project_name"], "Existing Jira")
         self.assertEqual(mappings["proj_2"]["jira_project_key"], "MIG")
         self.assertEqual(mappings["proj_2"]["jira_project_name"], "Migration")
+
+    def test_lookup_jira_project_name_uses_jira_project_endpoint(self) -> None:
+        credentials = Credentials(
+            token="asana-token",
+            workspace_gid="workspace",
+            skip_ssl_verification=False,
+            atlassian_username="user@example.com",
+            atlassian_token="jira-token",
+        )
+        with patch(
+            "scripts.atlassian.export_project_to_jira_csv.JiraClient"
+        ) as jira_client:
+            jira_client.return_value.get_project.return_value = {
+                "key": "MIG",
+                "name": "Migration Space",
+            }
+            name = lookup_jira_project_name(
+                "MIG", "https://jira.example.atlassian.net", credentials
+            )
+
+        self.assertEqual(name, "Migration Space")
+        jira_client.return_value.get_project.assert_called_once_with("MIG")
+
+    def test_prompt_for_unmapped_jira_project_looks_up_name_from_key(self) -> None:
+        credentials = Credentials(
+            token="asana-token",
+            workspace_gid="workspace",
+            skip_ssl_verification=False,
+            atlassian_username="user@example.com",
+            atlassian_token="jira-token",
+        )
+        interactive_stdin = Mock()
+        interactive_stdin.isatty.return_value = True
+        with patch("scripts.atlassian.export_project_to_jira_csv.sys.stdin", interactive_stdin), patch(
+            "builtins.input", side_effect=["y", "MIG"]
+        ), patch(
+            "scripts.atlassian.export_project_to_jira_csv.lookup_jira_project_name",
+            return_value="Migration Space",
+        ) as lookup, patch(
+            "scripts.atlassian.export_project_to_jira_csv.assign_unmapped_jira_project",
+            return_value=1,
+        ) as assign:
+            added = prompt_for_unmapped_jira_project(
+                self.database,
+                [("proj_1", "Example Project")],
+                "sandbox",
+                self.jira_base_url,
+                credentials,
+            )
+
+        self.assertEqual(added, 1)
+        lookup.assert_called_once_with("MIG", self.jira_base_url, credentials)
+        assign.assert_called_once_with(
+            self.database,
+            [("proj_1", "Example Project")],
+            "MIG",
+            "Migration Space",
+            "sandbox",
+        )
 
     def test_parse_project_list_reads_project_gid_column_from_csv(self) -> None:
         scope_file = self.workspace / "project-map.csv"

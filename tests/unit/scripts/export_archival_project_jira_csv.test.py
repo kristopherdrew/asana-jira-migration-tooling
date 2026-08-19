@@ -336,7 +336,7 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
             )
 
         self.assertEqual(
-            prompt_for_mapping.call_args.args[1:],
+            prompt_for_mapping.call_args.args[1:3],
             ([('proj_1', 'Archive Me')], 'sandbox'),
         )
 

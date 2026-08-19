@@ -45,6 +45,12 @@ class CreateIssueTest(TestCase):
         self.assertEqual(call["method"], "GET")
         self.assertEqual(call["path"], "/rest/api/3/myself")
 
+    def test_get_project_reads_exact_project_key(self) -> None:
+        client = _RecordingClient([b'{"key":"MIG","name":"Migration Space"}'])
+        project = client.get_project("MIG")
+        self.assertEqual(project["name"], "Migration Space")
+        self.assertEqual(client.calls[0]["path"], "/rest/api/3/project/MIG")
+
     def test_field_and_resolution_catalog_endpoints(self) -> None:
         client = _RecordingClient([
             b'[{"id":"customfield_1","name":"Section"}]',

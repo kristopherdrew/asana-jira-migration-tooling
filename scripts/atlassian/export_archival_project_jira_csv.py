@@ -784,7 +784,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             task_filters = {}
 
     added_mappings = prompt_for_unmapped_jira_project(
-        database, projects, args.jira_site
+        database, projects, args.jira_site, jira_base_url, credentials
     )
     if added_mappings:
         logger.info(
