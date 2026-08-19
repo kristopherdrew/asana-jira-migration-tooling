@@ -88,10 +88,10 @@ class SyncJiraAttachmentsTest(TestCase):
         self.assertEqual(job.attachment_name, "example__att_1.png")
         self.assertEqual(job.jira_key, "ENG-1")
 
-    @patch("scripts.atlassian.sync_jira_attachments.download_attachment")
-    @patch("scripts.atlassian.sync_jira_attachments.fetch_attachment_download_source")
-    @patch("scripts.atlassian.sync_jira_attachments.JiraClient")
-    @patch("scripts.atlassian.sync_jira_attachments.load_credentials")
+    @patch("scripts.deprecated.sync_jira_attachments.download_attachment")
+    @patch("scripts.deprecated.sync_jira_attachments.fetch_attachment_download_source")
+    @patch("scripts.deprecated.sync_jira_attachments.JiraClient")
+    @patch("scripts.deprecated.sync_jira_attachments.load_credentials")
     def test_sync_attachments_dry_run(self, mock_creds, mock_jira_client, mock_source, mock_download) -> None:
         mock_creds.return_value = self._creds()
         mock_client_instance = MagicMock()
@@ -121,10 +121,10 @@ class SyncJiraAttachmentsTest(TestCase):
         mock_client_instance.list_issue_attachment_names.assert_not_called()
         mock_download.assert_not_called()
 
-    @patch("scripts.atlassian.sync_jira_attachments.download_attachment")
-    @patch("scripts.atlassian.sync_jira_attachments.fetch_attachment_download_source")
-    @patch("scripts.atlassian.sync_jira_attachments.JiraClient")
-    @patch("scripts.atlassian.sync_jira_attachments.load_credentials")
+    @patch("scripts.deprecated.sync_jira_attachments.download_attachment")
+    @patch("scripts.deprecated.sync_jira_attachments.fetch_attachment_download_source")
+    @patch("scripts.deprecated.sync_jira_attachments.JiraClient")
+    @patch("scripts.deprecated.sync_jira_attachments.load_credentials")
     def test_sync_attachments_uploads_and_skips_existing(self, mock_creds, mock_jira_client, mock_source, mock_download) -> None:
         mock_creds.return_value = self._creds()
         mock_client_instance = MagicMock()
@@ -156,10 +156,10 @@ class SyncJiraAttachmentsTest(TestCase):
         mock_client_instance.list_issue_attachment_names.assert_called_once_with("ENG-1")
         mock_download.assert_called_once()
 
-    @patch("scripts.atlassian.sync_jira_attachments.download_attachment")
-    @patch("scripts.atlassian.sync_jira_attachments.fetch_attachment_download_source")
-    @patch("scripts.atlassian.sync_jira_attachments.JiraClient")
-    @patch("scripts.atlassian.sync_jira_attachments.load_credentials")
+    @patch("scripts.deprecated.sync_jira_attachments.download_attachment")
+    @patch("scripts.deprecated.sync_jira_attachments.fetch_attachment_download_source")
+    @patch("scripts.deprecated.sync_jira_attachments.JiraClient")
+    @patch("scripts.deprecated.sync_jira_attachments.load_credentials")
     def test_skips_project_without_attachments_but_continues(self, mock_creds, mock_jira_client, mock_source, mock_download) -> None:
         # Add a project with no attachments
         empty_project = "proj_empty"
@@ -199,10 +199,10 @@ class SyncJiraAttachmentsTest(TestCase):
         self.assertTrue(report_paths[0].exists())
         mock_client_instance.upload_attachment.assert_called()
 
-    @patch("scripts.atlassian.sync_jira_attachments.download_attachment")
-    @patch("scripts.atlassian.sync_jira_attachments.fetch_attachment_download_source")
-    @patch("scripts.atlassian.sync_jira_attachments.JiraClient")
-    @patch("scripts.atlassian.sync_jira_attachments.load_credentials")
+    @patch("scripts.deprecated.sync_jira_attachments.download_attachment")
+    @patch("scripts.deprecated.sync_jira_attachments.fetch_attachment_download_source")
+    @patch("scripts.deprecated.sync_jira_attachments.JiraClient")
+    @patch("scripts.deprecated.sync_jira_attachments.load_credentials")
     def test_sync_multiple_projects(self, mock_creds, mock_jira_client, mock_source, mock_download) -> None:
         # Seed a second project with its own attachment/mapping
         project_two = "proj_2"

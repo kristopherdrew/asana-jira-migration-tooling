@@ -50,6 +50,12 @@ The Initialization, Tasks, Atlassian, and Reports menus expose the previous tech
 organization during the transition to lifecycle phases. They call the same scripts
 as the phase menus and should not be treated as a separate workflow.
 
+### Deprecated scripts
+
+The Legacy Atlassian menu retains **Deprecated: Sync Jira attachments immediately**
+for exceptional compatibility use. It runs `scripts.deprecated.sync_jira_attachments`;
+new migration waves should use the durable attachment archive download/upload workflow.
+
 ## Expected Result
 
 The specific recovery objective is complete, the resulting mapping state is

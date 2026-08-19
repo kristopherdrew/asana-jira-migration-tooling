@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Keep the migration snapshot current and validate saved migration state before,
-between, and after migration waves. This phase combines non-mutating readiness checks
-with focused refresh and reconciliation actions.
+Keep the migration snapshot current before, between, and after migration waves. This
+phase combines non-mutating readiness checks with focused refresh and reconciliation
+actions.
 
 ## Menu Actions and Scripts
 

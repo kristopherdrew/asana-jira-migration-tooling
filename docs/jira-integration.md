@@ -353,23 +353,41 @@ python3 -m scripts.upload_jira_attachments \
 python3 -m scripts.upload_jira_attachments \
   --manifest attachment_archives/wave-2026-08/manifest.json \
   --prod
+
+# Upload only attachments whose Asana task belongs to selected projects
+python3 -m scripts.upload_jira_attachments \
+  --manifest attachment_archives/wave-2026-08/manifest.json \
+  --project-gids <gid1,gid2>
 ```
 
 `--database` selects the current mapping database; `--prod` targets production Jira,
-otherwise sandbox is used. `--workers` and `--throttle-seconds` control Jira request rate.
+otherwise sandbox is used. Omit project scope to upload all attachments in the archive, or
+use exactly one of `--project-gid`, `--project-gids`, or `--project-gids-file` to upload
+only files whose task is associated with the selected project(s). `--workers` and
+`--throttle-seconds` control Jira request rate.
 Every run writes `reports/jira_upload_<timestamp>.csv` inside the archive. Per-destination
 results are persisted in `attachment_jira_uploads`, including the Jira attachment ID and
 returned size when available. Missing mappings are reported without blocking other files,
 and Jira files with the generated `filename__attachment_gid.ext` name are skipped.
 
-### Direct Sync Jira Attachments
+In the Interactive CLI, the upload action lists every existing archive manifest beneath
+the default `attachment_archives/` directory for numbered selection, then offers all
+archive attachments, selected project GIDs, or a project-GID file. A manifest path or
+archive directory can still be entered manually for an archive stored elsewhere.
+
+### Deprecated: Direct Sync Jira Attachments
+
+`scripts.deprecated.sync_jira_attachments` downloads and uploads in one run. Prefer
+the durable archive workflow for all new migrations because it preserves a verified,
+resumable copy before Jira upload.
+
 Downloads every attachment referenced by the tasks in a project and uploads those files to the Jira issues linked via `task_jira_mappings`, keeping filenames consistent with the `!filename!` markers embedded in notes/comments.
 ```bash
-python3 -m scripts.sync_jira_attachments --project-gid <gid>
+python3 -m scripts.deprecated.sync_jira_attachments --project-gid <gid>
 # or, against production
-python3 -m scripts.sync_jira_attachments --project-gids <gid1,gid2,...> --prod
+python3 -m scripts.deprecated.sync_jira_attachments --project-gids <gid1,gid2,...> --prod
 # or load newline-/comma-separated project GIDs from a file
-python3 -m scripts.sync_jira_attachments --project-gids-file <path>
+python3 -m scripts.deprecated.sync_jira_attachments --project-gids-file <path>
 ```
 Required flags:
 - One scope selector: `--project-gid <gid>`, `--project-gids <gid1,gid2,...>`, or `--project-gids-file <path>`.

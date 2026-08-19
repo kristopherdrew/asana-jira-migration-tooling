@@ -266,7 +266,10 @@ class IncrementalArgsBuilderTest(TestCase):
                 "/secure/archives", "--archive-id", "wave-01",
             ],
         )
-        with patch("builtins.input", side_effect=["/secure/archives/wave-01/manifest.json", "y"]):
+        with patch(
+            "scripts.interactive_cli._prompt_attachment_archive_manifest",
+            return_value="/secure/archives/wave-01/manifest.json",
+        ), patch("builtins.input", side_effect=["1", "y"]):
             upload_args = interactive_cli.args_upload_attachment_archive("INFO")
         self.assertEqual(
             upload_args,
@@ -274,6 +277,37 @@ class IncrementalArgsBuilderTest(TestCase):
                 "--log-level", "INFO", "--manifest",
                 "/secure/archives/wave-01/manifest.json", "--dry-run",
             ],
+        )
+
+    def test_attachment_archive_upload_accepts_project_gids(self) -> None:
+        with patch(
+            "scripts.interactive_cli._prompt_attachment_archive_manifest",
+            return_value="/secure/archives/wave-01/manifest.json",
+        ), patch("builtins.input", side_effect=["2", "project_1,project_2", "y"]):
+            args = interactive_cli.args_upload_attachment_archive("INFO")
+
+        self.assertEqual(
+            args,
+            [
+                "--log-level", "INFO", "--manifest", "/secure/archives/wave-01/manifest.json",
+                "--project-gids", "project_1,project_2", "--dry-run",
+            ],
+        )
+
+    def test_attachment_archive_upload_lists_and_selects_existing_manifest(self) -> None:
+        archive_root = self.temp_dir / "attachment_archives"
+        manifest = archive_root / "wave-01" / "manifest.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("{}", encoding="utf-8")
+
+        with patch.object(interactive_cli, "PROJECT_ROOT", self.temp_dir), patch(
+            "builtins.input", side_effect=["1", "1", "y"]
+        ):
+            args = interactive_cli.args_upload_attachment_archive("INFO")
+
+        self.assertEqual(
+            args,
+            ["--log-level", "INFO", "--manifest", str(manifest), "--dry-run"],
         )
 
     def test_regular_and_archival_exports_use_project_gid_file_picker(self) -> None:
@@ -1277,6 +1311,17 @@ class LifecycleMenuTest(TestCase):
         ]
         for menu in menus:
             self.assertEqual(list(menu), [item.key for item in menu.values()])
+
+    def test_migrate_projects_menu_uses_the_durable_attachment_workflow(self) -> None:
+        menu = interactive_cli.build_migrate_projects_menu("INFO")
+
+        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "b"])
+        self.assertEqual(
+            menu["3"].label,
+            "Associate Jira Task Keys with Asana Task Keys",
+        )
+        self.assertNotIn("Sync Jira attachments immediately", [item.label for item in menu.values()])
+        self.assertEqual(menu["4"].label, "Validate Jira task migration coverage")
 
     def test_discover_menu_exposes_new_project_workflow(self) -> None:
         menu = interactive_cli.build_discover_refresh_menu("INFO")

@@ -459,6 +459,7 @@ def upload_archive(
     workers: int = 2,
     throttle_seconds: float = 0.5,
     jira_site_key: Optional[str] = None,
+    project_gids: Optional[Sequence[str]] = None,
 ) -> Path:
     """Resolve current task mappings and upload verified archive files to Jira."""
     payload = load_manifest(manifest_path)
@@ -504,6 +505,21 @@ def upload_archive(
                     error=item.get("error", ""),
                 ),
             )
+        if project_gids and ready_files:
+            project_placeholders = ",".join("?" for _ in project_gids)
+            task_gids = sorted({item["task_gid"] for item in ready_files})
+            task_placeholders = ",".join("?" for _ in task_gids)
+            selected_task_rows = connection.execute(
+                f"""
+                SELECT DISTINCT task_gid FROM task_projects
+                WHERE project_gid IN ({project_placeholders})
+                  AND task_gid IN ({task_placeholders})
+                """,
+                tuple(project_gids) + tuple(task_gids),
+            ).fetchall()
+            selected_task_gids = {row["task_gid"] for row in selected_task_rows}
+            ready_files = [item for item in ready_files if item["task_gid"] in selected_task_gids]
+            task_gids = sorted(selected_task_gids)
         if task_gids:
             placeholders = ",".join("?" for _ in task_gids)
             site_clause = "jira_site_key = ? AND " if jira_site_key else ""

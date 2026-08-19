@@ -63,11 +63,11 @@ from scripts.atlassian import (  # noqa: E402
     generate_jira_csv_import_config,
     get_jira_migration_decisions,
     search_jira_external_ids,
-    sync_jira_attachments,
     update_atlassian_user_map,
     import_jira_project_map,
     set_project_last_updated_jira_field,
 )
+from scripts.deprecated import sync_jira_attachments  # noqa: E402
 from src.lib.config import (  # noqa: E402
     Credentials,
     JiraSite,
@@ -495,6 +495,38 @@ def _prompt_jira_keys_file(context: str) -> str:
 
 def _prompt_csv_file(context: str, item_label: str) -> str:
     return _prompt_list_file(context, item_label, {".csv"})
+
+
+def _prompt_attachment_archive_manifest() -> str:
+    """Select an existing attachment archive manifest or enter its path."""
+    archive_root = PROJECT_ROOT / "attachment_archives"
+    candidates = (
+        sorted(archive_root.rglob("manifest.json"), key=lambda path: str(path).lower())
+        if archive_root.is_dir()
+        else []
+    )
+    print(f"\nAttachment archives in {archive_root}:")
+    if candidates:
+        for index, path in enumerate(candidates, start=1):
+            print(f"[{index}] {path.parent.relative_to(archive_root)}")
+    else:
+        print("  No archive manifests found.")
+
+    selection = prompt(
+        "Pick an archive number, or enter an archive/manifest path",
+        default="",
+    )
+    if selection.isdigit() and 1 <= int(selection) <= len(candidates):
+        manifest = candidates[int(selection) - 1]
+    else:
+        manifest = Path(selection).expanduser()
+        if not manifest.is_absolute():
+            manifest = PROJECT_ROOT / manifest
+        if manifest.is_dir():
+            manifest = manifest / "manifest.json"
+    if not selection or not manifest.is_file():
+        raise SystemExit(f"Attachment archive manifest not found: {selection or '(blank)'}")
+    return str(manifest.resolve())
 
 
 def confirm(text: str, default: bool = True) -> bool:
@@ -1863,7 +1895,7 @@ def run_export_tasks_to_jira(log_level: str) -> None:
 def run_sync_attachments(log_level: str) -> None:
     args = args_sync_attachments(log_level)
     run_script(sync_jira_attachments.main, args)
-    print_rerun_command("scripts.atlassian.sync_jira_attachments", args)
+    print_rerun_command("scripts.deprecated.sync_jira_attachments", args)
 
 
 def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
@@ -2209,10 +2241,22 @@ def args_download_attachment_archive(log_level: str) -> List[str]:
 
 def args_upload_attachment_archive(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    manifest = prompt("Attachment archive manifest.json path", default="")
-    if not manifest:
-        raise SystemExit("An attachment archive manifest is required.")
+    manifest = _prompt_attachment_archive_manifest()
     args.extend(["--manifest", manifest])
+    print("\nChoose attachment upload scope:")
+    print("[1] All attachments in this archive")
+    print("[2] Project GID(s)")
+    print("[3] Project GIDs file")
+    choice = input("Choice (default 1): ").strip() or "1"
+    if choice == "2":
+        gids = prompt("Project GID(s), comma-separated", default="")
+        if not gids:
+            raise SystemExit("At least one project GID is required.")
+        args.extend(["--project-gids" if "," in gids else "--project-gid", gids])
+    elif choice == "3":
+        args.extend(["--project-gids-file", _prompt_project_gids_file("attachment upload")])
+    elif choice != "1":
+        raise SystemExit("Invalid attachment upload scope.")
     append_jira_env_flag(args)
     if confirm("Dry run (resolve destinations without Jira uploads)?", default=True):
         args.append("--dry-run")
@@ -2824,7 +2868,7 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Export project tasks to Jira CSV", lambda: run_export_tasks_to_jira(log_level)),
         "2": MenuItem("2", "Export team/project Jira CSV", run_team_project_jira_export),
-        "3": MenuItem("3", "Recover Jira task keys from project associations", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
+        "3": MenuItem("3", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "4": MenuItem("4", "Clear Jira task keys", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level))),
         "5": MenuItem(
             "5",
@@ -2834,7 +2878,7 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
         "6": MenuItem("6", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
         "7": MenuItem("7", "Clear export IDs", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level))),
         "8": MenuItem("8", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, build_common_args(log_level) + ["--clear-jira-project-map"])),
-        "9": MenuItem("9", "Sync Jira attachments", lambda: run_sync_attachments(log_level)),
+        "9": MenuItem("9", "Deprecated: Sync Jira attachments immediately", lambda: run_sync_attachments(log_level)),
         "10": MenuItem(
             "10",
             "Create team/project Jira issues (direct API)",
@@ -2958,10 +3002,10 @@ def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Guided project migration", lambda: run_guided_project_migration(log_level)),
         "2": MenuItem("2", "Export project tasks for Jira CSV import", lambda: run_export_tasks_to_jira(log_level)),
-        "5": MenuItem("5", "Recover Jira task keys from External IDs", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
-        "6": MenuItem("6", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
-        "7": MenuItem("7", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
-        "8": MenuItem("8", "Sync Jira attachments immediately (legacy path)", lambda: run_sync_attachments(log_level)),
+        "3": MenuItem("3", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
+        "4": MenuItem("4", "Validate Jira task migration coverage", build_reports_menu(log_level)["c"].handler),
+        "5": MenuItem("5", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
+        "6": MenuItem("6", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -2971,10 +3015,9 @@ def build_maintain_validate_menu(log_level: str) -> Dict[str, MenuItem]:
         "1": MenuItem("1", "Show migration readiness summary", show_migration_readiness),
         "2": MenuItem("2", "Run incremental Asana refresh", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
         "3": MenuItem("3", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
-        "4": MenuItem("4", "Recover or reconcile Jira task keys by External ID", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
-        "5": MenuItem("5", "Validate Jira task migration coverage", build_reports_menu(log_level)["c"].handler),
-        "6": MenuItem("6", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
-        "7": MenuItem("7", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
+        "4": MenuItem("4", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
+        "5": MenuItem("5", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "6": MenuItem("6", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

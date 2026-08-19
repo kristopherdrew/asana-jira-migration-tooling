@@ -139,3 +139,28 @@ class AttachmentArchiveTest(TestCase):
         report = upload_archive(str(self.db_path), manifest, jira, dry_run=True, workers=1)
         self.assertIn("missing-mapping", report.read_text(encoding="utf-8"))
         jira.upload_attachment.assert_not_called()
+
+    @patch("src.lib.attachment_archive.download_file")
+    @patch("src.lib.attachment_archive.fetch_download_source")
+    def test_upload_archive_filters_by_project_gid(self, mock_source, mock_download) -> None:
+        mock_source.return_value = ("https://temporary", False)
+        mock_download.side_effect = lambda _url, destination, *_args: destination.write_bytes(b"content")
+        with self.database.connect() as connection:
+            connection.execute("INSERT INTO projects (gid, name, synced_at) VALUES ('project_2', 'Other', ?)", (timestamp(),))
+            connection.execute("INSERT INTO tasks (gid, name, synced_at) VALUES ('task_2', 'Other task', ?)", (timestamp(),))
+            connection.execute("INSERT INTO task_projects (task_gid, project_gid, synced_at) VALUES ('task_2', 'project_2', ?)", (timestamp(),))
+            connection.execute(
+                "INSERT INTO task_attachments (gid, task_gid, name, host, size, permanent_url, synced_at) VALUES ('att_2', 'task_2', 'other.pdf', 'asana', 7, 'https://asana/other', ?)",
+                (timestamp(),),
+            )
+            connection.executemany(
+                "INSERT INTO task_jira_mappings (task_gid, jira_key, synced_at) VALUES (?, ?, ?)",
+                [("task_1", "MIG-1", timestamp()), ("task_2", "MIG-2", timestamp())],
+            )
+            connection.commit()
+        manifest = create_archive(str(self.db_path), self.root / "archives", "wave-filter", self.credentials(), workers=1)
+        jira = MagicMock()
+        jira.list_issue_attachment_names.return_value = set()
+        report = upload_archive(str(self.db_path), manifest, jira, dry_run=True, workers=1, project_gids=["project_2"])
+        self.assertIn("task_2", report.read_text(encoding="utf-8"))
+        self.assertNotIn("task_1", report.read_text(encoding="utf-8"))
