@@ -2815,7 +2815,7 @@ def export_project(
                 hierarchy_value,
                 jira_parent_gid,
                 jira_depth_value,
-                task["name"],
+                export_task_name(task["name"], task["created_at"]),
                 assignee_display_name,
                 assignee_email,
                 assignee_atl,
@@ -3053,9 +3053,30 @@ def format_comment_row(
         record_transformation,
     )
     base = f"{timestamp};{account_id};"
-    if text:
+    if text and text.strip():
         return f"{base} {text}"
-    return base
+    return f"{base} {blank_comment_placeholder(row['created_at'])}"
+
+
+def _creation_date(value: Optional[str]) -> str:
+    """Return an ISO calendar date for a creation timestamp when available."""
+    parsed = parse_iso_datetime(value)
+    return parsed.date().isoformat() if parsed else ""
+
+
+def blank_task_title_placeholder(created_at: Optional[str]) -> str:
+    """Provide a Jira-importable summary for an Asana task with no title."""
+    return f"--Blank Title--{_creation_date(created_at)}"
+
+
+def blank_comment_placeholder(created_at: Optional[str]) -> str:
+    """Provide visible content for an Asana comment with no text."""
+    return f"--Blank Comment--{_creation_date(created_at)}"
+
+
+def export_task_name(name: Optional[str], created_at: Optional[str]) -> str:
+    """Preserve unnamed tasks by substituting the requested dated title."""
+    return name if name and name.strip() else blank_task_title_placeholder(created_at)
 
 
 def format_comment_timestamp(value: Optional[str]) -> str:
