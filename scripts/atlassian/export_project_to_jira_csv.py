@@ -25,7 +25,8 @@ from scripts.merge_project_exports import merge_csv_files, merge_field_counts, m
 from src.lib.asana_urls import build_project_url, build_task_url, infer_workspace_gid
 from src.lib.attachments import jira_unique_attachment_name
 from src.lib.database import Database, resolve_default_db_path
-from src.lib.config import load_credentials, resolve_jira_base_url
+from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
+from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.task_scope import parse_task_gids, resolve_task_projects
 from src.lib.project_scope import read_project_gids_file
@@ -1304,10 +1305,41 @@ def assign_unmapped_jira_project(
         )
 
 
+def lookup_jira_project_name(
+    jira_project_key: str,
+    jira_base_url: str,
+    credentials: Credentials,
+) -> str:
+    """Resolve and validate the display name for a Jira project key."""
+    project_key = jira_project_key.strip()
+    if not project_key:
+        raise ValueError("Jira project key is required.")
+    if not credentials.atlassian_username or not credentials.atlassian_token:
+        raise ValueError(
+            "Atlassian credentials are required to look up the Jira project name."
+        )
+    client = JiraClient(
+        base_url=jira_base_url,
+        username=credentials.atlassian_username,
+        token=credentials.atlassian_token,
+        skip_ssl_verification=credentials.skip_ssl_verification,
+    )
+    project = client.get_project(project_key)
+    returned_key = str(project.get("key") or "").strip()
+    project_name = str(project.get("name") or "").strip()
+    if returned_key.casefold() != project_key.casefold() or not project_name:
+        raise ValueError(
+            f"Jira did not return a valid project for key {project_key!r}."
+        )
+    return project_name
+
+
 def prompt_for_unmapped_jira_project(
     database: Database,
     projects: List[Tuple[str, str]],
     jira_site_key: Optional[str] = None,
+    jira_base_url: Optional[str] = None,
+    credentials: Optional[Credentials] = None,
 ) -> int:
     """Offer an interactive batch association when the export scope has gaps."""
     with database.connect() as connection:
@@ -1322,18 +1354,34 @@ def prompt_for_unmapped_jira_project(
     print(f"{len(missing)} selected project(s) have no Jira project association.")
     try:
         response = input(
-            "Assign one Jira project key and name to all of them? [y/N]: "
+            "Assign one Jira project key to all of them? [y/N]: "
         ).strip().lower()
         if response not in {"y", "yes"}:
             return 0
         jira_project_key = input("Jira project key (e.g. MIG): ").strip()
-        jira_project_name = input("Jira project name: ").strip()
     except EOFError:
         logger.info("Skipping Jira project association prompt (input unavailable).")
         return 0
-    if not jira_project_key or not jira_project_name:
-        logger.warning("Jira project key and name are both required; no associations were added.")
+    if not jira_project_key:
+        logger.warning("Jira project key is required; no associations were added.")
         return 0
+    if not jira_base_url or credentials is None:
+        logger.warning(
+            "Jira connection details are required to look up the project name; no associations were added."
+        )
+        return 0
+    try:
+        jira_project_name = lookup_jira_project_name(
+            jira_project_key, jira_base_url, credentials
+        )
+    except (JiraApiError, ValueError) as exc:
+        logger.warning(
+            "Could not look up Jira project %s; no associations were added: %s",
+            jira_project_key,
+            exc,
+        )
+        return 0
+    print(f"Using Jira project {jira_project_key}: {jira_project_name}")
     return assign_unmapped_jira_project(
         database, projects, jira_project_key, jira_project_name, jira_site_key
     )
@@ -3340,8 +3388,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         if args.custom_fields
         else None
     )
+    credentials = load_credentials()
     try:
-        jira_base_url = normalize_jira_base_url(resolve_jira_base_url(load_credentials(), prod=args.prod, site_key=args.jira_site))
+        jira_base_url = normalize_jira_base_url(resolve_jira_base_url(credentials, prod=args.prod, site_key=args.jira_site))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     if not jira_base_url:
@@ -3392,7 +3441,13 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             added_mappings,
         )
     else:
-        added_mappings = prompt_for_unmapped_jira_project(database, projects, args.jira_site)
+        added_mappings = prompt_for_unmapped_jira_project(
+            database,
+            projects,
+            args.jira_site,
+            jira_base_url,
+            credentials,
+        )
         if added_mappings:
             logger.info(
                 "Added %s Jira project association(s) for previously unmapped selected project(s).",

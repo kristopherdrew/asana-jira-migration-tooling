@@ -138,6 +138,13 @@ class JiraClient:
         values = data.get("values", []) if isinstance(data, dict) else []
         return [field for field in values if isinstance(field, dict)]
 
+    def get_project(self, project_key: str) -> Dict[str, object]:
+        """Return Jira project metadata for an exact project key."""
+        encoded = parse.quote(project_key.strip(), safe="")
+        if not encoded:
+            raise ValueError("Jira project key is required.")
+        return self._request_json("GET", f"/rest/api/3/project/{encoded}")
+
     def get_custom_fields(self) -> List[Dict[str, object]]:
         """Return Jira's complete paginated custom-field administration catalog."""
         fields: List[Dict[str, object]] = []
