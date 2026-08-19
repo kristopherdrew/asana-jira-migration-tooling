@@ -35,11 +35,16 @@ Runs `scripts.atlassian.export_archival_project_jira_csv`. This simplified forma
 folds populated custom fields into the description while retaining native migration
 columns and Asana links.
 
-### Recover Jira task keys from External IDs
+### Associate Jira Task Keys with Asana Task Keys
 
 Runs `scripts.atlassian.search_jira_external_ids`. Use it when Jira contains the
 external Asana identifiers but the local task-key mappings are missing or incomplete.
 Its Jira scope is derived from the stored Asana Project → Jira Space associations.
+
+### Validate Jira task migration coverage
+
+Runs `scripts.export_jira_migration_validation` to compare the selected Asana task
+scope with its recovered Jira task mappings and report missing Jira keys.
 
 ### Download durable Asana attachment archive
 
@@ -51,12 +56,6 @@ Jira task mappings exist.
 
 Runs `scripts.upload_jira_attachments`. It verifies the archive, resolves current
 task mappings at upload time, uploads files, and records per-destination outcomes.
-
-### Sync Jira attachments immediately (legacy path)
-
-Runs `scripts.atlassian.sync_jira_attachments`. It downloads and uploads in one run.
-Prefer the durable archive path for migrations that may pause between Asana download
-and Jira upload.
 
 ## Expected Result
 

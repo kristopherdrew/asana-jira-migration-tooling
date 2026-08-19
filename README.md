@@ -44,7 +44,7 @@ Leave `SKIP_SSL_VERIFICATION` set to `false` for normal use. Only set it to `tru
 ## Project Layout
 - `scripts/` — CLI entrypoints for each export task (kept runnable on their own even when wrapped by higher-level orchestration).
 - `scripts/atlassian/` — Jira/Atlassian integration scripts; thin wrappers stay in `scripts/` so existing `python3 -m scripts.<name>` calls keep working.
-- `scripts/deprecated/` — Parking spot for retired scripts so history remains discoverable without cluttering the primary CLI surface.
+- `scripts/deprecated/` — Parking spot for retired scripts, including the immediate Jira attachment sync, so history remains discoverable without cluttering the primary CLI surface.
 - `src/lib/` — Shared helpers (configuration loader, HTTP client, SQLite helpers).
 - `src/tasks/` — Domain-specific logic per Asana entity.
 - `tests/` — Unit tests mirroring the `src/` layout.

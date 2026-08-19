@@ -13,11 +13,16 @@ from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.database import resolve_default_db_path
 from src.lib.jira_client import JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.project_scope import read_project_gids_file
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, help="Path to the archive manifest.json.")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--project-gid", help="Upload attachments for one Asana project.")
+    scope.add_argument("--project-gids", help="Comma-separated Asana project GIDs to upload.")
+    scope.add_argument("--project-gids-file", help="Newline/comma-separated Asana project GID file.")
     parser.add_argument("--database", default=resolve_default_db_path(), help="SQLite database with current Jira mappings.")
     parser.add_argument("--prod", action="store_true", help="Target production Jira; default is sandbox.")
     parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
@@ -26,6 +31,14 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--throttle-seconds", type=float, default=0.5, help="Delay before each upload (default: 0.5).")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(argv)
+
+
+def resolve_project_gids(args: argparse.Namespace) -> Optional[list[str]]:
+    value = args.project_gids_file and read_project_gids_file(args.project_gids_file)
+    value = value or args.project_gids or args.project_gid
+    if not value:
+        return None
+    return list(dict.fromkeys(gid.strip() for gid in value.split(",") if gid.strip()))
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
@@ -52,6 +65,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         workers=max(1, args.workers),
         throttle_seconds=max(0.0, args.throttle_seconds),
         jira_site_key=args.jira_site,
+        project_gids=resolve_project_gids(args),
     )
     logging.info("Jira attachment report written to %s", report)
 
