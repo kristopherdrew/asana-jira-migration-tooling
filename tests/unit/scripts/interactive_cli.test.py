@@ -295,20 +295,22 @@ class IncrementalArgsBuilderTest(TestCase):
         )
 
     def test_attachment_archive_upload_lists_and_selects_existing_manifest(self) -> None:
-        archive_root = self.temp_dir / "attachment_archives"
-        manifest = archive_root / "wave-01" / "manifest.json"
-        manifest.parent.mkdir(parents=True)
-        manifest.write_text("{}", encoding="utf-8")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project_root = Path(temp_dir)
+            archive_root = project_root / "attachment_archives"
+            manifest = archive_root / "wave-01" / "manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text("{}", encoding="utf-8")
 
-        with patch.object(interactive_cli, "PROJECT_ROOT", self.temp_dir), patch(
-            "builtins.input", side_effect=["1", "1", "y"]
-        ):
-            args = interactive_cli.args_upload_attachment_archive("INFO")
+            with patch.object(interactive_cli, "PROJECT_ROOT", project_root), patch(
+                "builtins.input", side_effect=["1", "1", "y"]
+            ):
+                args = interactive_cli.args_upload_attachment_archive("INFO")
 
-        self.assertEqual(
-            args,
-            ["--log-level", "INFO", "--manifest", str(manifest), "--dry-run"],
-        )
+            self.assertEqual(
+                args,
+                ["--log-level", "INFO", "--manifest", str(manifest), "--dry-run"],
+            )
 
     def test_regular_and_archival_exports_use_project_gid_file_picker(self) -> None:
         with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(

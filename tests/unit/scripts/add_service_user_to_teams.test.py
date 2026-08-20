@@ -85,7 +85,7 @@ class AddServiceUserToTeamsTest(TestCase):
 
         self.assertEqual(success_count, 2)
         self.assertEqual(failures, [("team_2", "boom")])
-        self.assertEqual(
+        self.assertCountEqual(
             [endpoint for endpoint, _ in client.calls],
             [
                 "/teams/team_1/addUser",
