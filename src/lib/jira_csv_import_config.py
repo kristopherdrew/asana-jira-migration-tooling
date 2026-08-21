@@ -375,19 +375,26 @@ def _profile_config_basename(env_path: Path) -> str:
 def profile_import_config_path(
     env_path: Path,
     generated_on: Optional[date] = None,
+    site_key: Optional[str] = None,
 ) -> Path:
     """Return the reusable importer-config path owned by one client profile."""
     generated_date = generated_on or date.today()
     basename = _profile_config_basename(env_path)
+    site_segment = f"_{site_key}" if site_key else ""
     return env_path.with_name(
-        f"{basename}_{generated_date.isoformat()}_jira_config.txt"
+        f"{basename}{site_segment}_{generated_date.isoformat()}_jira_config.txt"
     )
 
 
-def latest_profile_import_config_path(env_path: Path) -> Optional[Path]:
+def latest_profile_import_config_path(
+    env_path: Path, site_key: Optional[str] = None
+) -> Optional[Path]:
     """Return the newest dated importer config for one profile, if present."""
     basename = _profile_config_basename(env_path)
-    matches = sorted(env_path.parent.glob(f"{basename}_????-??-??_jira_config.txt"))
+    site_segment = f"_{site_key}" if site_key else ""
+    matches = sorted(
+        env_path.parent.glob(f"{basename}{site_segment}_????-??-??_jira_config.txt")
+    )
     if matches:
         return matches[-1]
     legacy = env_path.with_name(f"{env_path.stem}_jira_config.txt")

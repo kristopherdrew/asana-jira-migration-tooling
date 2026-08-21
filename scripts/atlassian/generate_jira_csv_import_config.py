@@ -94,7 +94,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     output_path = (
         Path(args.output).expanduser().resolve()
         if args.output
-        else profile_import_config_path(env_path)
+        else profile_import_config_path(env_path, site_key=selected_site.key)
     )
     saved_settings = load_archive_import_settings(env_path, selected_site.key)
     reviewed = review_archive_import_settings(
@@ -116,6 +116,13 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         args.csv_name,
     )
     logger.info("Wrote reusable Jira CSV importer configuration to %s", config_path)
+
+    raw = input(f"Rename config file? [{config_path.name}] (press Enter to keep): ").strip()
+    if raw:
+        new_name = raw if raw.endswith(".txt") else f"{raw}.txt"
+        new_path = config_path.with_name(new_name)
+        config_path.rename(new_path)
+        logger.info("Renamed to %s", new_path)
 
 
 if __name__ == "__main__":

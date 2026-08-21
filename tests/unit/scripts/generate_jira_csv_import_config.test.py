@@ -20,7 +20,7 @@ class GenerateJiraCsvImportConfigTest(TestCase):
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             env_path = root / "client.env"
-            output_path = root / f"example_{date.today().isoformat()}_jira_config.txt"
+            output_path = root / f"example_sandbox_jira_{date.today().isoformat()}_jira_config.txt"
             env_path.write_text("export CLIENT_NAME=Example\n", encoding="utf-8")
             credentials = Credentials(
                 token="asana",
@@ -77,6 +77,9 @@ class GenerateJiraCsvImportConfigTest(TestCase):
             ) as client_class, patch(
                 "scripts.atlassian.generate_jira_csv_import_config.review_archive_import_settings",
                 return_value=(settings, settings),
+            ), patch(
+                "builtins.input",
+                return_value="",
             ):
                 main([
                     "--csv-name",
