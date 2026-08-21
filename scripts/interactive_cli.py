@@ -2818,15 +2818,12 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
                 ).fetchone()[0]
             if jira_site_key:
                 mapping_marker = "x" if mapped_project_count == project_count else "!"
+                unmapped = project_count - mapped_project_count
+                suffix = f"; {unmapped:,} unmapped" if unmapped else ""
                 print(
                     f"[{mapping_marker}] Jira project associations ({jira_site_key}): "
-                    f"{mapped_project_count:,} of {project_count:,} selected projects mapped"
+                    f"{mapped_project_count:,} of {project_count:,} selected projects mapped{suffix}"
                 )
-                if mapped_project_count != project_count:
-                    print(
-                        f"[!] {project_count - mapped_project_count:,} selected project(s) lack "
-                        "a Jira project association for this site."
-                    )
             else:
                 print("[!] Jira project associations: no active Jira site selected.")
             config_path = latest_profile_import_config_path(resolve_credentials_path())
