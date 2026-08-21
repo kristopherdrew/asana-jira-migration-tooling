@@ -534,14 +534,22 @@ def upload_archive(
 
     jobs = [(item, key) for item in ready_files for key in mappings.get(item["task_gid"], [])]
     mapped_gids = {item["attachment_gid"] for item, _key in jobs}
+    unmapped = [item for item in ready_files if item["attachment_gid"] not in mapped_gids]
+    LOGGER.info(
+        "Archive %s: %d ready attachment(s), %d upload job(s) across %d Jira issue(s), %d unmapped",
+        archive_id,
+        len(ready_files),
+        len(jobs),
+        len({key for _item, key in jobs}),
+        len(unmapped),
+    )
     results: List[Dict[str, str]] = []
-    for item in ready_files:
-        if item["attachment_gid"] not in mapped_gids:
-            results.append({
-                "attachment_gid": item["attachment_gid"], "task_gid": item["task_gid"],
-                "jira_key": "", "attachment_name": item["jira_name"],
-                "status": "missing-mapping", "message": "No current Jira mapping for task",
-            })
+    for item in unmapped:
+        results.append({
+            "attachment_gid": item["attachment_gid"], "task_gid": item["task_gid"],
+            "jira_key": "", "attachment_name": item["jira_name"],
+            "status": "missing-mapping", "message": "No current Jira mapping for task",
+        })
 
     issue_names: Dict[str, Set[str]] = {}
     issue_lock = threading.Lock()
@@ -584,12 +592,31 @@ def upload_archive(
             return ({**base, "status": "error", "message": str(exc)}, None, None)
 
     completed: List[Tuple[Dict[str, str], Optional[int], Optional[str]]] = []
+    total_jobs = len(jobs)
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
         futures = [executor.submit(worker, job) for job in jobs]
-        for future in as_completed(futures):
-            completed.append(future.result())
+        for n, future in enumerate(as_completed(futures), start=1):
+            result = future.result()
+            completed.append(result)
+            row, _size, _jira_id = result
+            status = row["status"]
+            if n == 1 or n == total_jobs or n % 25 == 0 or status not in ("uploaded", "skipped-existing", "dry-run"):
+                LOGGER.info(
+                    "Archive %s: [%d/%d] %s → %s (%s)",
+                    archive_id, n, total_jobs,
+                    row["attachment_name"], row["jira_key"] or "(unmapped)", status,
+                )
     results.extend(row for row, _size, _jira_id in completed)
     results.sort(key=lambda row: (row["jira_key"], row["task_gid"], row["attachment_gid"]))
+
+    by_status: Dict[str, int] = {}
+    for row in results:
+        by_status[row["status"]] = by_status.get(row["status"], 0) + 1
+    LOGGER.info(
+        "Archive %s: upload complete — %s",
+        archive_id,
+        ", ".join(f"{count} {status}" for status, count in sorted(by_status.items())),
+    )
 
     with database.connect() as connection:
         database.initialize(connection)
