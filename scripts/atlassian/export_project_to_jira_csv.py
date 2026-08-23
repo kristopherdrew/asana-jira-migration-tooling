@@ -18,6 +18,7 @@ from html.parser import HTMLParser
 import re
 import sys
 from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -1054,13 +1055,20 @@ def format_custom_field_names_line(fields: List[Dict[str, str]]) -> str:
     return ", ".join(names)
 
 
+@dataclass
+class CustomFieldChoices:
+    """Result of the interactive custom-field selection prompt."""
+    column_filters: Optional[List[str]] = None   # None = all fields as columns
+    description_filters: List[str] = field(default_factory=list)  # fold these into Description
+
+
 def prompt_for_custom_field_choice(
     project_name: str,
     project_gid: str,
     fields: List[Dict[str, str]],
-) -> List[str]:
+) -> CustomFieldChoices:
     if not sys.stdin.isatty():
-        return []
+        return CustomFieldChoices()
     try:
         print()
         print(f"Custom fields detected for {project_name} ({project_gid}):")
@@ -1074,21 +1082,77 @@ def prompt_for_custom_field_choice(
             print(names_line)
         print()
         print("Select export option:")
-        print("  [1] Export all custom fields with data (default)")
-        print("  [2] Enter a comma-separated list of field names or GIDs to include")
+        print("  [1] Export all custom fields with data as columns (default)")
+        print("  [2] Enter a comma-separated list of field names or GIDs to include as columns")
+        print("  [3] Choose per-field: column, fold into Description, or skip")
         while True:
-            choice = input("Choice [1-2]: ").strip()
+            choice = input("Choice [1-3]: ").strip()
             if not choice or choice == "1":
-                return []
+                return CustomFieldChoices()
             if choice == "2":
                 raw = input("Enter comma-separated field names or GIDs: ").strip()
                 if not raw:
                     print("No fields entered; defaulting to all fields.")
-                    return []
-                return [value.strip() for value in raw.split(",") if value.strip()]
-            print("Please enter 1 or 2.")
+                    return CustomFieldChoices()
+                return CustomFieldChoices(
+                    column_filters=[v.strip() for v in raw.split(",") if v.strip()]
+                )
+            if choice == "3":
+                column_filters: List[str] = []
+                description_filters: List[str] = []
+                for meta in fields:
+                    name = meta["name"]
+                    gid = meta["gid"]
+                    while True:
+                        raw = input(
+                            f"  {name} ({gid}): [c]olumn / [d]escription / [s]kip [c]: "
+                        ).strip().lower()
+                        if not raw or raw == "c":
+                            column_filters.append(gid)
+                            break
+                        if raw == "d":
+                            description_filters.append(gid)
+                            break
+                        if raw == "s":
+                            break
+                        print("  Please enter c, d, or s.")
+                return CustomFieldChoices(
+                    column_filters=column_filters,
+                    description_filters=description_filters,
+                )
+            print("Please enter 1, 2, or 3.")
     except EOFError:
-        return []
+        return CustomFieldChoices()
+
+
+def split_fields_by_choice(
+    fields: List[Dict[str, str]],
+    choices: CustomFieldChoices,
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    """Return (column_fields, description_fields) based on interactive choices.
+
+    When choices.column_filters is None all fields go to column_fields.
+    """
+    if not choices.description_filters and choices.column_filters is None:
+        return fields, []
+
+    description_gids = set(choices.description_filters)
+    column_fields, description_fields, unmatched_desc = [], [], []
+
+    if choices.column_filters is None:
+        # All fields except those marked for description
+        for meta in fields:
+            if meta["gid"] in description_gids:
+                description_fields.append(meta)
+            else:
+                column_fields.append(meta)
+    else:
+        column_fields_filtered, _ = apply_custom_field_filter(fields, choices.column_filters)
+        column_fields = column_fields_filtered
+        description_fields_filtered, _ = apply_custom_field_filter(fields, choices.description_filters)
+        description_fields = description_fields_filtered
+
+    return column_fields, description_fields
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -1862,44 +1926,52 @@ def build_project_export_data(
     if no_custom_fields:
         available_fields = []
         field_meta = []
+        description_field_meta: List[Dict] = []
         field_usage_counts = {}
         field_names = {}
         option_map = {}
         single_map = {}
         multi_map = {}
         field_multi_width = {}
-        interactive_filters = None
     else:
-        interactive_filters = custom_field_filters
+        _field_choices: Optional[CustomFieldChoices] = None
         if (
             prompt_for_custom_fields
             and not stats_only
             and not custom_field_filters
             and available_fields
         ):
-            interactive_filters = prompt_for_custom_field_choice(
+            _field_choices = prompt_for_custom_field_choice(
                 project_names.get(project_gid, project_gid),
                 project_gid,
                 available_fields,
-            ) or None
+            )
 
         log_custom_field_list(project_gid, available_fields, "Custom fields with data")
-        filtered_fields, unmatched_filters = apply_custom_field_filter(available_fields, interactive_filters)
-        if interactive_filters and unmatched_filters:
+        if _field_choices is not None:
+            column_fields, description_field_meta = split_fields_by_choice(available_fields, _field_choices)
+            unmatched_filters = []
+        else:
+            column_fields, unmatched_filters = apply_custom_field_filter(available_fields, custom_field_filters)
+            description_field_meta = []
+        if custom_field_filters and unmatched_filters:
             logger.warning(
                 "Requested custom fields not found for project %s: %s",
                 project_gid,
                 ", ".join(unmatched_filters),
             )
-        if interactive_filters:
-            log_custom_field_list(project_gid, filtered_fields, "Custom fields selected for export")
+        if _field_choices is not None or custom_field_filters:
+            log_custom_field_list(project_gid, column_fields, "Custom fields selected for export as columns")
+            if description_field_meta:
+                log_custom_field_list(project_gid, description_field_meta, "Custom fields to fold into Description")
+        all_included_fields = column_fields + description_field_meta
         if selected_custom_field_ids is not None:
             selected_custom_field_ids.clear()
-            selected_custom_field_ids.extend([meta["gid"] for meta in filtered_fields])
+            selected_custom_field_ids.extend([meta["gid"] for meta in all_included_fields])
         if selected_custom_field_names is not None:
             selected_custom_field_names.clear()
-            selected_custom_field_names.extend([meta["name"] for meta in filtered_fields])
-        field_meta = filtered_fields
+            selected_custom_field_names.extend([meta["name"] for meta in all_included_fields])
+        field_meta = column_fields
 
     max_comments = max((len(items) for items in comments_by_task.values()), default=0)
     parent_lookup: Dict[str, Optional[str]] = {
@@ -1920,6 +1992,7 @@ def build_project_export_data(
         "projects_map": projects_map,
         "attachment_names": attachment_names,
         "field_meta": field_meta,
+        "description_field_meta": description_field_meta,
         "available_fields": available_fields,
         "field_usage_counts": field_usage_counts,
         "field_names": field_names,
@@ -2764,38 +2837,45 @@ def export_project(
         if no_custom_fields:
             available_fields = []
             field_meta = []
+            description_field_meta: List[Dict] = []
             field_usage_counts = {}
             field_names = {}
             option_map = {}
             single_map = {}
             multi_map = {}
             field_multi_width = {}
-            interactive_filters = None
         else:
-            interactive_filters = custom_field_filters
+            _field_choices_ep: Optional[CustomFieldChoices] = None
             if (
                 prompt_for_custom_fields
                 and not stats_only
                 and not custom_field_filters
                 and available_fields
             ):
-                interactive_filters = prompt_for_custom_field_choice(
+                _field_choices_ep = prompt_for_custom_field_choice(
                     project_name or project_gid,
                     project_gid,
                     available_fields,
-                ) or None
+                )
 
             log_custom_field_list(project_gid, available_fields, "Custom fields with data")
-            filtered_fields, unmatched_filters = apply_custom_field_filter(available_fields, interactive_filters)
-            if interactive_filters:
-                if unmatched_filters:
-                    logger.warning(
-                        "Requested custom fields not found for project %s: %s",
-                        project_gid,
-                        ", ".join(unmatched_filters),
-                    )
-                log_custom_field_list(project_gid, filtered_fields, "Custom fields selected for export")
-            field_meta = filtered_fields
+            if _field_choices_ep is not None:
+                column_fields_ep, description_field_meta = split_fields_by_choice(available_fields, _field_choices_ep)
+                unmatched_filters_ep: List[str] = []
+            else:
+                column_fields_ep, unmatched_filters_ep = apply_custom_field_filter(available_fields, custom_field_filters)
+                description_field_meta = []
+            if custom_field_filters and unmatched_filters_ep:
+                logger.warning(
+                    "Requested custom fields not found for project %s: %s",
+                    project_gid,
+                    ", ".join(unmatched_filters_ep),
+                )
+            if _field_choices_ep is not None or custom_field_filters:
+                log_custom_field_list(project_gid, column_fields_ep, "Custom fields selected for export as columns")
+                if description_field_meta:
+                    log_custom_field_list(project_gid, description_field_meta, "Custom fields to fold into Description")
+            field_meta = column_fields_ep
 
         header = [
             "current_project",
@@ -3008,6 +3088,10 @@ def export_project(
                 notes_value = build_archival_description(
                     notes_value, field_meta, task["gid"], single_map, multi_map, option_map
                 )
+            elif description_field_meta:
+                notes_value = build_archival_description(
+                    notes_value, description_field_meta, task["gid"], single_map, multi_map, option_map
+                )
             full_contents.append(
                 {"task_gid": task["gid"], "field": "notes", "content": notes_value}
             )
@@ -3181,15 +3265,23 @@ def export_project(
             logger.info("Wrote section counts for project %s to %s", project_gid, section_path)
 
         if available_fields and custom_field_mode == "columns":
-            exported_field_ids = {meta["gid"] for meta in field_meta}
+            column_field_ids = {meta["gid"] for meta in field_meta}
+            description_fold_ids = {meta["gid"] for meta in description_field_meta}
             summary_rows = []
             for meta in sorted(available_fields, key=lambda item: item["name"].lower()):
+                gid = meta["gid"]
+                if gid in column_field_ids:
+                    included = "Yes"
+                elif gid in description_fold_ids:
+                    included = "Yes (Description)"
+                else:
+                    included = "No"
                 summary_rows.append(
                     [
                         meta["name"],
-                        meta["gid"],
+                        gid,
                         meta.get("value_count", 0),
-                        "Yes" if meta["gid"] in exported_field_ids else "No",
+                        included,
                     ]
                 )
             summary_path = output_path.with_name(f"{output_path.stem}_field_counts.csv")
