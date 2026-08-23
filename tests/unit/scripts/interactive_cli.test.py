@@ -319,8 +319,8 @@ class IncrementalArgsBuilderTest(TestCase):
         ), patch(
             "builtins.input",
             side_effect=[
-                "2", "y", "", "n", "n", "", "", "",
-                "2", "y", "", "", "",
+                "2", "y", "", "n", "n", "", "", "", "", "",
+                "2", "y", "", "", "", "",
             ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
@@ -334,15 +334,13 @@ class IncrementalArgsBuilderTest(TestCase):
 
     @patch("scripts.interactive_cli.run_export_project_to_jira")
     def test_unified_task_export_uses_column_mode_by_default(self, mock_regular) -> None:
-        with patch("builtins.input", side_effect=[""]):
-            interactive_cli.run_export_tasks_to_jira("INFO")
+        interactive_cli.run_export_tasks_to_jira("INFO")
         mock_regular.assert_called_once_with("INFO")
 
-    @patch("scripts.interactive_cli.run_export_archival_project")
-    def test_unified_task_export_uses_archival_mode_for_consolidation(self, mock_archival) -> None:
-        with patch("builtins.input", side_effect=["2"]):
-            interactive_cli.run_export_tasks_to_jira("INFO")
-        mock_archival.assert_called_once_with("INFO")
+    @patch("scripts.interactive_cli.run_export_project_to_jira")
+    def test_unified_task_export_delegates_to_project_exporter(self, mock_regular) -> None:
+        interactive_cli.run_export_tasks_to_jira("INFO")
+        mock_regular.assert_called_once_with("INFO")
 
     def test_archival_export_accepts_inline_task_gids(self) -> None:
         with patch(
@@ -367,7 +365,7 @@ class IncrementalArgsBuilderTest(TestCase):
             side_effect=SystemExit,
         ), patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", ""],
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", ""],
         ):
             args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
         self.assertFalse(allow_merge)
@@ -384,8 +382,8 @@ class IncrementalArgsBuilderTest(TestCase):
         ), patch(
             "builtins.input",
             side_effect=[
-                "4", "y", "", "n", "n", "n", "", "",
-                "4", "y", "", "", "",
+                "4", "y", "", "n", "n", "n", "", "", "", "",
+                "4", "y", "", "", "", "",
             ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")

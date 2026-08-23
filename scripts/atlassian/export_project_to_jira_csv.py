@@ -962,11 +962,67 @@ def preview_project_custom_fields(connection: sqlite3.Connection, project_gid: s
     return [(row["gid"], row["name"] or "") for row in rows]
 
 
-def build_default_filename(project_name: Optional[str]) -> str:
+def build_default_filename(project_name: Optional[str], project_gid: Optional[str] = None, *, archival: bool = False) -> str:
     timestamp = current_utc_time()
     base = sanitize_filename_component(project_name or "project")
     stamp = timestamp.strftime("%Y%m%d-%H%M")
+    if archival and project_gid:
+        return f"{base}-{project_gid}-{stamp}_tasks.csv"
     return f"{base}-{stamp}_tasks.csv"
+
+
+class NoTasksFoundError(SystemExit):
+    """Raised when an explicitly selected project has no exportable tasks."""
+
+
+ARCHIVAL_FIELDS_HEADING = "--- Asana Fields ---"
+
+
+def build_archival_description(
+    notes_value: str,
+    field_meta: List[Dict],
+    task_gid: str,
+    single_map: Dict,
+    multi_map: Dict,
+    option_map: Dict,
+) -> str:
+    """Fold every populated custom field into the description, one line per field."""
+    lines: List[str] = []
+    for meta in field_meta:
+        value = resolve_custom_field_value(meta, task_gid, single_map, multi_map, option_map)
+        if value and value.strip():
+            lines.append(f"{meta['name']}: {value.strip()}")
+    if not lines:
+        return notes_value or ""
+    block = ARCHIVAL_FIELDS_HEADING + "\n" + "\n".join(lines)
+    if notes_value and notes_value.strip():
+        return f"{notes_value}\n\n{block}"
+    return block
+
+
+def build_epic_description(
+    project_name: str,
+    associations: Dict[str, Counter],
+    user_display_names: Dict[str, str],
+    user_emails: Dict[str, str],
+) -> str:
+    """Describe the project and list its task collaborators for use in the epic notes."""
+    collaborators: List[str] = []
+    for user_gid, counts in associations.items():
+        if not counts.get("collaborator"):
+            continue
+        display_name = (user_display_names.get(user_gid) or "").strip()
+        if not display_name:
+            display_name = f"unknown_user {user_gid}"
+        email = (user_emails.get(user_gid) or "").strip()
+        collaborators.append(f"{display_name} <{email}>" if email else display_name)
+    collaborators.sort(key=str.casefold)
+    lines = [f"Synthetic epic for Asana project {project_name}.", "", "Collaborators:"]
+    if collaborators:
+        lines.extend(f"- {c}" for c in collaborators)
+    else:
+        lines.append("- None recorded")
+    return "\n".join(lines)
 
 
 def fetch_project_task_activity(connection: sqlite3.Connection, project_gid: str):
@@ -1201,6 +1257,25 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help=(
             "When exporting, add a synthetic epic per section and re-parent top-level tasks into their "
             "first section (if present)."
+        ),
+    )
+    parser.add_argument(
+        "--above-epic-issue-type",
+        dest="above_epic_issue_type",
+        help=(
+            "When set, create a synthetic row of this issue type (e.g. 'Deliverable') per project "
+            "(depth -2) and automatically generate section-based epics (depth -1) beneath it. "
+            "Mutually exclusive with --add-epics and --add-section-epics in terms of epic sourcing."
+        ),
+    )
+    parser.add_argument(
+        "--custom-field-mode",
+        dest="custom_field_mode",
+        choices=["columns", "description"],
+        default="columns",
+        help=(
+            "How to export custom fields. 'columns' (default): one CSV column per field. "
+            "'description': fold all populated custom fields into the task's Description."
         ),
     )
     return parser.parse_args(argv)
@@ -1883,6 +1958,8 @@ def export_project(
     skipped_log: Optional[List[Dict[str, str]]] = None,
     add_epics: bool = False,
     add_section_epics: bool = False,
+    above_epic_issue_type: Optional[str] = None,
+    custom_field_mode: str = "columns",
     task_gids: Optional[Set[str]] = None,
     seen_task_gids: Optional[Set[str]] = None,
     jira_site_key: Optional[str] = None,
@@ -2331,6 +2408,165 @@ def export_project(
                 if epic_gid:
                     task["jira_parent_gid"] = epic_gid
 
+        # Two-level synthetic mode: Project → above-Epic → Section Epic → Task
+        if above_epic_issue_type:
+            project_display = project_names.get(project_gid, project_gid)
+            deliverable_gid = f"{project_gid}::above_epic"
+            deliverable_row: Dict[str, object] = {
+                "gid": deliverable_gid,
+                "parent_gid": "",
+                "hierarchy_depth": -2,
+                "jira_parent_gid": "",
+                "jira_hierarchy_depth": -2,
+                "name": project_display,
+                "assignee_gid": "",
+                "assignee_name": "",
+                "assignee_email": "",
+                "creator_name": "",
+                "creator_email": "",
+                "creator_atlassian_id": "",
+                "creator_atlassian_email": "",
+                "created_by_gid": "",
+                "completed_by_gid": "",
+                "start_on": "",
+                "start_at": "",
+                "created_at": "",
+                "due_on": "",
+                "due_at": "",
+                "completed": 0,
+                "completed_at": "",
+                "actual_time_minutes": None,
+                "notes": "",
+                "html_notes": "",
+                "project_num_tasks": project_num_tasks,
+                "project_num_incomplete_tasks": project_num_incomplete_tasks,
+                "project_num_completed_tasks": project_num_completed_tasks,
+                "project_task_counts_captured_at": project_task_counts_captured_at,
+            }
+            section_map[deliverable_gid] = []
+            projects_map[deliverable_gid] = [current_project_display]
+            tags_map[deliverable_gid] = []
+
+            # Build section epics parented to the deliverable (one per section + catch-all).
+            seen_slugs_above: Set[str] = set()
+
+            def _slugify_section_above(section_name: str) -> str:
+                base = FILENAME_SAFE_PATTERN.sub("_", section_name.strip()) if section_name else "section"
+                base = base.strip("_") or "section"
+                slug = base
+                counter = 2
+                while slug in seen_slugs_above:
+                    slug = f"{base}_{counter}"
+                    counter += 1
+                seen_slugs_above.add(slug)
+                return slug
+
+            section_names_above: List[str] = sorted(
+                {sec for gid, names in section_map.items() if gid != deliverable_gid for sec in names if sec},
+                key=lambda v: v.lower(),
+            )
+            no_section_label = "(No Section)"
+            section_epic_ids_above: Dict[str, str] = {
+                name: f"{project_gid}::above_epic_section::{_slugify_section_above(name)}"
+                for name in section_names_above
+            }
+            no_section_epic_gid = f"{project_gid}::above_epic_section::no_section"
+
+            section_epics_above: List[Dict[str, object]] = []
+            for name in section_names_above:
+                epic_gid_above = section_epic_ids_above[name]
+                section_epics_above.append(
+                    {
+                        "gid": epic_gid_above,
+                        "parent_gid": "",
+                        "hierarchy_depth": -1,
+                        "jira_parent_gid": deliverable_gid,
+                        "jira_hierarchy_depth": -1,
+                        "name": name,
+                        "assignee_gid": "",
+                        "assignee_name": "",
+                        "assignee_email": "",
+                        "creator_name": "",
+                        "creator_email": "",
+                        "creator_atlassian_id": "",
+                        "creator_atlassian_email": "",
+                        "created_by_gid": "",
+                        "completed_by_gid": "",
+                        "start_on": "",
+                        "start_at": "",
+                        "created_at": "",
+                        "due_on": "",
+                        "due_at": "",
+                        "completed": 0,
+                        "completed_at": "",
+                        "actual_time_minutes": None,
+                        "notes": "",
+                        "html_notes": "",
+                        "project_num_tasks": project_num_tasks,
+                        "project_num_incomplete_tasks": project_num_incomplete_tasks,
+                        "project_num_completed_tasks": project_num_completed_tasks,
+                        "project_task_counts_captured_at": project_task_counts_captured_at,
+                    }
+                )
+                section_map[epic_gid_above] = [name]
+                projects_map[epic_gid_above] = [current_project_display]
+                tags_map[epic_gid_above] = []
+
+            # Catch-all epic for tasks with no section.
+            has_unsectioned = any(
+                not section_map.get(task["gid"])
+                for task in tasks
+                if task.get("jira_hierarchy_depth") == 0 and not task.get("jira_parent_gid")
+            )
+            if has_unsectioned:
+                section_epics_above.append(
+                    {
+                        "gid": no_section_epic_gid,
+                        "parent_gid": "",
+                        "hierarchy_depth": -1,
+                        "jira_parent_gid": deliverable_gid,
+                        "jira_hierarchy_depth": -1,
+                        "name": no_section_label,
+                        "assignee_gid": "",
+                        "assignee_name": "",
+                        "assignee_email": "",
+                        "creator_name": "",
+                        "creator_email": "",
+                        "creator_atlassian_id": "",
+                        "creator_atlassian_email": "",
+                        "created_by_gid": "",
+                        "completed_by_gid": "",
+                        "start_on": "",
+                        "start_at": "",
+                        "created_at": "",
+                        "due_on": "",
+                        "due_at": "",
+                        "completed": 0,
+                        "completed_at": "",
+                        "actual_time_minutes": None,
+                        "notes": "",
+                        "html_notes": "",
+                        "project_num_tasks": project_num_tasks,
+                        "project_num_incomplete_tasks": project_num_incomplete_tasks,
+                        "project_num_completed_tasks": project_num_completed_tasks,
+                        "project_task_counts_captured_at": project_task_counts_captured_at,
+                    }
+                )
+                section_map[no_section_epic_gid] = [no_section_label]
+                projects_map[no_section_epic_gid] = [current_project_display]
+                tags_map[no_section_epic_gid] = []
+
+            # Re-parent top-level tasks to their section epic (or catch-all).
+            for task in tasks:
+                if task.get("jira_hierarchy_depth") != 0 or task.get("jira_parent_gid"):
+                    continue
+                sections = section_map.get(task["gid"], [])
+                primary_section = sections[0] if sections else ""
+                task["jira_parent_gid"] = section_epic_ids_above.get(primary_section, no_section_epic_gid)
+
+            # Insert deliverable first, then section epics, then the existing tasks.
+            tasks[0:0] = [deliverable_row] + section_epics_above
+
         max_sections = max((len(names) for names in section_map.values()), default=0)
         max_tags = max((len(tags) for tags in tags_map.values()), default=0)
         section_usage_count = sum(1 for names in section_map.values() if names)
@@ -2601,13 +2837,14 @@ def export_project(
         )
         if max_tags:
             header.extend(["Tags"] * max_tags)
-        for meta in field_meta:
-            if meta["type"] == "multi_enum" and meta["max_multi"] > 1:
-                for idx in range(1, meta["max_multi"] + 1):
-                    suffix = f" ({idx})" if idx > 1 else ""
-                    header.append(f"{meta['name']}{suffix}")
-            else:
-                header.append(meta["name"])
+        if custom_field_mode == "columns":
+            for meta in field_meta:
+                if meta["type"] == "multi_enum" and meta["max_multi"] > 1:
+                    for idx in range(1, meta["max_multi"] + 1):
+                        suffix = f" ({idx})" if idx > 1 else ""
+                        header.append(f"{meta['name']}{suffix}")
+                else:
+                    header.append(meta["name"])
         # notes sits immediately before the comment columns.
         header.append("notes")
         max_comments = max((len(items) for items in comments_by_task.values()), default=0)
@@ -2658,7 +2895,7 @@ def export_project(
             hierarchy_value = "" if depth is None else str(depth)
             jira_parent_gid = task["jira_parent_gid"] or ""
             jira_depth_raw = task["jira_hierarchy_depth"]
-            jira_depth_value = format_jira_hierarchy_depth(jira_depth_raw)
+            jira_depth_value = format_jira_hierarchy_depth(jira_depth_raw, above_epic_label=above_epic_issue_type)
             assignee_gid = task["assignee_gid"]
             if not _is_explicitly_inactive_atlassian_user(user_map, assignee_gid) or not active_creator_fallback:
                 assignee_display_name = format_user_display_name(task["assignee_gid"], task["assignee_name"])
@@ -2767,6 +3004,10 @@ def export_project(
                 fallback_atlassian_id,
                 note_recorder,
             )
+            if custom_field_mode == "description":
+                notes_value = build_archival_description(
+                    notes_value, field_meta, task["gid"], single_map, multi_map, option_map
+                )
             full_contents.append(
                 {"task_gid": task["gid"], "field": "notes", "content": notes_value}
             )
@@ -2845,32 +3086,33 @@ def export_project(
                 row.extend(tags)
                 if len(tags) < max_tags:
                     row.extend([""] * (max_tags - len(tags)))
-            for meta in field_meta:
-                key = (task["gid"], meta["gid"])
-                if meta["type"] == "multi_enum" and meta["max_multi"] > 1:
-                    values = [""] * meta["max_multi"]
-                    for position, enum_gid in multi_map.get(key, []):
-                        option_name = option_map.get((meta["gid"], enum_gid), "")
-                        if 0 <= position < len(values):
-                            values[position] = option_name
-                    row.extend(values)
-                else:
-                    single = single_map.get(key)
-                    cell = ""
-                    if single:
-                        if meta["type"] in {"enum", "multi_enum"} and single["enum_option_gid"]:
-                            cell = option_map.get(
-                                (meta["gid"], single["enum_option_gid"])
-                            ) or single["display_value"] or ""
-                        elif single["display_value"]:
-                            cell = single["display_value"]
-                        elif single["text_value"]:
-                            cell = single["text_value"]
-                        elif single["number_value"] is not None:
-                            cell = str(single["number_value"])
-                        elif single["date_value"]:
-                            cell = format_export_datetime(single["date_value"])
-                    row.append(cell)
+            if custom_field_mode == "columns":
+                for meta in field_meta:
+                    key = (task["gid"], meta["gid"])
+                    if meta["type"] == "multi_enum" and meta["max_multi"] > 1:
+                        values = [""] * meta["max_multi"]
+                        for position, enum_gid in multi_map.get(key, []):
+                            option_name = option_map.get((meta["gid"], enum_gid), "")
+                            if 0 <= position < len(values):
+                                values[position] = option_name
+                        row.extend(values)
+                    else:
+                        single = single_map.get(key)
+                        cell = ""
+                        if single:
+                            if meta["type"] in {"enum", "multi_enum"} and single["enum_option_gid"]:
+                                cell = option_map.get(
+                                    (meta["gid"], single["enum_option_gid"])
+                                ) or single["display_value"] or ""
+                            elif single["display_value"]:
+                                cell = single["display_value"]
+                            elif single["text_value"]:
+                                cell = single["text_value"]
+                            elif single["number_value"] is not None:
+                                cell = str(single["number_value"])
+                            elif single["date_value"]:
+                                cell = format_export_datetime(single["date_value"])
+                        row.append(cell)
             row.append(notes_value)
             if max_comments:
                 comments = comments_by_task.get(task["gid"], [])
@@ -2938,7 +3180,7 @@ def export_project(
                     writer.writerow([name, count, project_name or project_gid])
             logger.info("Wrote section counts for project %s to %s", project_gid, section_path)
 
-        if available_fields:
+        if available_fields and custom_field_mode == "columns":
             exported_field_ids = {meta["gid"] for meta in field_meta}
             summary_rows = []
             for meta in sorted(available_fields, key=lambda item: item["name"].lower()):
@@ -3120,9 +3362,11 @@ def format_export_datetime(value: Optional[str]) -> str:
     return f"{date_part} {time_part.lower()}"
 
 
-def format_jira_hierarchy_depth(value: Optional[int]) -> str:
+def format_jira_hierarchy_depth(value: Optional[int], above_epic_label: Optional[str] = None) -> str:
     """Return the Jira issue-type label represented by a flattened depth."""
-    labels = {-1: "Epic", 0: "Task", 1: "Sub-task"}
+    labels: Dict[int, str] = {-1: "Epic", 0: "Task", 1: "Sub-task"}
+    if above_epic_label:
+        labels[-2] = above_epic_label
     if value is None:
         return ""
     return labels.get(value, str(value))
@@ -3377,7 +3621,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     database = Database(db_path=args.database)
 
     output_root = Path(args.output_dir)
-    if not args.export_id:
+    if not args.export_id and output_root == Path(DEFAULT_OUTPUT_DIR):
         output_root = next_export_dir(
             output_root, export_id="stats" if args.stats_only else None
         )
@@ -3582,6 +3826,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             add_epics=args.add_epics,
             no_custom_fields=args.no_custom_fields,
             add_section_epics=args.add_section_epics,
+            above_epic_issue_type=args.above_epic_issue_type,
+            custom_field_mode=args.custom_field_mode,
             task_gids=task_filters.get(project_gid),
             seen_task_gids=seen_task_gids,
             jira_site_key=args.jira_site,

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace as dc_replace
 import logging
 from pathlib import Path
 from typing import Iterable, Optional
@@ -16,6 +17,7 @@ from src.lib.config import (
 )
 from src.lib.jira_client import JiraClient
 from src.lib.jira_csv_import_config import (
+    ArchiveImportSettings,
     load_archive_import_settings,
     normalize_fields,
     profile_import_config_path,
@@ -55,6 +57,57 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(list(argv) if argv is not None else None)
+
+
+def _configure_above_epic_issue_type(
+    client,
+    settings: ArchiveImportSettings,
+) -> ArchiveImportSettings:
+    """Interactively discover and confirm the issue type that sits above Epic.
+
+    Returns an updated ArchiveImportSettings with above_epic_issue_type_name and
+    above_epic_issue_type_id set, or the original settings if the user skips."""
+    current = settings.above_epic_issue_type_name
+    current_label = f" (currently: {current})" if current else ""
+    raw = input(
+        f"\nIssue type above Epic{current_label} (leave blank to skip): "
+    ).strip()
+    if not raw:
+        return settings
+
+    try:
+        issue_types = client.get_issue_types()
+    except Exception as exc:
+        print(f"  Could not fetch issue types: {exc}")
+        return settings
+
+    query = raw.casefold()
+    matches = [it for it in issue_types if query in str(it.get("name", "")).casefold()]
+    if not matches:
+        print(f"  No issue types matching '{raw}' found on this site.")
+        return settings
+
+    print(f"\n  Found {len(matches)} match(es):")
+    for idx, it in enumerate(matches, start=1):
+        print(f"  [{idx}] {it.get('name')} (id: {it.get('id')})")
+
+    if len(matches) == 1:
+        selected = matches[0]
+    else:
+        pick = input("  Select number (or press Enter to cancel): ").strip()
+        if not pick.isdigit() or not (1 <= int(pick) <= len(matches)):
+            print("  Cancelled.")
+            return settings
+        selected = matches[int(pick) - 1]
+
+    name = str(selected.get("name", ""))
+    type_id = str(selected.get("id", ""))
+    confirm = input(f"  Confirm '{name}' (id: {type_id}) is the level above Epic? [y/N]: ").strip().lower()
+    if confirm != "y":
+        print("  Not confirmed — above-Epic issue type not saved.")
+        return settings
+
+    return dc_replace(settings, above_epic_issue_type_name=name, above_epic_issue_type_id=type_id)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
@@ -109,6 +162,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         return
 
     export_settings, reusable_settings = reviewed
+
+    # Optional: configure the issue type that sits above Epic in the hierarchy.
+    reusable_settings = _configure_above_epic_issue_type(client, reusable_settings)
+
     save_archive_import_settings(env_path, selected_site.key, reusable_settings)
     config_path = write_reusable_import_config(
         output_path,

@@ -95,7 +95,7 @@ from src.lib import keychain  # noqa: E402
 from src.lib.credential_check import check_credentials  # noqa: E402
 from src.lib.http_client import AsanaHttpClient  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
-from src.lib.jira_csv_import_config import latest_profile_import_config_path  # noqa: E402
+from src.lib.jira_csv_import_config import latest_profile_import_config_path, load_archive_import_settings, save_archive_import_settings  # noqa: E402
 from src.lib.project_scope import parse_gid_list, read_project_gids_file  # noqa: E402
 
 
@@ -1691,6 +1691,41 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     export_id = prompt_export_id()
     if export_id:
         args.extend(["--export-id", export_id])
+
+    # Custom-field handling.
+    print("\nCustom-field handling:")
+    print("[1] Keep as individual Jira CSV columns  (default)")
+    print("[2] Fold all populated fields into Description")
+    cf_choice = input("Choice (default 1): ").strip() or "1"
+    if cf_choice == "2":
+        args.extend(["--custom-field-mode", "description"])
+
+    # Hierarchy mode selection.
+    above_epic_name: Optional[str] = None
+    if _session and _session.jira_site_key:
+        try:
+            site_settings = load_archive_import_settings(_session.env_path, _session.jira_site_key)
+            above_epic_name = site_settings.above_epic_issue_type_name
+        except Exception:
+            above_epic_name = None
+
+    print("\nIssue hierarchy mode:")
+    print("[1] No synthetic epics (flat tasks only)")
+    print("[2] Project → Epic  (one Epic per project)")
+    if above_epic_name:
+        print(f"[3] Project → {above_epic_name} / Section → Epic  (two-level hierarchy)")
+    else:
+        print("[3] Project → <above-Epic> / Section → Epic  (not configured — see Jira Preparation → [8])")
+    hierarchy_choice = input("Choice (default 2): ").strip() or "2"
+    if hierarchy_choice == "2":
+        args.append("--add-epics")
+    elif hierarchy_choice == "3":
+        if above_epic_name:
+            args.extend(["--above-epic-issue-type", above_epic_name])
+        else:
+            print("  Above-Epic issue type not configured. Falling back to Project → Epic.")
+            args.append("--add-epics")
+
     return args, allow_merge
 
 
@@ -1829,6 +1864,29 @@ def args_export_archival_project(log_level: str) -> List[str]:
     export_id = prompt_export_id()
     if export_id:
         args.extend(["--export-id", export_id])
+
+    # Hierarchy mode selection (mirrors regular export).
+    above_epic_name_arch: Optional[str] = None
+    if _session and _session.jira_site_key:
+        try:
+            site_settings_arch = load_archive_import_settings(_session.env_path, _session.jira_site_key)
+            above_epic_name_arch = site_settings_arch.above_epic_issue_type_name
+        except Exception:
+            above_epic_name_arch = None
+
+    print("\nIssue hierarchy mode:")
+    print("[1] Project → Epic  (one Epic per project, default)")
+    if above_epic_name_arch:
+        print(f"[2] Project → {above_epic_name_arch} / Section → Epic  (two-level hierarchy)")
+    else:
+        print("[2] Project → <above-Epic> / Section → Epic  (not configured — see Jira Preparation → [8])")
+    hier_choice = input("Choice (default 1): ").strip() or "1"
+    if hier_choice == "2":
+        if above_epic_name_arch:
+            args.extend(["--above-epic-issue-type", above_epic_name_arch])
+        else:
+            print("  Above-Epic issue type not configured. Using Project → Epic.")
+
     return args
 
 
@@ -1838,6 +1896,42 @@ def args_generate_jira_csv_import_config(log_level: str) -> List[str]:
     if confirm("Review every saved Jira CSV mapping?", default=False):
         args.append("--configure")
     return args
+
+
+def run_configure_above_epic_hierarchy() -> None:
+    """Interactively configure the issue type that sits above Epic for the active Jira site."""
+    if _session is None or not _session.jira_site_key:
+        print("No active Jira site selected. Select a site first via Client & Environment.")
+        return
+    from src.lib.config import load_credentials, resolve_jira_base_url
+    from src.lib.jira_client import JiraClient
+    try:
+        credentials = load_credentials()
+        jira_base_url = resolve_jira_base_url(credentials, site_key=_session.jira_site_key)
+        if not jira_base_url:
+            print("Could not resolve Jira base URL for the active site.")
+            return
+        client = JiraClient(
+            base_url=jira_base_url.rstrip("/"),
+            username=credentials.atlassian_username,
+            token=credentials.atlassian_token,
+            skip_ssl_verification=credentials.skip_ssl_verification,
+        )
+    except Exception as exc:
+        print(f"Could not connect to Jira: {exc}")
+        return
+
+    env_path = _session.env_path
+    site_key = _session.jira_site_key
+    current_settings = load_archive_import_settings(env_path, site_key)
+    updated = generate_jira_csv_import_config._configure_above_epic_issue_type(client, current_settings)
+    if updated is current_settings:
+        return
+    save_archive_import_settings(env_path, site_key, updated)
+    print(
+        f"Saved: issue type above Epic = '{updated.above_epic_issue_type_name}' "
+        f"(id: {updated.above_epic_issue_type_id})"
+    )
 
 
 def run_export_project_to_jira(log_level: str) -> None:
@@ -1875,21 +1969,8 @@ def run_export_archival_project(log_level: str) -> None:
 
 
 def run_export_tasks_to_jira(log_level: str) -> None:
-    """Choose the custom-field representation, then run the matching CSV exporter."""
-    print("\nCustom-field handling:")
-    print("[1] Keep custom fields as Jira CSV columns")
-    print("[2] Consolidate all populated custom fields into Description")
-    choice = prompt("Choice", default="1")
-    if choice == "1":
-        run_export_project_to_jira(log_level)
-    elif choice == "2":
-        print(
-            "Using archival-style export: one synthetic Epic per project, with the "
-            "existing hierarchy-safe Epic and CSV limits."
-        )
-        run_export_archival_project(log_level)
-    else:
-        raise SystemExit("Invalid custom-field handling choice.")
+    """Export project tasks to a Jira CSV using the unified exporter."""
+    run_export_project_to_jira(log_level)
 
 
 def run_sync_attachments(log_level: str) -> None:
@@ -2991,6 +3072,7 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
         "5": MenuItem("5", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
         "6": MenuItem("6", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
         "7": MenuItem("7", "Generate Jira CSV importer configuration", lambda: run_script(generate_jira_csv_import_config.main, args_generate_jira_csv_import_config(log_level))),
+        "8": MenuItem("8", "Configure issue type above Epic (hierarchy)", run_configure_above_epic_hierarchy),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
