@@ -95,7 +95,7 @@ from src.lib import keychain  # noqa: E402
 from src.lib.credential_check import check_credentials  # noqa: E402
 from src.lib.http_client import AsanaHttpClient  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
-from src.lib.jira_csv_import_config import latest_profile_import_config_path, load_archive_import_settings, save_archive_import_settings  # noqa: E402
+from src.lib.jira_csv_import_config import clear_archive_import_settings, latest_profile_import_config_path, load_archive_import_settings, save_archive_import_settings, stale_profile_import_config_paths  # noqa: E402
 from src.lib.project_scope import parse_gid_list, read_project_gids_file  # noqa: E402
 
 
@@ -1917,6 +1917,39 @@ def rename_jira_import_config() -> None:
     print(f"Renamed to {new_path.name}")
 
 
+def purge_jira_import_config() -> None:
+    """Delete stale config files and clear saved env keys for the active Jira site."""
+    env_path = resolve_credentials_path()
+    site_key = _session.jira_site_key if _session else None
+    if not site_key:
+        print("No active Jira site selected — select a site first.")
+        return
+
+    stale_files = stale_profile_import_config_paths(env_path, site_key=site_key)
+    current = latest_profile_import_config_path(env_path, site_key=site_key)
+
+    print(f"\nActive site: {site_key}")
+    if current:
+        print(f"  Keeping: {current.name}")
+    if stale_files:
+        print(f"  Stale files to delete ({len(stale_files)}):")
+        for f in stale_files:
+            print(f"    {f.name}")
+    else:
+        print("  No stale config files found.")
+    print("  Env keys: all saved CSV import mappings for this site will be cleared.")
+
+    if not confirm("Proceed with cleanup?", default=False):
+        print("Cleanup cancelled.")
+        return
+
+    for f in stale_files:
+        f.unlink()
+        print(f"Deleted {f.name}")
+    clear_archive_import_settings(env_path, site_key)
+    print("Cleared saved import settings from env file.")
+
+
 def run_configure_above_epic_hierarchy() -> None:
     """Interactively configure the issue type that sits above Epic for the active Jira site."""
     if _session is None or not _session.jira_site_key:
@@ -3082,7 +3115,8 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
         "6": MenuItem("6", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
         "7": MenuItem("7", "Generate Jira CSV importer configuration", lambda: run_script(generate_jira_csv_import_config.main, args_generate_jira_csv_import_config(log_level))),
         "8": MenuItem("8", "Rename Jira CSV importer configuration", rename_jira_import_config),
-        "9": MenuItem("9", "Configure issue type above Epic (hierarchy)", run_configure_above_epic_hierarchy),
+        "9": MenuItem("9", "Clean up stale Jira CSV importer configuration", purge_jira_import_config),
+        "10": MenuItem("10", "Configure issue type above Epic (hierarchy)", run_configure_above_epic_hierarchy),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

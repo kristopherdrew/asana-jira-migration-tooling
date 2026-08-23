@@ -154,6 +154,32 @@ def save_archive_import_settings(
     write_profile_values(env_path, values)
 
 
+def clear_archive_import_settings(env_path: Path, site_key: str) -> None:
+    """Remove all saved CSV import settings for one site from the profile env file."""
+    prefix = _site_prefix(site_key)
+    legacy_prefix = _legacy_site_prefix(site_key)
+    keys_to_clear: Dict[str, Optional[str]] = {}
+    keys_to_clear[f"{prefix}ABOVE_EPIC_ISSUE_TYPE_NAME"] = None
+    keys_to_clear[f"{prefix}ABOVE_EPIC_ISSUE_TYPE_ID"] = None
+    for _attribute, _label, suffix in FIELD_SPECS:
+        for part in ("FIELD_ID", "FIELD_NAME", "FIELD_TYPE", "SCHEMA_TYPE"):
+            keys_to_clear[f"{prefix}{suffix}_{part}"] = None
+            keys_to_clear[f"{legacy_prefix}{suffix}_{part}"] = None
+    write_profile_values(env_path, keys_to_clear)
+
+
+def stale_profile_import_config_paths(
+    env_path: Path, site_key: Optional[str] = None
+) -> List[Path]:
+    """Return all dated config files for one site except the newest one."""
+    basename = _profile_config_basename(env_path)
+    site_segment = f"_{site_key}" if site_key else ""
+    matches = sorted(
+        env_path.parent.glob(f"{basename}{site_segment}_????-??-??_jira_config.txt")
+    )
+    return matches[:-1] if len(matches) > 1 else []
+
+
 def _field_by_id(fields: Sequence[JiraFieldChoice], raw_id: str) -> Optional[JiraFieldChoice]:
     normalized = raw_id.strip()
     if normalized.isdigit():
