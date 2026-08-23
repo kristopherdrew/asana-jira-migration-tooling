@@ -1936,10 +1936,8 @@ def run_configure_above_epic_hierarchy() -> None:
 
 def run_export_project_to_jira(log_level: str) -> None:
     args, allow_merge = args_export_project_to_jira(log_level)
-    export_dir: Optional[Path] = None
     if allow_merge:
         export_id = None
-        # args already contains flags; find export-id if present
         for idx, val in enumerate(args):
             if val == "--export-id" and idx + 1 < len(args):
                 export_id = args[idx + 1]
@@ -1947,17 +1945,8 @@ def run_export_project_to_jira(log_level: str) -> None:
         export_dir = next_export_dir(PROJECT_ROOT / "exports", export_id=export_id)
         print(f"\nExporting multi-project output into {export_dir}")
         args.extend(["--output-dir", str(export_dir)])
-    display_args = list(args)  # capture final argv used for the export command
+    display_args = list(args)
     run_script(export_project_to_jira_csv.main, args)
-    if allow_merge:
-        merge_root = export_dir or (PROJECT_ROOT / "exports")
-        inputs = str(merge_root / "*_tasks.csv")
-        output = merge_root / f"_Consolidated-{datetime.now().strftime('%Y%m%d-%H%M')}_tasks.csv"
-        source_col = "project"
-        strip_suffix = ""
-        merge_args = build_common_args(log_level)
-        merge_args.extend(["--inputs", inputs, "--output", str(output), "--source-column", source_col])
-        run_script(merge_project_exports.main, merge_args)
     print_rerun_command("scripts.export_project_to_jira_csv", display_args)
 
 
