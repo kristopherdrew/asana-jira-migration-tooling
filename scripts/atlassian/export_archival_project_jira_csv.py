@@ -968,7 +968,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         write_partition_manifest(manifest_path, task_parts, consolidated_parts)
         logger.info("Wrote archival Jira CSV partition manifest to %s", manifest_path)
 
-    copied_config = copy_active_profile_import_config(output_dir)
+    copied_config = copy_active_profile_import_config(output_dir, site_key=args.jira_site)
     if copied_config:
         logger.info("Included active profile Jira importer configuration: %s", copied_config)
     organize_outputs(output_dir)

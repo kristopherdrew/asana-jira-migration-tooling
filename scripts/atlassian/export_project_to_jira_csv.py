@@ -4000,7 +4000,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                     writer.writerows(merged_rows)
                 logger.info("Wrote consolidated user association report to %s", consolidated_assoc)
 
-    copied_config = copy_active_profile_import_config(output_dir)
+    copied_config = copy_active_profile_import_config(output_dir, site_key=args.jira_site)
     if copied_config:
         logger.info("Included active profile Jira importer configuration: %s", copied_config)
     organize_outputs(output_dir)

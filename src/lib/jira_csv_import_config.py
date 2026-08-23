@@ -408,9 +408,11 @@ def latest_profile_import_config_path(
     return legacy if legacy.is_file() else None
 
 
-def copy_active_profile_import_config(output_dir: Path) -> Optional[Path]:
+def copy_active_profile_import_config(
+    output_dir: Path, site_key: Optional[str] = None
+) -> Optional[Path]:
     """Copy the active profile's saved config into an export bundle when available."""
-    source = latest_profile_import_config_path(resolve_credentials_path())
+    source = latest_profile_import_config_path(resolve_credentials_path(), site_key=site_key)
     if source is None:
         return None
     output_dir.mkdir(parents=True, exist_ok=True)

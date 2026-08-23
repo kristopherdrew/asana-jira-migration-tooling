@@ -1901,7 +1901,8 @@ def args_generate_jira_csv_import_config(log_level: str) -> List[str]:
 def rename_jira_import_config() -> None:
     """Rename the active profile's saved Jira CSV importer configuration file."""
     env_path = resolve_credentials_path()
-    current = latest_profile_import_config_path(env_path)
+    site_key = _session.jira_site_key if _session else None
+    current = latest_profile_import_config_path(env_path, site_key=site_key)
     if current is None:
         print("No saved Jira CSV importer configuration found for this profile.")
         return
@@ -2718,7 +2719,8 @@ def show_migration_readiness() -> None:
         show_service_account_team_access(connection)
     finally:
         connection.close()
-    config_path = latest_profile_import_config_path(resolve_credentials_path())
+    site_key = _session.jira_site_key if _session else None
+    config_path = latest_profile_import_config_path(resolve_credentials_path(), site_key=site_key)
     if config_path:
         print(f"[x] Jira CSV configuration: {config_path.name}")
     else:
@@ -2914,7 +2916,7 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
                 )
             else:
                 print("[!] Jira project associations: no active Jira site selected.")
-            config_path = latest_profile_import_config_path(resolve_credentials_path())
+            config_path = latest_profile_import_config_path(resolve_credentials_path(), site_key=jira_site_key)
             if config_path:
                 print(f"[x] Jira CSV configuration: {config_path.name}")
             else:
