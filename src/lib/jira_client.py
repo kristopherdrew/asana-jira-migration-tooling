@@ -200,6 +200,14 @@ class JiraClient:
             payload={"options": [{"value": value} for value in options]},
         )
 
+    def get_issue_types(self) -> List[Dict[str, object]]:
+        """Return all issue types available on the Jira site."""
+        data = self._request_json("GET", "/rest/api/3/issuetype")
+        if isinstance(data, list):
+            return [item for item in data if isinstance(item, dict)]
+        values = data.get("values", []) if isinstance(data, dict) else []
+        return [item for item in values if isinstance(item, dict)]
+
     def get_resolutions(self) -> List[Dict[str, object]]:
         """Return the Jira site's available resolutions."""
         data = self._request_json("GET", "/rest/api/3/resolution")

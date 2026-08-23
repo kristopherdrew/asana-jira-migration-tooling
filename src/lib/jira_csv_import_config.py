@@ -38,6 +38,8 @@ class ArchiveImportSettings:
     task_link: Optional[JiraFieldChoice] = None
     external_id: Optional[JiraFieldChoice] = None
     start_date: Optional[JiraFieldChoice] = None
+    above_epic_issue_type_name: Optional[str] = None
+    above_epic_issue_type_id: Optional[str] = None
 
 
 FIELD_SPECS = (
@@ -101,6 +103,7 @@ def load_archive_import_settings(env_path: Path, site_key: str) -> ArchiveImport
             f"{legacy_prefix}{suffix}_{part}"
             for part in ("FIELD_ID", "FIELD_NAME", "FIELD_TYPE", "SCHEMA_TYPE")
         )
+    keys.extend([f"{prefix}ABOVE_EPIC_ISSUE_TYPE_NAME", f"{prefix}ABOVE_EPIC_ISSUE_TYPE_ID"])
     values = read_profile_values(env_path, keys)
 
     def field(suffix: str) -> Optional[JiraFieldChoice]:
@@ -124,6 +127,8 @@ def load_archive_import_settings(env_path: Path, site_key: str) -> ArchiveImport
         task_link=field("TASK_LINK"),
         external_id=field("EXTERNAL_ID"),
         start_date=field("START_DATE"),
+        above_epic_issue_type_name=values.get(f"{prefix}ABOVE_EPIC_ISSUE_TYPE_NAME") or None,
+        above_epic_issue_type_id=values.get(f"{prefix}ABOVE_EPIC_ISSUE_TYPE_ID") or None,
     )
 
 
@@ -134,6 +139,8 @@ def save_archive_import_settings(
 ) -> None:
     prefix = _site_prefix(site_key)
     values: Dict[str, Optional[str]] = {}
+    values[f"{prefix}ABOVE_EPIC_ISSUE_TYPE_NAME"] = settings.above_epic_issue_type_name or None
+    values[f"{prefix}ABOVE_EPIC_ISSUE_TYPE_ID"] = settings.above_epic_issue_type_id or None
     for attribute, _label, suffix in FIELD_SPECS:
         choice = getattr(settings, attribute)
         values.update(

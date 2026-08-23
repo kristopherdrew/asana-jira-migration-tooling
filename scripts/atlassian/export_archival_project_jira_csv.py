@@ -191,6 +191,7 @@ def export_archival_project(
     task_gids: Optional[Set[str]] = None,
     seen_task_gids: Optional[Set[str]] = None,
     jira_site_key: Optional[str] = None,
+    above_epic_issue_type: Optional[str] = None,
 ) -> Optional[Path]:
     jira_base_url = normalize_jira_base_url(jira_base_url)
     if not jira_base_url:
@@ -563,40 +564,109 @@ def export_archival_project(
                     row.extend([""] * (max_comments - len(comments)))
             rows.append(row)
 
-        # Archival migrations always receive a synthetic project epic so every
+        # Archival migrations always receive a synthetic project-level row so every
         # top-level task can be imported with its Jira parent in the same CSV.
-        epic_gid = f"{project_gid}::archival::epic"
-        epic_row = [""] * len(header)
-        epic_values = {
-            "current_project": current_project_display,
-            "jira_project_name": jira_project_map.get(project_gid, {}).get("jira_project_name", ""),
-            "jira_project_key": jira_project_map.get(project_gid, {}).get("jira_project_key", ""),
-            "jira_project_type": "software",
-            "Asana Project Link": project_asana_link,
-            "Asana Task Link": "",
-            "task_gid": epic_gid,
-            JIRA_TASK_ID_FIELD_NAME: epic_gid,
-            "hierarchy_depth": "-1",
-            "jira_hierarchy_depth": "Epic",
-            "task_name": project_name or project_gid,
-            "projects": current_project_display,
-            "modified_section": "Open",
-            "notes": build_epic_description(
-                project_name or project_gid,
-                associations,
-                user_display_names,
-                user_emails,
-            ),
-        }
-        for column, value in epic_values.items():
-            if column in header:
-                epic_row[header.index(column)] = value
+        # When above_epic_issue_type is set, the project row becomes a Deliverable
+        # (or whatever the site calls it) and sections drive synthetic Epics beneath it.
         jira_parent_index = header.index("jira_parent_gid")
         jira_depth_index = header.index("jira_hierarchy_depth")
-        for row in rows:
-            if not row[jira_parent_index] and row[jira_depth_index] == "Task":
-                row[jira_parent_index] = epic_gid
-        rows.insert(0, epic_row)
+
+        project_jira = jira_project_map.get(project_gid, {})
+        project_jira_name = project_jira.get("jira_project_name", "")
+        project_jira_key = project_jira.get("jira_project_key", "")
+        project_display_name = project_name or project_gid
+
+        def _make_synthetic_row(gid: str, depth_label: str, name: str, parent_gid: str = "") -> List[str]:
+            row = [""] * len(header)
+            values = {
+                "current_project": current_project_display,
+                "jira_project_name": project_jira_name,
+                "jira_project_key": project_jira_key,
+                "jira_project_type": "software",
+                "Asana Project Link": project_asana_link,
+                "Asana Task Link": "",
+                "task_gid": gid,
+                JIRA_TASK_ID_FIELD_NAME: gid,
+                "hierarchy_depth": str(-2 if above_epic_issue_type and depth_label != "Epic" else -1),
+                "jira_hierarchy_depth": depth_label,
+                "jira_parent_gid": parent_gid,
+                "task_name": name,
+                "projects": current_project_display,
+                "modified_section": "Open",
+                "notes": build_epic_description(
+                    name, associations, user_display_names, user_emails
+                ) if not parent_gid else "",
+            }
+            for column, value in values.items():
+                if column in header:
+                    row[header.index(column)] = value
+            return row
+
+        synthetic_rows: List[List[str]] = []
+
+        if above_epic_issue_type:
+            # Project → above-Epic (Deliverable etc.), Section → Epic
+            deliverable_gid = f"{project_gid}::archival::deliverable"
+            synthetic_rows.append(
+                _make_synthetic_row(deliverable_gid, above_epic_issue_type, project_display_name)
+            )
+
+            # Collect unique section names across all tasks.
+            seen_section_slugs: Dict[str, str] = {}
+            seen_slug_set: set = set()
+            for task_row in rows:
+                secs = section_map.get(
+                    task_row[header.index("task_gid")] if "task_gid" in header else "", []
+                ) if "task_gid" in header else []
+                for sec in secs:
+                    if sec and sec not in seen_section_slugs:
+                        base = sec.strip().replace(" ", "_")
+                        slug = base
+                        counter = 2
+                        while slug in seen_slug_set:
+                            slug = f"{base}_{counter}"
+                            counter += 1
+                        seen_slug_set.add(slug)
+                        seen_section_slugs[sec] = f"{project_gid}::archival::section::{slug}"
+
+            no_section_epic_gid = f"{project_gid}::archival::section::no_section"
+
+            for sec_name, sec_gid in sorted(seen_section_slugs.items()):
+                synthetic_rows.append(
+                    _make_synthetic_row(sec_gid, "Epic", sec_name, parent_gid=deliverable_gid)
+                )
+
+            # Re-parent top-level tasks to their section epic or the catch-all.
+            needs_no_section_epic = False
+            task_gid_col = header.index("task_gid") if "task_gid" in header else None
+            for row in rows:
+                if row[jira_depth_index] != "Task" or row[jira_parent_index]:
+                    continue
+                task_gid_val = row[task_gid_col] if task_gid_col is not None else ""
+                secs = section_map.get(task_gid_val, [])
+                primary_sec = secs[0] if secs else ""
+                target = seen_section_slugs.get(primary_sec, no_section_epic_gid)
+                row[jira_parent_index] = target
+                if target == no_section_epic_gid:
+                    needs_no_section_epic = True
+
+            if needs_no_section_epic:
+                synthetic_rows.append(
+                    _make_synthetic_row(
+                        no_section_epic_gid, "Epic", "(No Section)", parent_gid=deliverable_gid
+                    )
+                )
+        else:
+            # Default: one synthetic Epic per project.
+            epic_gid = f"{project_gid}::archival::epic"
+            synthetic_rows.append(
+                _make_synthetic_row(epic_gid, "Epic", project_display_name)
+            )
+            for row in rows:
+                if not row[jira_parent_index] and row[jira_depth_index] == "Task":
+                    row[jira_parent_index] = epic_gid
+
+        rows[0:0] = synthetic_rows
 
         # Prune empty columns while preserving the identity/hierarchy columns Jira needs.
         if rows:
@@ -732,6 +802,14 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--prod", action="store_true", help="Resolve the production Jira base URL (default: sandbox).")
     parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
+    parser.add_argument(
+        "--above-epic-issue-type",
+        dest="above_epic_issue_type",
+        help=(
+            "When set, create a synthetic row of this issue type (e.g. 'Deliverable') per project "
+            "(above Epic) and generate section-based Epics beneath it."
+        ),
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
@@ -816,6 +894,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 task_gids=task_filters.get(project_gid),
                 seen_task_gids=seen_task_gids,
                 jira_site_key=args.jira_site,
+                above_epic_issue_type=args.above_epic_issue_type,
             )
         except NoTasksFoundError:
             skipped_empty_projects.append((project_gid, project_name))
