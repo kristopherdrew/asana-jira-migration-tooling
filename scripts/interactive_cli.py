@@ -1898,6 +1898,24 @@ def args_generate_jira_csv_import_config(log_level: str) -> List[str]:
     return args
 
 
+def rename_jira_import_config() -> None:
+    """Rename the active profile's saved Jira CSV importer configuration file."""
+    env_path = resolve_credentials_path()
+    current = latest_profile_import_config_path(env_path)
+    if current is None:
+        print("No saved Jira CSV importer configuration found for this profile.")
+        return
+    print(f"Current file: {current.name}")
+    raw = prompt("New filename (press Enter to cancel)").strip()
+    if not raw:
+        print("Rename cancelled.")
+        return
+    new_name = raw if raw.endswith(".txt") else f"{raw}.txt"
+    new_path = current.with_name(new_name)
+    current.rename(new_path)
+    print(f"Renamed to {new_path.name}")
+
+
 def run_configure_above_epic_hierarchy() -> None:
     """Interactively configure the issue type that sits above Epic for the active Jira site."""
     if _session is None or not _session.jira_site_key:
@@ -3061,7 +3079,8 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
         "5": MenuItem("5", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
         "6": MenuItem("6", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
         "7": MenuItem("7", "Generate Jira CSV importer configuration", lambda: run_script(generate_jira_csv_import_config.main, args_generate_jira_csv_import_config(log_level))),
-        "8": MenuItem("8", "Configure issue type above Epic (hierarchy)", run_configure_above_epic_hierarchy),
+        "8": MenuItem("8", "Rename Jira CSV importer configuration", rename_jira_import_config),
+        "9": MenuItem("9", "Configure issue type above Epic (hierarchy)", run_configure_above_epic_hierarchy),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
