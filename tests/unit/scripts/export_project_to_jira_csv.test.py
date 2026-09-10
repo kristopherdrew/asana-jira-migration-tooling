@@ -483,6 +483,32 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(rows_by_gid["task_1"][jira_parent_idx], backlog_epic_gid)
         self.assertEqual(rows_by_gid["task_2"][jira_parent_idx], in_progress_epic_gid)
 
+    def test_add_project_epic_reparents_top_level_tasks(self) -> None:
+        output_dir = self.workspace / "exports"
+        csv_path = export_project(
+            str(self.db_path),
+            "proj_1",
+            output_dir,
+            filename="project_epics.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+            add_epics=True,
+        )
+
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+
+        header = rows[0]
+        gid_idx = header.index("task_gid")
+        jira_parent_idx = header.index("jira_parent_gid")
+        task_name_idx = header.index("task_name")
+        rows_by_gid = {row[gid_idx]: row for row in rows[1:]}
+        epic_row = rows_by_gid["proj_1"]
+
+        self.assertEqual(epic_row[task_name_idx], "Example Project")
+        self.assertEqual(rows_by_gid["task_1"][jira_parent_idx], "proj_1")
+        self.assertEqual(rows_by_gid["task_2"][jira_parent_idx], "proj_1")
+
     def test_html_hyperlinks_convert_to_jira_format(self) -> None:
         html_notes = (
             "<body>See <a href=\"https://docs.honeycomb.io/troubleshoot/product-lifecycle/"
