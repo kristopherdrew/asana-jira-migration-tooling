@@ -2164,6 +2164,60 @@ def export_project(
                 return None
         exported_in_this_project = {task["gid"] for task in tasks if task.get("gid")}
 
+        current_project_row = connection.execute(
+            """
+            SELECT
+                name,
+                permalink_url,
+                num_tasks,
+                num_incomplete_tasks,
+                num_completed_tasks,
+                task_counts_captured_at
+            FROM projects
+            WHERE gid = ?
+            """,
+            (project_gid,),
+        ).fetchone()
+        project_name = current_project_row["name"] if current_project_row else None
+        project_num_tasks = current_project_row["num_tasks"] if current_project_row else None
+        project_num_incomplete_tasks = (
+            current_project_row["num_incomplete_tasks"] if current_project_row else None
+        )
+        project_num_completed_tasks = (
+            current_project_row["num_completed_tasks"] if current_project_row else None
+        )
+        project_task_counts_captured_at = (
+            current_project_row["task_counts_captured_at"] if current_project_row else None
+        )
+
+        def _needs_flattened_refresh(rows: List[sqlite3.Row]) -> bool:
+            return any(
+                row["hierarchy_depth"] is not None and row["jira_hierarchy_depth"] is None
+                for row in rows
+            )
+
+        if _needs_flattened_refresh(tasks):
+            logger.info(
+                "Flattened hierarchy data missing for project %s; rebuilding task_hierarchy_flattened.",
+                project_gid,
+            )
+            database.rebuild_flattened_task_hierarchy(connection)
+            tasks = [dict(row) for row in fetch_project_task_rows()]
+            if task_gids is not None:
+                tasks = [task for task in tasks if task["gid"] in task_gids]
+            if _needs_flattened_refresh(tasks):
+                missing_gids = [
+                    row["gid"]
+                    for row in tasks
+                    if row["hierarchy_depth"] is not None and row["jira_hierarchy_depth"] is None
+                ]
+                logger.warning(
+                    "Flattened hierarchy entries still missing for %s task(s) in project %s; proceeding with blanks. Examples: %s",
+                    len(missing_gids),
+                    project_gid,
+                    ", ".join(missing_gids[:5]),
+                )
+
         # Optionally add a synthetic project epic and re-parent top-level tasks
         if add_epics:
             project_display = project_names.get(project_gid, project_gid)
@@ -2204,34 +2258,6 @@ def export_project(
                 if not task.get("jira_parent_gid") and task.get("jira_hierarchy_depth") == 0:
                     task["jira_parent_gid"] = project_gid
 
-        def _needs_flattened_refresh(rows: List[sqlite3.Row]) -> bool:
-            return any(
-                row["hierarchy_depth"] is not None and row["jira_hierarchy_depth"] is None
-                for row in rows
-            )
-
-        if _needs_flattened_refresh(tasks):
-            logger.info(
-                "Flattened hierarchy data missing for project %s; rebuilding task_hierarchy_flattened.",
-                project_gid,
-            )
-            database.rebuild_flattened_task_hierarchy(connection)
-            tasks = [dict(row) for row in fetch_project_task_rows()]
-            if task_gids is not None:
-                tasks = [task for task in tasks if task["gid"] in task_gids]
-            if _needs_flattened_refresh(tasks):
-                missing_gids = [
-                    row["gid"]
-                    for row in tasks
-                    if row["hierarchy_depth"] is not None and row["jira_hierarchy_depth"] is None
-                ]
-                logger.warning(
-                    "Flattened hierarchy entries still missing for %s task(s) in project %s; proceeding with blanks. Examples: %s",
-                    len(missing_gids),
-                    project_gid,
-                    ", ".join(missing_gids[:5]),
-                )
-
         active_creator_fallback = _build_active_creator_fallback(
             tasks,
             user_map,
@@ -2240,32 +2266,7 @@ def export_project(
             fallback_atlassian_id,
         )
 
-        current_project_row = connection.execute(
-            """
-            SELECT
-                name,
-                permalink_url,
-                num_tasks,
-                num_incomplete_tasks,
-                num_completed_tasks,
-                task_counts_captured_at
-            FROM projects
-            WHERE gid = ?
-            """,
-            (project_gid,),
-        ).fetchone()
         task_activity_row = fetch_project_task_activity(connection, project_gid)
-        project_name = current_project_row["name"] if current_project_row else None
-        project_num_tasks = current_project_row["num_tasks"] if current_project_row else None
-        project_num_incomplete_tasks = (
-            current_project_row["num_incomplete_tasks"] if current_project_row else None
-        )
-        project_num_completed_tasks = (
-            current_project_row["num_completed_tasks"] if current_project_row else None
-        )
-        project_task_counts_captured_at = (
-            current_project_row["task_counts_captured_at"] if current_project_row else None
-        )
         project_last_task_created_at = (
             task_activity_row["last_task_created_at"] if task_activity_row else None
         )
