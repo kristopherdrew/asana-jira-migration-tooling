@@ -50,6 +50,7 @@ from scripts import (  # noqa: E402
     export_project_last_updated_report,
     export_jira_migration_validation,
     export_all_reports_xlsx,
+    export_recurring_tasks_report,
 )
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
@@ -2143,6 +2144,20 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         append_project_report_scope(args, "project last updated")
         run_script(export_project_last_updated_report.main, args)
 
+    def run_recurring_tasks_report() -> None:
+        args = args_report_defaults(log_level)
+        print("\nProvide project GIDs to scan for recurring tasks (live Asana query):")
+        print("[1] Paste project GIDs (comma-separated)")
+        print("[2] Project GID file")
+        choice = input("Choice (default 1): ").strip() or "1"
+        if choice == "1":
+            args.extend(["--project-gids", prompt_required("Project GIDs (comma-separated)")])
+        elif choice == "2":
+            args.extend(["--project-gids-file", _prompt_project_gids_file("recurring tasks report")])
+        else:
+            raise SystemExit("Invalid project GID scope.")
+        run_script(export_recurring_tasks_report.main, args)
+
     def run_jira_migration_validation() -> None:
         args = args_report_defaults(log_level)
         append_jira_env_flag(args)
@@ -2237,6 +2252,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "c",
             "Validate Jira task migration coverage",
             run_jira_migration_validation,
+        ),
+        "d": MenuItem(
+            "d",
+            "Export recurring tasks report (live Asana query)",
+            run_recurring_tasks_report,
         ),
         "b": MenuItem("b", "Back", lambda: None),
     }
@@ -3101,6 +3121,7 @@ def build_assess_plan_menu(log_level: str) -> Dict[str, MenuItem]:
         "10": report_item("10", "7"),
         "11": report_item("11", "8"),
         "12": MenuItem("12", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
+        "13": report_item("13", "d"),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

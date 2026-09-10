@@ -229,3 +229,25 @@ Optional flags:
 
 The Interactive CLI offers fuzzy team lookup, project GIDs pasted or loaded from a file,
 task GIDs pasted or loaded from a file, and cumulative all-associated-project validation.
+
+### Recurring Tasks Report
+
+Unlike every other report in this file, this one can both read **and** write the local SQLite snapshot in addition to querying live Asana — it's DB-first with a live-Asana fallback for gaps. `tasks.recurrence`/`tasks.recurrence_checked_at` (populated by the normal task sync — see [sync-commands](sync-commands.md) and [data-model](data-model.md)) are used when already captured; live Asana is only queried to fill gaps: a project with no synced tasks falls back to a full live walk of every task and nested subtask (requesting the undocumented `recurrence` field), while a synced task whose `recurrence_checked_at` is still `NULL` (synced before this column existed) gets a single-task live lookup. Any value discovered live is written back into `tasks.recurrence`/`recurrence_checked_at`, so re-running the report against the same projects later needs no further API calls. Writes two CSVs: one row per recurring task instance found, and a best-effort series summary. Asana exposes no true "series id" for a recurrence, so the summary groups instances by `(project_gid, task_name, recurrence_type, recurrence_frequency)` — two unrelated tasks that happen to share a name and schedule would incorrectly merge into one series row.
+
+```bash
+python3 -m scripts.export_recurring_tasks_report --project-gids 1201234567890,1209876543210
+python3 -m scripts.export_recurring_tasks_report --project-gids-file inputs/scope-project-gids.txt
+```
+
+Required flags:
+- `--project-gids <gid1,gid2>` or `--project-gids-file <path>` (exactly one; there is no team/workspace-wide scope for this report).
+
+Optional flags:
+- `--database <path>` to point at a different SQLite database (default `data/asana.sqlite`). Recurrence is read from here when already synced, and live-queried gaps are written back to it.
+- `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
+- `--filename <name>` to override the auto-generated `recurring_tasks_instances_<timestamp>.csv` filename (the series summary is derived from it, e.g. `<stem>_series_summary.csv`).
+- `--page-size <n>` for task/subtask pagination, used only when falling back to a live walk for an unsynced project (default `100`).
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+Instances CSV columns: `project_gid, project_name, task_gid, task_name, task_type (task|subtask), parent_gid, parent_name, recurrence_type, recurrence_frequency, due_on, completed, permalink_url`.
+Series summary columns: `project_gid, project_name, task_name, recurrence_type, recurrence_frequency, occurrence_count, first_due_on, last_due_on`.

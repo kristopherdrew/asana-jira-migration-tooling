@@ -86,12 +86,12 @@ Project definitions, lifecycle metadata, and task-count snapshot; includes synth
 
 #### `tasks`
 
-Core task records (and subtasks); hierarchy_depth and is_personal flags support export.
+Core task records (and subtasks); hierarchy_depth and is_personal flags support export. recurrence is a JSON-serialized copy of Asana's undocumented per-task recurrence object, stored verbatim including the literal type 'never' Asana uses for explicitly non-recurring tasks (query via is_recurring()/type != 'never' rather than a NULL check to find actual recurrences — see src/tasks/recurring_tasks.py); NULL means the field was never populated. recurrence_checked_at is the ISO timestamp of the last sync whose payload included the recurrence field, distinguishing 'checked' (recurrence_checked_at set, whatever recurrence holds) from 'never checked' (both NULL).
 
 - **Source:** GET /projects/{gid}/tasks; GET /tasks; GET /tasks/{gid}; GET /tasks/{gid}/subtasks
 - **Populated by:** `scripts/get_tasks.py`, `scripts/get_personal_tasks.py`, `scripts/get_incremental_updates.py`
 - **Written by:** `upsert_task`
-- **Write semantics:** Upsert by gid (PK); also writes task_projects / task_custom_fields / task_custom_field_multi_enum / task_relationships / task_followers / task_tags / tags.
+- **Write semantics:** Upsert by gid (PK); also writes task_projects / task_custom_fields / task_custom_field_multi_enum / task_relationships / task_followers / task_tags / tags. recurrence / recurrence_checked_at are also updatable in isolation via Database.update_task_recurrence (single-column UPDATE) for live-API gap-fill backfills that don't have a full task payload.
 
 | Column | Type | PK |
 |---|---|---|
@@ -121,6 +121,8 @@ Core task records (and subtasks); hierarchy_depth and is_personal flags support 
 | `actual_time_minutes` | INTEGER |  |
 | `liked` | INTEGER |  |
 | `num_likes` | INTEGER |  |
+| `recurrence` | TEXT |  |
+| `recurrence_checked_at` | TEXT |  |
 | `is_subtask` | INTEGER |  |
 | `is_personal` | INTEGER |  |
 | `hierarchy_depth` | INTEGER |  |

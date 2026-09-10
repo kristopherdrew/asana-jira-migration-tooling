@@ -96,6 +96,7 @@ TASK_DETAIL_FIELDS = [
     "dependencies.name",
     "dependents.gid",
     "dependents.name",
+    "recurrence",
     "custom_fields.gid",
     "custom_fields.type",
     "custom_fields.enabled",
