@@ -1487,7 +1487,7 @@ def prompt_for_unmapped_jira_project(
             connection, jira_site_key=jira_site_key
         )
     missing = [(gid, name) for gid, name in projects if gid not in existing]
-    if not missing or not sys.stdin.isatty():
+    if not missing:
         return 0
 
     print(f"{len(missing)} selected project(s) have no Jira project association.")
