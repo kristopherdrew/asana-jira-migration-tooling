@@ -1515,6 +1515,36 @@ class ExportProjectToJiraCsvTest(TestCase):
             "sandbox",
         )
 
+    def test_prompt_for_unmapped_jira_project_accepts_wrapped_non_tty_input(self) -> None:
+        credentials = Credentials(
+            token="asana-token",
+            workspace_gid="workspace",
+            skip_ssl_verification=False,
+            atlassian_username="user@example.com",
+            atlassian_token="jira-token",
+        )
+        wrapped_stdin = Mock()
+        wrapped_stdin.isatty.return_value = False
+        with patch("scripts.atlassian.export_project_to_jira_csv.sys.stdin", wrapped_stdin), patch(
+            "builtins.input", side_effect=["y", "MIG"]
+        ), patch(
+            "scripts.atlassian.export_project_to_jira_csv.lookup_jira_project_name",
+            return_value="Migration Space",
+        ), patch(
+            "scripts.atlassian.export_project_to_jira_csv.assign_unmapped_jira_project",
+            return_value=1,
+        ) as assign:
+            added = prompt_for_unmapped_jira_project(
+                self.database,
+                [("proj_1", "Example Project")],
+                "sandbox",
+                self.jira_base_url,
+                credentials,
+            )
+
+        self.assertEqual(added, 1)
+        assign.assert_called_once()
+
     def test_parse_project_list_reads_project_gid_column_from_csv(self) -> None:
         scope_file = self.workspace / "project-map.csv"
         scope_file.write_text(
