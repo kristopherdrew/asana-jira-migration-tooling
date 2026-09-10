@@ -319,8 +319,8 @@ class IncrementalArgsBuilderTest(TestCase):
         ), patch(
             "builtins.input",
             side_effect=[
-                "2", "y", "", "n", "n", "", "", "", "", "",
-                "2", "y", "", "", "", "",
+                "2", "y", "", "n", "n", "", "", "", "", "", "",
+                "2", "y", "", "", "", "", "",
             ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
@@ -345,7 +345,7 @@ class IncrementalArgsBuilderTest(TestCase):
     def test_archival_export_accepts_inline_task_gids(self) -> None:
         with patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "", "", ""],
+            side_effect=["4", "n", "task_1,task_2", "", "", "", "", ""],
         ):
             args = interactive_cli.args_export_archival_project("INFO")
         self.assertIn("--task-gids", args)
@@ -365,12 +365,33 @@ class IncrementalArgsBuilderTest(TestCase):
             side_effect=SystemExit,
         ), patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", ""],
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", ""],
         ):
             args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
         self.assertFalse(allow_merge)
         self.assertIn("--task-gids", args)
         self.assertIn("task_1,task_2", args)
+
+    def test_regular_export_accepts_custom_synthetic_epic_limit(self) -> None:
+        with patch(
+            "scripts.interactive_cli._open_sqlite",
+            side_effect=SystemExit,
+        ), patch(
+            "builtins.input",
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", "250"],
+        ):
+            args, _allow_merge = interactive_cli.args_export_project_to_jira("INFO")
+        self.assertIn("--synthetic-epic-limit", args)
+        self.assertIn("250", args)
+
+    def test_archival_export_accepts_custom_synthetic_epic_limit(self) -> None:
+        with patch(
+            "builtins.input",
+            side_effect=["4", "n", "task_1,task_2", "", "", "", "", "250"],
+        ):
+            args = interactive_cli.args_export_archival_project("INFO")
+        self.assertIn("--synthetic-epic-limit", args)
+        self.assertIn("250", args)
 
     def test_regular_and_archival_exports_use_task_gid_file_picker(self) -> None:
         with patch(
@@ -382,8 +403,8 @@ class IncrementalArgsBuilderTest(TestCase):
         ), patch(
             "builtins.input",
             side_effect=[
-                "4", "y", "", "n", "n", "n", "", "", "", "",
-                "4", "y", "", "", "", "",
+                "4", "y", "", "n", "n", "n", "", "", "", "", "",
+                "4", "y", "", "", "", "", "",
             ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")

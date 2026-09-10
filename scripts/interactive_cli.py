@@ -97,6 +97,7 @@ from src.lib.credential_check import check_credentials  # noqa: E402
 from src.lib.http_client import AsanaHttpClient  # noqa: E402
 from src.lib.logging_utils import configure_logging, resolve_log_level  # noqa: E402
 from src.lib.jira_csv_import_config import clear_archive_import_settings, latest_profile_import_config_path, load_archive_import_settings, save_archive_import_settings, stale_profile_import_config_paths  # noqa: E402
+from src.lib.jira_csv_partition import MAX_ISSUES_PER_SYNTHETIC_EPIC, parse_synthetic_epic_limit  # noqa: E402
 from src.lib.project_scope import parse_gid_list, read_project_gids_file  # noqa: E402
 
 
@@ -1718,14 +1719,20 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     else:
         print("[3] Project → <above-Epic> / Section → Epic  (not configured — see Jira Preparation → [8])")
     hierarchy_choice = input("Choice (default 2): ").strip() or "2"
+    uses_synthetic_epics = False
     if hierarchy_choice == "2":
         args.append("--add-epics")
+        uses_synthetic_epics = True
     elif hierarchy_choice == "3":
         if above_epic_name:
             args.extend(["--above-epic-issue-type", above_epic_name])
+            uses_synthetic_epics = True
         else:
             print("  Above-Epic issue type not configured. Falling back to Project → Epic.")
             args.append("--add-epics")
+            uses_synthetic_epics = True
+    if uses_synthetic_epics:
+        append_synthetic_epic_limit(args)
 
     return args, allow_merge
 
@@ -1804,6 +1811,20 @@ def prompt_export_id() -> Optional[str]:
             print(f"Cleared {cleared:,} recorded task mapping(s) for export ID '{export_id}'.")
             continue
         print("Invalid choice.")
+
+
+def append_synthetic_epic_limit(args: List[str]) -> None:
+    default = str(MAX_ISSUES_PER_SYNTHETIC_EPIC)
+    while True:
+        raw_limit = prompt("Synthetic Epic descendant issue limit", default=default)
+        try:
+            limit = parse_synthetic_epic_limit(raw_limit)
+        except argparse.ArgumentTypeError as exc:
+            print(exc)
+            continue
+        if limit != MAX_ISSUES_PER_SYNTHETIC_EPIC:
+            args.extend(["--synthetic-epic-limit", str(limit)])
+        return
 
 
 def args_export_archival_project(log_level: str) -> List[str]:
@@ -1887,6 +1908,7 @@ def args_export_archival_project(log_level: str) -> List[str]:
             args.extend(["--above-epic-issue-type", above_epic_name_arch])
         else:
             print("  Above-Epic issue type not configured. Using Project → Epic.")
+    append_synthetic_epic_limit(args)
 
     return args
 

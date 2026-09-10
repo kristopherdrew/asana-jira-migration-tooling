@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import math
 from dataclasses import dataclass
@@ -33,6 +34,18 @@ def _column_index(header: Sequence[str], names: Sequence[str]) -> int:
 def count_csv_issues(path: Path) -> int:
     with path.open("r", newline="", encoding="utf-8") as handle:
         return max(sum(1 for _ in csv.reader(handle)) - 1, 0)
+
+
+def parse_synthetic_epic_limit(value: str) -> int:
+    """Parse a synthetic Epic descendant cap for argparse callers."""
+    try:
+        limit = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("Synthetic Epic issue limit must be an integer.") from None
+    max_limit = MAX_JIRA_ISSUES_PER_CSV - 1
+    if limit < 1 or limit > max_limit:
+        raise argparse.ArgumentTypeError(f"Synthetic Epic issue limit must be between 1 and {max_limit}.")
+    return limit
 
 
 def _read_csv(path: Path) -> tuple[List[str], List[List[str]]]:
