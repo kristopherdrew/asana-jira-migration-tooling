@@ -119,6 +119,24 @@ When you provide `--export-id`, every exported task GID is persisted to the `exp
 
 When `--export-id` is present and you're writing to the default `exports/` directory, each run (even single-project exports) now uses a dedicated `exports/export-XX-<export-id>` folder so the task CSV, field counts, link modifications, and skipped-task reports stay grouped together.
 
+### Manage Export IDs
+Reviews and clears the persisted `exported_tasks` history that powers `--export-id` skipping. It does not add task GIDs manually; new IDs are created when an export runs with `--export-id`.
+```bash
+python3 -m scripts.manage_export_ids --list
+python3 -m scripts.manage_export_ids --show <export_id>
+python3 -m scripts.manage_export_ids --clear-export-id <export_id>
+python3 -m scripts.manage_export_ids --clear-all
+```
+Flags:
+- `--database <path>` to point at a different SQLite file.
+- `--list` to show export IDs with task/project counts and first/last use timestamps.
+- `--show <export_id>` to include a per-project task-count breakdown for one export ID.
+- `--clear-export-id <export_id>` to delete one ID's recorded task history.
+- `--clear-all` to delete every recorded export-ID/task mapping.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+The Interactive CLI exposes the same review and cleanup flow under **Migrate Projects -> Manage export IDs** for the active profile database.
+
 When launched from an interactive terminal and `--custom-fields` isn’t provided, the script pauses after listing detected fields (with per-field value counts) so you can export all fields or enter a comma-separated subset. It also prints a single comma-separated line you can copy, prune, and paste back into the prompt. The JQL link host comes from the credentials file (`JIRA_SANDBOX_BASE_URL` by default, `JIRA_BASE_URL` with `--prod`).
 
 Each user-authored comment appears in its own `Comment` column (the header repeats for every additional comment). Comment cells follow Jira’s expected format `dd/MMM/yy h:mm AM/PM;<atlassian_account_id>; <comment text>` and preserve multiline content via CSV quoting. Comment author IDs are resolved through the `user_atlassian_accounts` table using the task creator’s Asana GID; refresh it via `scripts.update_atlassian_user_map` whenever Atlassian account assignments change.

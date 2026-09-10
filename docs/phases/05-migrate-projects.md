@@ -35,6 +35,13 @@ Runs `scripts.atlassian.export_archival_project_jira_csv`. This simplified forma
 folds populated custom fields into the description while retaining native migration
 columns and Asana links.
 
+### Manage export IDs
+
+Runs `scripts.manage_export_ids` against the active profile database. Use it to
+review existing export IDs, inspect per-project task counts for an ID, or clear one
+or all recorded export-ID histories before a migration wave. New export IDs are
+still created by the task export flow when you provide `--export-id`.
+
 ### Associate Jira Task Keys with Asana Task Keys
 
 Runs `scripts.atlassian.search_jira_external_ids`. Use it when Jira contains the
