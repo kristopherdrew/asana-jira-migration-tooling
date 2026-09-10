@@ -100,6 +100,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     actual_time_minutes INTEGER,
     liked INTEGER,
     num_likes INTEGER,
+    recurrence TEXT,
+    recurrence_checked_at TEXT,
     is_subtask INTEGER,
     is_personal INTEGER DEFAULT 0,
     hierarchy_depth INTEGER,
@@ -792,6 +794,8 @@ class Database:
         connection.commit()
         self._ensure_column(connection, "tasks", "hierarchy_depth", "INTEGER")
         self._ensure_column(connection, "tasks", "is_personal", "INTEGER DEFAULT 0")
+        self._ensure_column(connection, "tasks", "recurrence", "TEXT")
+        self._ensure_column(connection, "tasks", "recurrence_checked_at", "TEXT")
         self._ensure_column(connection, "projects", "archived", "INTEGER")
         self._ensure_column(connection, "projects", "num_tasks", "INTEGER")
         self._ensure_column(connection, "projects", "num_incomplete_tasks", "INTEGER")
@@ -1655,6 +1659,8 @@ class Database:
             "actual_time_minutes": task.get("actual_time_minutes"),
             "liked": _bool_to_int(task.get("liked")),
             "num_likes": task.get("num_likes"),
+            "recurrence": _serialize_recurrence(task.get("recurrence")),
+            "recurrence_checked_at": synced_at.isoformat() if "recurrence" in task else None,
             "is_subtask": _bool_to_int(bool(parent.get("gid"))),
             "is_personal": _bool_to_int(task.get("is_personal", False)),
             "synced_at": synced_at.isoformat(),
@@ -1667,7 +1673,8 @@ class Database:
                 completed_by_gid, parent_gid, workspace_gid, workspace_name,
                 assignee_status_updated_at, created_at, modified_at, start_on,
                 start_at, due_on, due_at, completed, completed_at,
-                actual_time_minutes, liked, num_likes, is_subtask, is_personal, synced_at
+                actual_time_minutes, liked, num_likes, recurrence, recurrence_checked_at,
+                is_subtask, is_personal, synced_at
             )
             VALUES (
                 :gid, :name, :resource_type, :resource_subtype, :notes, :html_notes,
@@ -1675,7 +1682,8 @@ class Database:
                 :completed_by_gid, :parent_gid, :workspace_gid, :workspace_name,
                 :assignee_status_updated_at, :created_at, :modified_at, :start_on,
                 :start_at, :due_on, :due_at, :completed, :completed_at,
-                :actual_time_minutes, :liked, :num_likes, :is_subtask, :is_personal, :synced_at
+                :actual_time_minutes, :liked, :num_likes, :recurrence, :recurrence_checked_at,
+                :is_subtask, :is_personal, :synced_at
             )
             ON CONFLICT(gid) DO UPDATE SET
                 name=excluded.name,
@@ -1703,6 +1711,8 @@ class Database:
                 actual_time_minutes=excluded.actual_time_minutes,
                 liked=excluded.liked,
                 num_likes=excluded.num_likes,
+                recurrence=excluded.recurrence,
+                recurrence_checked_at=excluded.recurrence_checked_at,
                 is_subtask=excluded.is_subtask,
                 is_personal=excluded.is_personal,
                 synced_at=excluded.synced_at
@@ -1744,6 +1754,34 @@ class Database:
         )
         self._replace_task_followers(connection, task.get("gid"), task.get("followers") or [], synced_at)
         self.replace_task_tags(connection, task.get("gid"), task.get("tags") or [], synced_at)
+
+    def update_task_recurrence(
+        self,
+        connection: sqlite3.Connection,
+        task_gid: str,
+        task_name: str,
+        recurrence: Any,
+        checked_at: datetime,
+    ) -> None:
+        """Backfill the `recurrence`/`recurrence_checked_at` columns for a task.
+
+        Used by live-API gap-fill callers (e.g. the recurring tasks report) that only have a
+        task's recurrence value, not a full task payload, and so cannot call ``upsert_task``.
+        Upserts a minimal stub row (``gid``, ``name``, ``synced_at`` are the only NOT NULL
+        columns) when the task isn't in the local snapshot yet — a later full sync's
+        ``upsert_task`` call fills in every other column via its own ON CONFLICT update.
+        """
+        checked_at_iso = checked_at.isoformat()
+        connection.execute(
+            """
+            INSERT INTO tasks (gid, name, recurrence, recurrence_checked_at, synced_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(gid) DO UPDATE SET
+                recurrence=excluded.recurrence,
+                recurrence_checked_at=excluded.recurrence_checked_at
+            """,
+            (task_gid, task_name or "", _serialize_recurrence(recurrence), checked_at_iso, checked_at_iso),
+        )
 
     def _replace_task_projects(
         self,
@@ -3231,6 +3269,20 @@ def _bool_to_int(value: Any) -> Optional[int]:
     if value is None:
         return None
     return 1 if bool(value) else 0
+
+
+def _serialize_recurrence(recurrence: Any) -> Optional[str]:
+    """JSON-serialize a task's `recurrence` object, or None if `type` is missing/falsy.
+
+    Stored verbatim otherwise — including Asana's literal ``"never"`` sentinel for
+    explicitly non-recurring tasks (kept, rather than nulled out, so the stored value
+    itself doubles as proof the task was checked; consumers that only want actual
+    recurrences should filter on `type` themselves, e.g. via
+    `src.tasks.recurring_tasks.is_recurring`).
+    """
+    if not isinstance(recurrence, dict) or not recurrence.get("type"):
+        return None
+    return json.dumps(recurrence, sort_keys=True)
 
 
 def _extract_organization_gid(team: Dict[str, Any]) -> Optional[str]:

@@ -1,3 +1,4 @@
+import json
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -482,3 +483,154 @@ class DatabaseTasksTest(TestCase):
             ("personal_task",),
         ).fetchone()
         self.assertEqual(updated["is_personal"], 0)
+
+    def test_upsert_task_stores_recurrence_when_present(self) -> None:
+        sync_time = utc_now()
+        task = {
+            "gid": "recurring_task",
+            "name": "Weekly sync",
+            "resource_type": "task",
+            "resource_subtype": "default_task",
+            "recurrence": {"type": "weekly", "data": {"frequency": 1}},
+        }
+        self.database.upsert_task(self.connection, task, sync_time)
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT recurrence, recurrence_checked_at FROM tasks WHERE gid = ?",
+            ("recurring_task",),
+        ).fetchone()
+        self.assertEqual(json.loads(row["recurrence"]), {"type": "weekly", "data": {"frequency": 1}})
+        self.assertEqual(row["recurrence_checked_at"], sync_time.isoformat())
+
+    def test_upsert_task_null_type_recurrence_serializes_to_none(self) -> None:
+        sync_time = utc_now()
+        task = {
+            "gid": "non_recurring_task",
+            "name": "One-off",
+            "resource_type": "task",
+            "resource_subtype": "default_task",
+            "recurrence": {"type": None, "data": None},
+        }
+        self.database.upsert_task(self.connection, task, sync_time)
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT recurrence, recurrence_checked_at FROM tasks WHERE gid = ?",
+            ("non_recurring_task",),
+        ).fetchone()
+        self.assertIsNone(row["recurrence"])
+        # The `recurrence` key was present on the payload, so it was still "checked".
+        self.assertEqual(row["recurrence_checked_at"], sync_time.isoformat())
+
+    def test_upsert_task_never_type_recurrence_is_stored_verbatim(self) -> None:
+        # Asana's real non-recurring sentinel is the literal string "never", not null.
+        # It's stored as-is (not nulled out) so the value itself doubles as proof the
+        # task was checked; report-layer consumers filter it via is_recurring().
+        sync_time = utc_now()
+        task = {
+            "gid": "non_recurring_task_2",
+            "name": "One-off",
+            "resource_type": "task",
+            "resource_subtype": "default_task",
+            "recurrence": {"type": "never", "data": None},
+        }
+        self.database.upsert_task(self.connection, task, sync_time)
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT recurrence, recurrence_checked_at FROM tasks WHERE gid = ?",
+            ("non_recurring_task_2",),
+        ).fetchone()
+        self.assertEqual(json.loads(row["recurrence"]), {"type": "never", "data": None})
+        self.assertEqual(row["recurrence_checked_at"], sync_time.isoformat())
+
+    def test_upsert_task_without_recurrence_key_leaves_columns_null(self) -> None:
+        sync_time = utc_now()
+        task = {
+            "gid": "never_checked_task",
+            "name": "Legacy synced task",
+            "resource_type": "task",
+            "resource_subtype": "default_task",
+        }
+        self.database.upsert_task(self.connection, task, sync_time)
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT recurrence, recurrence_checked_at FROM tasks WHERE gid = ?",
+            ("never_checked_task",),
+        ).fetchone()
+        self.assertIsNone(row["recurrence"])
+        self.assertIsNone(row["recurrence_checked_at"])
+
+    def test_update_task_recurrence_creates_stub_row_when_task_missing(self) -> None:
+        checked_at = utc_now()
+        self.database.update_task_recurrence(
+            self.connection,
+            "brand_new_task",
+            "Newly discovered",
+            {"type": "daily", "data": {"frequency": 2}},
+            checked_at,
+        )
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT name, recurrence, recurrence_checked_at, synced_at FROM tasks WHERE gid = ?",
+            ("brand_new_task",),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["name"], "Newly discovered")
+        self.assertEqual(json.loads(row["recurrence"]), {"type": "daily", "data": {"frequency": 2}})
+        self.assertEqual(row["recurrence_checked_at"], checked_at.isoformat())
+        self.assertEqual(row["synced_at"], checked_at.isoformat())
+
+    def test_update_task_recurrence_updates_existing_row_without_touching_other_columns(self) -> None:
+        sync_time = utc_now()
+        task = {
+            "gid": "existing_task",
+            "name": "Existing",
+            "resource_type": "task",
+            "resource_subtype": "default_task",
+            "notes": "Original notes",
+        }
+        self.database.upsert_task(self.connection, task, sync_time)
+        self.connection.commit()
+
+        checked_at = datetime(2025, 11, 1, tzinfo=timezone.utc)
+        self.database.update_task_recurrence(
+            self.connection,
+            "existing_task",
+            "Existing",
+            {"type": "monthly", "data": {"frequency": 1}},
+            checked_at,
+        )
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT name, notes, recurrence, recurrence_checked_at, synced_at FROM tasks WHERE gid = ?",
+            ("existing_task",),
+        ).fetchone()
+        self.assertEqual(row["name"], "Existing")
+        self.assertEqual(row["notes"], "Original notes")
+        self.assertEqual(json.loads(row["recurrence"]), {"type": "monthly", "data": {"frequency": 1}})
+        self.assertEqual(row["recurrence_checked_at"], checked_at.isoformat())
+        # synced_at should remain from the original upsert, not the recurrence-only update.
+        self.assertEqual(row["synced_at"], sync_time.isoformat())
+
+    def test_update_task_recurrence_null_type_serializes_to_none(self) -> None:
+        checked_at = utc_now()
+        self.database.update_task_recurrence(
+            self.connection,
+            "non_recurring_stub",
+            "Stub",
+            {"type": None, "data": None},
+            checked_at,
+        )
+        self.connection.commit()
+
+        row = self.connection.execute(
+            "SELECT recurrence, recurrence_checked_at FROM tasks WHERE gid = ?",
+            ("non_recurring_stub",),
+        ).fetchone()
+        self.assertIsNone(row["recurrence"])
+        self.assertEqual(row["recurrence_checked_at"], checked_at.isoformat())
