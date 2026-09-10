@@ -1336,13 +1336,44 @@ class LifecycleMenuTest(TestCase):
     def test_migrate_projects_menu_uses_the_durable_attachment_workflow(self) -> None:
         menu = interactive_cli.build_migrate_projects_menu("INFO")
 
-        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "b"])
+        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "7", "b"])
         self.assertEqual(
             menu["3"].label,
             "Associate Jira Task Keys with Asana Task Keys",
         )
         self.assertNotIn("Sync Jira attachments immediately", [item.label for item in menu.values()])
         self.assertEqual(menu["4"].label, "Validate Jira task migration coverage")
+        self.assertEqual(menu["5"].label, "Manage export IDs")
+
+    @patch("scripts.interactive_cli.run_script")
+    @patch("scripts.interactive_cli.confirm", return_value=True)
+    @patch(
+        "scripts.interactive_cli.list_export_ids",
+        return_value=[
+            interactive_cli.ExportIdSummary(
+                export_id="wave_one",
+                task_count=2,
+                project_count=1,
+                first_used="2025-01-01T00:00:00+00:00",
+                last_used="2025-01-02T00:00:00+00:00",
+            )
+        ],
+    )
+    @patch("scripts.interactive_cli.prompt", side_effect=["1", "wave_one"])
+    def test_manage_export_ids_confirms_before_clearing_one_id(
+        self,
+        mock_prompt,
+        mock_list_export_ids,
+        mock_confirm,
+        mock_run_script,
+    ) -> None:
+        interactive_cli.run_clear_one_export_id("INFO")
+
+        mock_confirm.assert_called_once()
+        mock_run_script.assert_called_once()
+        args = mock_run_script.call_args.args[1]
+        self.assertIn("--clear-export-id", args)
+        self.assertIn("wave_one", args)
 
     def test_discover_menu_exposes_new_project_workflow(self) -> None:
         menu = interactive_cli.build_discover_refresh_menu("INFO")

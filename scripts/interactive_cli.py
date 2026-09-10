@@ -38,6 +38,7 @@ from scripts import (  # noqa: E402
     export_users,
     export_team_report,
     download_asana_attachments,
+    manage_export_ids,
     upload_jira_attachments,
 )
 from scripts import (  # noqa: E402
@@ -92,6 +93,12 @@ from src.lib.config import (  # noqa: E402
     write_profile_jira_sites,
 )
 from src.lib.database import ASANA_JIRA_DB_PATH_ENV, ASANA_JIRA_SITE_KEY_ENV  # noqa: E402
+from src.lib.database import Database  # noqa: E402
+from src.lib.export_id_history import (  # noqa: E402
+    ExportIdSummary,
+    clear_export_id,
+    list_export_ids,
+)
 from src.lib import keychain  # noqa: E402
 from src.lib.credential_check import check_credentials  # noqa: E402
 from src.lib.http_client import AsanaHttpClient  # noqa: E402
@@ -1737,27 +1744,15 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     return args, allow_merge
 
 
-def _export_id_summaries() -> List[Tuple[str, int, str]]:
+def _export_id_summaries() -> List[ExportIdSummary]:
     """Return persisted export IDs for the active client, newest activity first."""
     db_path = active_db_path()
     if not db_path.exists():
         return []
-    connection = sqlite3.connect(str(db_path))
     try:
-        rows = connection.execute(
-            """
-            SELECT export_id, COUNT(*) AS task_count, MAX(exported_at) AS last_used
-            FROM exported_tasks
-            WHERE export_id <> ''
-            GROUP BY export_id
-            ORDER BY last_used DESC, export_id
-            """
-        ).fetchall()
+        return list_export_ids(Database(db_path=str(db_path)))
     except sqlite3.OperationalError:
         return []
-    finally:
-        connection.close()
-    return [(row[0], row[1], row[2] or "") for row in rows]
 
 
 def prompt_export_id() -> Optional[str]:
@@ -1774,7 +1769,7 @@ def prompt_export_id() -> Optional[str]:
             return None
         if choice == "1":
             export_id = prompt_required("New export ID")
-            if any(existing_id == export_id for existing_id, _count, _last_used in summaries):
+            if any(summary.export_id == export_id for summary in summaries):
                 print(f"Export ID '{export_id}' already exists; choose Continue instead.")
                 continue
             return export_id
@@ -1783,13 +1778,16 @@ def prompt_export_id() -> Optional[str]:
                 print("No recorded export IDs exist for this profile.")
                 continue
             print("\nRecorded export IDs:")
-            for index, (export_id, task_count, last_used) in enumerate(summaries, start=1):
-                print(f"[{index}] {export_id} — {task_count:,} tasks, last used {last_used or 'unknown'}")
+            for index, summary in enumerate(summaries, start=1):
+                print(
+                    f"[{index}] {summary.export_id} - {summary.task_count:,} tasks, "
+                    f"last used {summary.last_used or 'unknown'}"
+                )
             selected = prompt("Select an export ID number", default="")
             if not selected.isdigit() or not 1 <= int(selected) <= len(summaries):
                 print("Select one of the listed export IDs.")
                 continue
-            export_id = summaries[int(selected) - 1][0]
+            export_id = summaries[int(selected) - 1].export_id
             if choice == "2":
                 return export_id
             if not confirm(
@@ -1800,17 +1798,103 @@ def prompt_export_id() -> Optional[str]:
             if prompt("Type the export ID to confirm", default="") != export_id:
                 print("Export ID did not match; nothing was removed.")
                 continue
-            connection = sqlite3.connect(str(active_db_path()))
-            try:
-                cleared = connection.execute(
-                    "DELETE FROM exported_tasks WHERE export_id = ?", (export_id,)
-                ).rowcount
-                connection.commit()
-            finally:
-                connection.close()
+            cleared = clear_export_id(Database(db_path=str(active_db_path())), export_id)
             print(f"Cleared {cleared:,} recorded task mapping(s) for export ID '{export_id}'.")
             continue
         print("Invalid choice.")
+
+
+def args_manage_export_ids(log_level: str, extra_args: List[str]) -> List[str]:
+    args = build_common_args(log_level)
+    args.extend(["--database", str(active_db_path())])
+    args.extend(extra_args)
+    return args
+
+
+def _select_export_id(summaries: List[ExportIdSummary]) -> Optional[str]:
+    if not summaries:
+        print("No recorded export IDs exist for this profile.")
+        return None
+    print("\nRecorded export IDs:")
+    for index, summary in enumerate(summaries, start=1):
+        print(
+            f"[{index}] {summary.export_id} - {summary.task_count:,} tasks, "
+            f"{summary.project_count:,} projects, last used {summary.last_used or 'unknown'}"
+        )
+    selected = prompt("Select an export ID number", default="")
+    if not selected.isdigit() or not 1 <= int(selected) <= len(summaries):
+        print("Select one of the listed export IDs.")
+        return None
+    return summaries[int(selected) - 1].export_id
+
+
+def run_show_export_id(log_level: str) -> None:
+    database = Database(db_path=str(active_db_path()))
+    export_id = _select_export_id(list_export_ids(database))
+    if not export_id:
+        return
+    run_script(
+        manage_export_ids.main,
+        args_manage_export_ids(log_level, ["--show", export_id]),
+    )
+
+
+def run_clear_one_export_id(log_level: str) -> None:
+    database = Database(db_path=str(active_db_path()))
+    export_id = _select_export_id(list_export_ids(database))
+    if not export_id:
+        return
+    if not confirm(
+        f"Remove export ID '{export_id}' and clear its recorded task history?",
+        default=False,
+    ):
+        return
+    if prompt("Type the export ID to confirm", default="") != export_id:
+        print("Export ID did not match; nothing was removed.")
+        return
+    run_script(
+        manage_export_ids.main,
+        args_manage_export_ids(log_level, ["--clear-export-id", export_id]),
+    )
+
+
+def run_clear_all_export_ids(log_level: str) -> None:
+    database = Database(db_path=str(active_db_path()))
+    summaries = list_export_ids(database)
+    if not summaries:
+        print("No recorded export IDs exist for this profile.")
+        return
+    total_tasks = sum(summary.task_count for summary in summaries)
+    if not confirm(
+        f"Clear all {len(summaries):,} export ID(s) and {total_tasks:,} recorded task mapping(s)?",
+        default=False,
+    ):
+        return
+    run_script(
+        manage_export_ids.main,
+        args_manage_export_ids(log_level, ["--clear-all"]),
+    )
+
+
+def run_manage_export_ids(log_level: str) -> None:
+    """Review or clear recorded export IDs for the active profile."""
+    run_group(
+        "Export ID Manager",
+        {
+            "1": MenuItem(
+                "1",
+                "List export IDs",
+                lambda: run_script(
+                    manage_export_ids.main,
+                    args_manage_export_ids(log_level, ["--list"]),
+                ),
+            ),
+            "2": MenuItem("2", "Show export ID details", lambda: run_show_export_id(log_level)),
+            "3": MenuItem("3", "Clear one export ID", lambda: run_clear_one_export_id(log_level)),
+            "4": MenuItem("4", "Clear all export-ID history", lambda: run_clear_all_export_ids(log_level)),
+            "b": MenuItem("b", "Back", lambda: None),
+        },
+    )
 
 
 def append_synthetic_epic_limit(args: List[str]) -> None:
@@ -3170,8 +3254,9 @@ def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
         "2": MenuItem("2", "Export project tasks for Jira CSV import", lambda: run_export_tasks_to_jira(log_level)),
         "3": MenuItem("3", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "4": MenuItem("4", "Validate Jira task migration coverage", build_reports_menu(log_level)["c"].handler),
-        "5": MenuItem("5", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
-        "6": MenuItem("6", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
+        "5": MenuItem("5", "Manage export IDs", lambda: run_manage_export_ids(log_level)),
+        "6": MenuItem("6", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
+        "7": MenuItem("7", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
