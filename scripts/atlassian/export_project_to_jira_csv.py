@@ -36,6 +36,7 @@ from src.lib.jira_csv_partition import (
     MAX_ISSUES_PER_SYNTHETIC_EPIC,
     pack_csv_parts,
     partition_project_csv,
+    parse_synthetic_epic_limit,
     write_partition_manifest,
 )
 from src.lib.jira_csv_import_config import copy_active_profile_import_config
@@ -1330,6 +1331,15 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
             "When set, create a synthetic row of this issue type (e.g. 'Deliverable') per project "
             "(depth -2) and automatically generate section-based epics (depth -1) beneath it. "
             "Mutually exclusive with --add-epics and --add-section-epics in terms of epic sourcing."
+        ),
+    )
+    parser.add_argument(
+        "--synthetic-epic-limit",
+        type=parse_synthetic_epic_limit,
+        default=MAX_ISSUES_PER_SYNTHETIC_EPIC,
+        help=(
+            "Maximum descendant issues to keep under one synthetic Epic before splitting it "
+            f"into numbered part Epics (default: {MAX_ISSUES_PER_SYNTHETIC_EPIC})."
         ),
     )
     parser.add_argument(
@@ -3942,7 +3952,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             if not args.stats_only and output_path.exists():
                 project_parts = partition_project_csv(
                     output_path,
-                    synthetic_epic_limit=MAX_ISSUES_PER_SYNTHETIC_EPIC,
+                    synthetic_epic_limit=args.synthetic_epic_limit,
                 )
                 task_parts.extend(project_parts)
                 if len(project_parts) > 1:

@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import argparse
 import csv
 import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from src.lib.jira_csv_partition import CsvPart, count_csv_issues, pack_csv_parts, partition_project_csv
+from src.lib.jira_csv_partition import (
+    CsvPart,
+    count_csv_issues,
+    pack_csv_parts,
+    parse_synthetic_epic_limit,
+    partition_project_csv,
+)
 
 
 HEADER = ["task_gid", "External issue ID", "jira_parent_gid", "jira_hierarchy_depth", "task_name"]
@@ -19,6 +26,11 @@ def write_rows(path: Path, rows) -> None:
 
 
 class JiraCsvPartitionTest(TestCase):
+    def test_parses_synthetic_epic_limit(self) -> None:
+        self.assertEqual(parse_synthetic_epic_limit("250"), 250)
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "between 1 and 7999"):
+            parse_synthetic_epic_limit("8000")
+
     def test_balances_top_level_tasks_across_parts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "tasks.csv"
