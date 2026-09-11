@@ -333,6 +333,84 @@ class IncrementalArgsBuilderTest(TestCase):
                 [("proj_1", "NEW", "New Project"), ("proj_2", "NEW", "New Project")],
             )
 
+    def test_project_map_overwrite_accepts_pasted_project_gids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            db_path = root / "asana.sqlite"
+            database = interactive_cli.Database(db_path=str(db_path))
+            with database.connect() as connection:
+                database.initialize(connection)
+                connection.execute(
+                    "INSERT INTO teams (gid, name, synced_at) "
+                    "VALUES ('team_1', 'Team One', 'now')"
+                )
+                connection.execute(
+                    "INSERT INTO projects (gid, name, team_gid, synced_at) VALUES "
+                    "('proj_1', 'First Project', 'team_1', 'now'), "
+                    "('proj_2', 'Second Project', 'team_1', 'now')"
+                )
+                database.upsert_jira_project_mappings(
+                    connection,
+                    [
+                        {
+                            "project_gid": "proj_1",
+                            "project_name": "Old Project",
+                            "project_key": "OLD",
+                        },
+                        {
+                            "project_gid": "proj_2",
+                            "project_name": "Old Project",
+                            "project_key": "OLD",
+                        },
+                    ],
+                    interactive_cli.datetime.now(interactive_cli.timezone.utc),
+                    jira_site_key="sandbox",
+                )
+            interactive_cli._session.jira_sites = (
+                JiraSite("sandbox", "Sandbox Jira", "https://example.atlassian.net"),
+            )
+            interactive_cli._session.jira_site_key = "sandbox"
+            output = io.StringIO()
+            with patch("scripts.interactive_cli.active_db_path", return_value=db_path), \
+                    patch(
+                        "scripts.interactive_cli.load_credentials",
+                        return_value=Credentials(
+                            token="",
+                            workspace_gid="",
+                            skip_ssl_verification=False,
+                            atlassian_username="u",
+                            atlassian_token="t",
+                        ),
+                    ), \
+                    patch(
+                        "scripts.interactive_cli.export_project_to_jira_csv.lookup_jira_project_name",
+                        return_value="New Project",
+                    ), \
+                    patch("builtins.input", side_effect=["3", "1", "proj_1,proj_2,proj_1", "new", "y"]), \
+                    redirect_stdout(output):
+                interactive_cli.run_import_jira_project_map("INFO")
+
+            rendered = output.getvalue()
+            self.assertIn("Project GID scope for association overwrite", rendered)
+            self.assertIn("First Project", rendered)
+            self.assertIn("Second Project", rendered)
+            with database.connect() as connection:
+                rows = connection.execute(
+                    "SELECT project_gid, jira_project_key, jira_project_name "
+                    "FROM jira_project_mappings ORDER BY project_gid"
+                ).fetchall()
+            self.assertEqual(
+                [
+                    (
+                        row["project_gid"],
+                        row["jira_project_key"],
+                        row["jira_project_name"],
+                    )
+                    for row in rows
+                ],
+                [("proj_1", "NEW", "New Project"), ("proj_2", "NEW", "New Project")],
+            )
+
     def test_attachment_sync_accepts_project_gids_file(self) -> None:
         with patch(
             "scripts.interactive_cli._prompt_project_gids_file",

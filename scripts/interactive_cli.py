@@ -2428,7 +2428,7 @@ def _load_project_names_for_gids(
 
 def _print_jira_project_mapping_review(
     gids: Sequence[str],
-    csv_rows: Sequence[Dict[str, str]],
+    csv_rows: Sequence[Dict[str, str]] | None,
     project_names: Dict[str, Dict[str, str]],
     current_mappings: Dict[str, Dict[str, str]],
     new_project_key: str,
@@ -2436,7 +2436,7 @@ def _print_jira_project_mapping_review(
 ) -> None:
     csv_name_by_gid = {
         (row.get("project_gid") or "").strip(): (row.get("project_name") or "").strip()
-        for row in csv_rows
+        for row in (csv_rows or [])
         if (row.get("project_gid") or "").strip()
     }
     print("\nJira project association overwrite review:")
@@ -2458,18 +2458,36 @@ def _print_jira_project_mapping_review(
         print(f"    New Jira project: {new_project_key} ({new_project_name})")
 
 
-def run_import_jira_project_map(log_level: str) -> None:
-    print("\nJira project associations")
-    print("[1] Import/update associations from CSV")
-    print("[2] Review CSV project GIDs and overwrite with one Jira project key")
-    choice = prompt("Choose an import mode", default="1")
+def _prompt_project_gids_for_mapping_overwrite() -> List[str]:
+    print("\nProject GID scope for association overwrite:")
+    print("[1] Paste project GIDs")
+    print("[2] Project GIDs file")
+    choice = prompt("Project GID source", default="1")
     if choice == "1":
-        run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))
-        return
-    if choice != "2":
+        gids = parse_gid_list(prompt_required("Project GIDs (comma-separated)"))
+    elif choice == "2":
+        gids = parse_gid_list(
+            read_project_gids_file(
+                _prompt_project_gids_file("Jira project association overwrite")
+            )
+        )
+    else:
         print("Invalid selection.")
-        return
+        return []
+    seen: Set[str] = set()
+    unique_gids: List[str] = []
+    for gid in gids:
+        if gid not in seen:
+            unique_gids.append(gid)
+            seen.add(gid)
+    return unique_gids
 
+
+def _overwrite_jira_project_associations(
+    gids: Sequence[str],
+    new_project_key: str,
+    source_rows: Sequence[Dict[str, str]] | None = None,
+) -> int:
     jira_site_key = _jira_site_key_for_mapping()
     if not jira_site_key:
         raise SystemExit(
@@ -2479,24 +2497,20 @@ def run_import_jira_project_map(log_level: str) -> None:
         raise SystemExit(
             "No active Jira site URL is available for validating the new project key."
         )
-
-    csv_path = Path(_prompt_csv_file("Jira project association overwrite", "Project association CSV"))
-    rows = import_jira_project_map.read_rows(csv_path)
-    gids = _unique_project_gids_from_rows(rows)
     if not gids:
-        raise SystemExit(f"No project_gid values found in {csv_path}.")
+        raise SystemExit("No project GIDs were provided for Jira project association overwrite.")
 
-    new_project_key = prompt_required("New Jira project key").strip().upper()
+    normalized_key = new_project_key.strip().upper()
     credentials = load_credentials()
     try:
         new_project_name = export_project_to_jira_csv.lookup_jira_project_name(
-            new_project_key,
+            normalized_key,
             _session.environment_url,
             credentials,
         )
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(
-            f"Could not validate Jira project key {new_project_key!r}: {exc}"
+            f"Could not validate Jira project key {normalized_key!r}: {exc}"
         ) from exc
 
     database = Database(db_path=str(active_db_path()))
@@ -2506,10 +2520,10 @@ def run_import_jira_project_map(log_level: str) -> None:
         project_names = _load_project_names_for_gids(connection, gids)
         _print_jira_project_mapping_review(
             gids,
-            rows,
+            source_rows,
             project_names,
             current_mappings,
-            new_project_key,
+            normalized_key,
             new_project_name,
         )
         if not confirm(
@@ -2517,12 +2531,12 @@ def run_import_jira_project_map(log_level: str) -> None:
             default=False,
         ):
             print("No Jira project associations were changed.")
-            return
+            return 0
         mappings = [
             {
                 "project_gid": gid,
                 "project_name": new_project_name,
-                "project_key": new_project_key,
+                "project_key": normalized_key,
             }
             for gid in gids
         ]
@@ -2532,7 +2546,36 @@ def run_import_jira_project_map(log_level: str) -> None:
             datetime.now(timezone.utc),
             jira_site_key=jira_site_key,
         )
-    print(f"Updated {count} Jira project association(s) to {new_project_key} ({new_project_name}).")
+    print(f"Updated {count} Jira project association(s) to {normalized_key} ({new_project_name}).")
+    return count
+
+
+def run_import_jira_project_map(log_level: str) -> None:
+    print("\nJira project associations")
+    print("[1] Import/update associations from CSV")
+    print("[2] Review CSV project GIDs and overwrite with one Jira project key")
+    print("[3] Review pasted/file project GIDs and overwrite with one Jira project key")
+    choice = prompt("Choose an import mode", default="1")
+    if choice == "1":
+        run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))
+        return
+    if choice not in {"2", "3"}:
+        print("Invalid selection.")
+        return
+
+    rows: Sequence[Dict[str, str]] | None = None
+    if choice == "2":
+        csv_path = Path(_prompt_csv_file("Jira project association overwrite", "Project association CSV"))
+        rows = import_jira_project_map.read_rows(csv_path)
+        gids = _unique_project_gids_from_rows(rows)
+        if not gids:
+            raise SystemExit(f"No project_gid values found in {csv_path}.")
+    else:
+        gids = _prompt_project_gids_for_mapping_overwrite()
+        if not gids:
+            return
+    new_project_key = prompt_required("New Jira project key").strip().upper()
+    _overwrite_jira_project_associations(gids, new_project_key, rows)
 
 
 def run_merge_project_exports(log_level: str) -> None:

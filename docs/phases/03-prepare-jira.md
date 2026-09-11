@@ -30,9 +30,10 @@ CLI asks for a raw Atlassian user export and matches its users to Asana users by
 ### Import/update Jira project associations
 
 Runs `scripts.atlassian.import_jira_project_map` for a straight CSV import, or the
-guided overwrite flow for a reviewed CSV scope. Use it to load existing Jira project
-keys, or to overwrite selected Asana project GIDs with one validated Jira project key
-after a Jira project was recreated or a migration scope changed.
+guided overwrite flow for either a reviewed CSV scope or a pasted/file Project GID
+scope. Use it to load existing Jira project keys, or to overwrite selected Asana
+project GIDs with one validated Jira project key after a Jira project was recreated
+or a migration scope changed.
 
 ### Preview or create Team/Project Jira hierarchy (API)
 
