@@ -31,6 +31,7 @@ from src.lib.config import (
 from src.lib.database import Database, DEFAULT_DB_PATH, resolve_default_db_path
 from src.lib.jira_csv_import_config import load_archive_import_settings
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.project_scope import parse_gid_list, read_project_gids_file
 
 
 logger = logging.getLogger(__name__)
@@ -351,12 +352,63 @@ def select_external_id_field(
     return field_id
 
 
-def load_mapped_jira_project_keys(database_path: str, jira_site_key: str) -> List[str]:
+def load_mapped_jira_project_keys(
+    database_path: str,
+    jira_site_key: str,
+    project_gids: Optional[Sequence[str]] = None,
+) -> List[str]:
     database = Database(db_path=database_path)
     with database.connect() as connection:
         database.initialize(connection)
         mappings = database.load_jira_project_mappings(connection, jira_site_key=jira_site_key)
-    return sorted({row["jira_project_key"].strip() for row in mappings.values() if row["jira_project_key"].strip()})
+    if project_gids:
+        missing = [gid for gid in project_gids if gid not in mappings]
+        project_keys = {
+            (mappings.get(gid) or {}).get("jira_project_key", "").strip()
+            for gid in project_gids
+            if (mappings.get(gid) or {}).get("jira_project_key", "").strip()
+        }
+        blank = [
+            gid
+            for gid in project_gids
+            if gid in mappings and not (mappings[gid].get("jira_project_key") or "").strip()
+        ]
+        if missing:
+            logger.warning(
+                "No Jira project/space association found for %s requested Asana project GID(s): %s",
+                len(missing),
+                ", ".join(missing),
+            )
+        if blank:
+            logger.warning(
+                "Requested Asana project GID(s) have blank Jira project/space keys: %s",
+                ", ".join(blank),
+            )
+    else:
+        project_keys = {
+            row["jira_project_key"].strip()
+            for row in mappings.values()
+            if row["jira_project_key"].strip()
+        }
+    return sorted(project_keys)
+
+
+def resolve_project_gid_scope(
+    project_gids: Optional[str],
+    project_gids_file: Optional[str],
+) -> List[str]:
+    if project_gids and project_gids_file:
+        raise ValueError("Use only one of --project-gids or --project-gids-file.")
+    if project_gids_file:
+        project_gids = read_project_gids_file(project_gids_file)
+    gids = parse_gid_list(project_gids)
+    seen: set[str] = set()
+    unique: List[str] = []
+    for gid in gids:
+        if gid not in seen:
+            unique.append(gid)
+            seen.add(gid)
+    return unique
 
 
 def build_mapped_projects_jql(project_keys: Sequence[str], external_field_id: str) -> str:
@@ -430,6 +482,20 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Path to SQLite DB for writing mappings (default: data/asana.sqlite).",
     )
     parser.add_argument(
+        "--project-gids",
+        help=(
+            "Comma-separated Asana project GIDs whose stored Jira project/space "
+            "associations should define the Jira search scope."
+        ),
+    )
+    parser.add_argument(
+        "--project-gids-file",
+        help=(
+            "Path to a file containing Asana project GIDs (newline/comma separated, "
+            "or a CSV with a project_gid column) whose associations define the Jira search scope."
+        ),
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Fetch and display mappings without writing them to the database.",
@@ -475,9 +541,24 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         external_field_id = select_external_id_field(
             client.list_fields(), args.external_id_field, selected_site
         )
-        project_keys = load_mapped_jira_project_keys(args.database, selected_site)
+        project_gid_scope = resolve_project_gid_scope(
+            args.project_gids,
+            args.project_gids_file,
+        )
+        project_keys = load_mapped_jira_project_keys(
+            args.database,
+            selected_site,
+            project_gid_scope,
+        )
         jql = build_mapped_projects_jql(project_keys, external_field_id)
-        logger.info("Searching mapped Jira projects/spaces: %s", ", ".join(project_keys))
+        if project_gid_scope:
+            logger.info(
+                "Searching Jira projects/spaces mapped from %s requested Asana project GID(s): %s",
+                len(project_gid_scope),
+                ", ".join(project_keys),
+            )
+        else:
+            logger.info("Searching mapped Jira projects/spaces: %s", ", ".join(project_keys))
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 

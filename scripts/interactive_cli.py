@@ -2371,6 +2371,23 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 def args_search_jira_external_ids(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     append_jira_env_flag(args)
+    print("\nSelect Jira task-key association scope:")
+    print("[1] All stored Jira project associations")
+    print("[2] Project GIDs (comma-separated)")
+    print("[3] Project GIDs file")
+    choice = prompt("Scope", default="1")
+    if choice == "2":
+        project_gids = prompt_required("Project GIDs (comma-separated)")
+        args.extend(["--project-gids", project_gids])
+    elif choice == "3":
+        args.extend(
+            [
+                "--project-gids-file",
+                _prompt_project_gids_file("Jira task-key association"),
+            ]
+        )
+    elif choice != "1":
+        raise SystemExit("Invalid Jira task-key association scope.")
     if confirm("Dry run (fetch and print mappings, write nothing)?", default=True):
         args.append("--dry-run")
     return args

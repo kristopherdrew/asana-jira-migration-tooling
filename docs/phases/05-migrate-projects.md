@@ -46,7 +46,9 @@ still created by the task export flow when you provide `--export-id`.
 
 Runs `scripts.atlassian.search_jira_external_ids`. Use it when Jira contains the
 external Asana identifiers but the local task-key mappings are missing or incomplete.
-Its Jira scope is derived from the stored Asana Project → Jira Space associations.
+Its Jira scope is derived from the stored Asana Project → Jira Space associations;
+for repeated uploads, choose a Project GID scope to search only the Jira spaces
+associated with that batch.
 
 ### Import/update Jira project associations
 
