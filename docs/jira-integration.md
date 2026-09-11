@@ -360,9 +360,12 @@ Run `--verify-manifest` after every copy and immediately before a delayed Jira u
 
 ### Upload a Local Attachment Archive to Jira
 
-Verifies every archived file, resolves each Asana Task GID through the database's current
-`task_jira_mappings`, and uploads the file to every mapped Jira work item. Jira keys do not
-need to exist when the archive is created.
+Verifies every ready archived file, resolves each Asana Task GID through the database's
+current `task_jira_mappings`, and uploads the file to every mapped Jira work item. Jira
+keys do not need to exist when the archive is created. Partial archive entries from
+attachments that could not be downloaded are warned about and skipped; corrupt or missing
+ready files still cancel the upload so they can be investigated before Jira receives bad
+payloads.
 
 ```bash
 python3 -m scripts.upload_jira_attachments \

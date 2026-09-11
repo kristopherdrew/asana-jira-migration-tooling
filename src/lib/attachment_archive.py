@@ -401,14 +401,18 @@ def load_manifest(manifest_path: Path) -> Dict:
     return payload
 
 
-def verify_archive(manifest_path: Path) -> List[Dict[str, str]]:
-    """Return verification rows; an empty list means the archive is intact."""
+def verify_archive(manifest_path: Path, include_not_ready: bool = True) -> List[Dict[str, str]]:
+    """Return verification rows; an empty list means selected archive files are intact."""
     payload = load_manifest(manifest_path)
     archive_dir = manifest_path.parent
     errors: List[Dict[str, str]] = []
     for item in payload.get("files", []):
         if item.get("status") != "ready":
-            errors.append({"attachment_gid": item.get("attachment_gid", ""), "error": item.get("error") or "not ready"})
+            if include_not_ready:
+                errors.append({
+                    "attachment_gid": item.get("attachment_gid", ""),
+                    "error": item.get("error") or "not ready",
+                })
             continue
         path = archive_dir / item["relative_path"]
         if not path.is_file():

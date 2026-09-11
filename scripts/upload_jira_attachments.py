@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, Optional
 
-from src.lib.attachment_archive import upload_archive, verify_archive
+from src.lib.attachment_archive import load_manifest, upload_archive, verify_archive
 from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.database import resolve_default_db_path
 from src.lib.jira_client import JiraClient
@@ -45,9 +45,19 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
     configure_logging(resolve_log_level(args.log_level))
     manifest = Path(args.manifest)
-    errors = verify_archive(manifest)
+    errors = verify_archive(manifest, include_not_ready=False)
     if errors:
-        raise SystemExit(f"Archive verification failed for {len(errors)} attachment(s); upload cancelled.")
+        raise SystemExit(
+            f"Archive verification failed for {len(errors)} ready attachment(s); upload cancelled."
+        )
+    payload = load_manifest(manifest)
+    ready_count = sum(1 for item in payload.get("files", []) if item.get("status") == "ready")
+    skipped_count = len(payload.get("files", [])) - ready_count
+    if skipped_count:
+        logging.warning(
+            "Archive is partial: %d attachment(s) are not ready and will be skipped.",
+            skipped_count,
+        )
     credentials = load_credentials()
     if not credentials.atlassian_username or not credentials.atlassian_token:
         raise SystemExit("ATLASSIAN_USERNAME and ATLASSIAN_TOKEN are required.")
