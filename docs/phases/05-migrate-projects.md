@@ -48,6 +48,17 @@ Runs `scripts.atlassian.search_jira_external_ids`. Use it when Jira contains the
 external Asana identifiers but the local task-key mappings are missing or incomplete.
 Its Jira scope is derived from the stored Asana Project → Jira Space associations.
 
+### Import/update Jira project associations
+
+Runs `scripts.atlassian.import_jira_project_map` for a straight CSV import, or a
+guided overwrite flow from the same CSV scope. Use it to load a corrected project
+association CSV after a migration scope changes. Rows are upserted by Asana project
+GID for the active Jira site, so re-importing a project with a new `project_key` (or
+using the guided overwrite to apply one new Jira project key to all CSV-listed GIDs)
+updates the saved association used by task exports and Jira key recovery. This does
+not clear already recovered task→Jira issue mappings; clear those separately if they
+point at deleted Jira issues.
+
 ### Validate Jira task migration coverage
 
 Runs `scripts.export_jira_migration_validation` to compare the selected Asana task

@@ -27,10 +27,12 @@ Runs `scripts.atlassian.update_atlassian_user_map`. It maps Asana users to Atlas
 account IDs so Jira assignee and owner fields can be populated correctly. The guided
 CLI asks for a raw Atlassian user export and matches its users to Asana users by email.
 
-### Import Jira project associations
+### Import/update Jira project associations
 
-Runs `scripts.atlassian.import_jira_project_map`. Use it to load existing Jira keys
-and map them back to Asana teams and projects in SQLite.
+Runs `scripts.atlassian.import_jira_project_map` for a straight CSV import, or the
+guided overwrite flow for a reviewed CSV scope. Use it to load existing Jira project
+keys, or to overwrite selected Asana project GIDs with one validated Jira project key
+after a Jira project was recreated or a migration scope changed.
 
 ### Preview or create Team/Project Jira hierarchy (API)
 

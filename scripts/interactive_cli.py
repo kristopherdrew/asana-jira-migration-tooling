@@ -2384,6 +2384,157 @@ def args_import_jira_project_map(log_level: str) -> List[str]:
     return args
 
 
+def _jira_site_key_for_mapping() -> Optional[str]:
+    if _session is not None and _session.jira_site_key:
+        return _session.jira_site_key
+    return os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+
+
+def _unique_project_gids_from_rows(rows: Sequence[Dict[str, str]]) -> List[str]:
+    gids: List[str] = []
+    seen: Set[str] = set()
+    for row in rows:
+        gid = (row.get("project_gid") or "").strip()
+        if gid and gid not in seen:
+            gids.append(gid)
+            seen.add(gid)
+    return gids
+
+
+def _load_project_names_for_gids(
+    connection: sqlite3.Connection,
+    gids: Sequence[str],
+) -> Dict[str, Dict[str, str]]:
+    if not gids:
+        return {}
+    placeholders = ",".join("?" for _ in gids)
+    rows = connection.execute(
+        f"""
+        SELECT p.gid, p.name, COALESCE(t.name, '') AS team_name
+        FROM projects p
+        LEFT JOIN teams t ON t.gid = p.team_gid
+        WHERE p.gid IN ({placeholders})
+        """,
+        tuple(gids),
+    ).fetchall()
+    return {
+        row["gid"]: {
+            "name": row["name"] or "",
+            "team_name": row["team_name"] or "",
+        }
+        for row in rows
+    }
+
+
+def _print_jira_project_mapping_review(
+    gids: Sequence[str],
+    csv_rows: Sequence[Dict[str, str]],
+    project_names: Dict[str, Dict[str, str]],
+    current_mappings: Dict[str, Dict[str, str]],
+    new_project_key: str,
+    new_project_name: str,
+) -> None:
+    csv_name_by_gid = {
+        (row.get("project_gid") or "").strip(): (row.get("project_name") or "").strip()
+        for row in csv_rows
+        if (row.get("project_gid") or "").strip()
+    }
+    print("\nJira project association overwrite review:")
+    for index, gid in enumerate(gids, start=1):
+        project = project_names.get(gid) or {}
+        asana_name = (
+            project.get("name")
+            or csv_name_by_gid.get(gid)
+            or "<not in local project snapshot>"
+        )
+        team_name = project.get("team_name") or "No team"
+        current = current_mappings.get(gid) or {}
+        current_key = current.get("jira_project_key") or "<unmapped>"
+        current_name = current.get("jira_project_name") or ""
+        current_label = current_key if not current_name else f"{current_key} ({current_name})"
+        print(f"[{index}] {asana_name} [{team_name}]")
+        print(f"    Asana GID: {gid}")
+        print(f"    Current Jira project: {current_label}")
+        print(f"    New Jira project: {new_project_key} ({new_project_name})")
+
+
+def run_import_jira_project_map(log_level: str) -> None:
+    print("\nJira project associations")
+    print("[1] Import/update associations from CSV")
+    print("[2] Review CSV project GIDs and overwrite with one Jira project key")
+    choice = prompt("Choose an import mode", default="1")
+    if choice == "1":
+        run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))
+        return
+    if choice != "2":
+        print("Invalid selection.")
+        return
+
+    jira_site_key = _jira_site_key_for_mapping()
+    if not jira_site_key:
+        raise SystemExit(
+            "No active Jira site is selected; choose a Jira site before overwriting associations."
+        )
+    if _session is None or not _session.environment_url:
+        raise SystemExit(
+            "No active Jira site URL is available for validating the new project key."
+        )
+
+    csv_path = Path(_prompt_csv_file("Jira project association overwrite", "Project association CSV"))
+    rows = import_jira_project_map.read_rows(csv_path)
+    gids = _unique_project_gids_from_rows(rows)
+    if not gids:
+        raise SystemExit(f"No project_gid values found in {csv_path}.")
+
+    new_project_key = prompt_required("New Jira project key").strip().upper()
+    credentials = load_credentials()
+    try:
+        new_project_name = export_project_to_jira_csv.lookup_jira_project_name(
+            new_project_key,
+            _session.environment_url,
+            credentials,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(
+            f"Could not validate Jira project key {new_project_key!r}: {exc}"
+        ) from exc
+
+    database = Database(db_path=str(active_db_path()))
+    with database.connect() as connection:
+        database.initialize(connection)
+        current_mappings = database.load_jira_project_mappings(connection, jira_site_key=jira_site_key)
+        project_names = _load_project_names_for_gids(connection, gids)
+        _print_jira_project_mapping_review(
+            gids,
+            rows,
+            project_names,
+            current_mappings,
+            new_project_key,
+            new_project_name,
+        )
+        if not confirm(
+            f"Overwrite Jira project associations for {len(gids)} project(s) on site {jira_site_key}?",
+            default=False,
+        ):
+            print("No Jira project associations were changed.")
+            return
+        mappings = [
+            {
+                "project_gid": gid,
+                "project_name": new_project_name,
+                "project_key": new_project_key,
+            }
+            for gid in gids
+        ]
+        count = database.upsert_jira_project_mappings(
+            connection,
+            mappings,
+            datetime.now(timezone.utc),
+            jira_site_key=jira_site_key,
+        )
+    print(f"Updated {count} Jira project association(s) to {new_project_key} ({new_project_name}).")
+
+
 def run_merge_project_exports(log_level: str) -> None:
     default_glob = str(PROJECT_ROOT / "exports" / "*.csv")
     inputs = prompt("Glob for CSVs to merge", default=default_glob)
@@ -2720,10 +2871,7 @@ def run_guided_project_migration(log_level: str) -> None:
                 args_update_user_map(log_level),
             )
         if confirm("Import or update Jira project associations?", default=False):
-            run_script(
-                import_jira_project_map.main,
-                args_import_jira_project_map(log_level),
-            )
+            run_import_jira_project_map(log_level)
         run_export_tasks_to_jira(log_level)
         print("\nImport the generated CSV through Jira's external-import wizard.")
         if confirm("Is the Jira import complete and ready for Jira-key recovery?", default=False):
@@ -3121,7 +3269,7 @@ def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
             "Update Atlassian user map from Atlassian export",
             lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level)),
         ),
-        "6": MenuItem("6", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
+        "6": MenuItem("6", "Import/update Jira project associations", lambda: run_import_jira_project_map(log_level)),
         "7": MenuItem("7", "Clear export IDs", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level))),
         "8": MenuItem("8", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, build_common_args(log_level) + ["--clear-jira-project-map"])),
         "9": MenuItem("9", "Deprecated: Sync Jira attachments immediately", lambda: run_sync_attachments(log_level)),
@@ -3237,7 +3385,7 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
         "1": MenuItem("1", "Create Jira fields for task-import mappings", lambda: run_script(create_jira_import_fields.main, args_create_jira_import_fields(log_level, "import"))),
         "2": MenuItem("2", "Create Jira fields for Team/Project tracking", lambda: run_script(create_jira_import_fields.main, args_create_jira_import_fields(log_level, "tracking"))),
         "3": MenuItem("3", "Update Atlassian user mappings", lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level))),
-        "4": MenuItem("4", "Import Jira project associations", lambda: run_script(import_jira_project_map.main, args_import_jira_project_map(log_level))),
+        "4": MenuItem("4", "Import/update Jira project associations", lambda: run_import_jira_project_map(log_level)),
         "5": MenuItem("5", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
         "6": MenuItem("6", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
         "7": MenuItem("7", "Generate Jira CSV importer configuration", lambda: run_script(generate_jira_csv_import_config.main, args_generate_jira_csv_import_config(log_level))),
@@ -3253,10 +3401,11 @@ def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
         "1": MenuItem("1", "Guided project migration", lambda: run_guided_project_migration(log_level)),
         "2": MenuItem("2", "Export project tasks for Jira CSV import", lambda: run_export_tasks_to_jira(log_level)),
         "3": MenuItem("3", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
-        "4": MenuItem("4", "Validate Jira task migration coverage", build_reports_menu(log_level)["c"].handler),
-        "5": MenuItem("5", "Manage export IDs", lambda: run_manage_export_ids(log_level)),
-        "6": MenuItem("6", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
-        "7": MenuItem("7", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
+        "4": MenuItem("4", "Import/update Jira project associations", lambda: run_import_jira_project_map(log_level)),
+        "5": MenuItem("5", "Validate Jira task migration coverage", build_reports_menu(log_level)["c"].handler),
+        "6": MenuItem("6", "Manage export IDs", lambda: run_manage_export_ids(log_level)),
+        "7": MenuItem("7", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
+        "8": MenuItem("8", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

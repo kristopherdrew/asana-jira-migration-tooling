@@ -245,6 +245,94 @@ class IncrementalArgsBuilderTest(TestCase):
             ["--log-level", "INFO", "--csv", str(csv_path.resolve())],
         )
 
+    def test_project_map_overwrite_reviews_and_updates_csv_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            inputs_dir = root / "inputs"
+            inputs_dir.mkdir()
+            csv_path = inputs_dir / "mapping.csv"
+            csv_path.write_text(
+                "project_gid,project_name,project_key\n"
+                "proj_1,First,OLD\n"
+                "proj_2,Second,OLD\n",
+                encoding="utf-8",
+            )
+            db_path = root / "asana.sqlite"
+            database = interactive_cli.Database(db_path=str(db_path))
+            with database.connect() as connection:
+                database.initialize(connection)
+                connection.execute(
+                    "INSERT INTO teams (gid, name, synced_at) "
+                    "VALUES ('team_1', 'Team One', 'now')"
+                )
+                connection.execute(
+                    "INSERT INTO projects (gid, name, team_gid, synced_at) VALUES "
+                    "('proj_1', 'First Project', 'team_1', 'now'), "
+                    "('proj_2', 'Second Project', 'team_1', 'now')"
+                )
+                database.upsert_jira_project_mappings(
+                    connection,
+                    [
+                        {
+                            "project_gid": "proj_1",
+                            "project_name": "Old Project",
+                            "project_key": "OLD",
+                        },
+                        {
+                            "project_gid": "proj_2",
+                            "project_name": "Old Project",
+                            "project_key": "OLD",
+                        },
+                    ],
+                    interactive_cli.datetime.now(interactive_cli.timezone.utc),
+                    jira_site_key="sandbox",
+                )
+            interactive_cli._session.jira_sites = (
+                JiraSite("sandbox", "Sandbox Jira", "https://example.atlassian.net"),
+            )
+            interactive_cli._session.jira_site_key = "sandbox"
+            output = io.StringIO()
+            with patch("scripts.interactive_cli.PROJECT_ROOT", root), \
+                    patch("scripts.interactive_cli.active_db_path", return_value=db_path), \
+                    patch(
+                        "scripts.interactive_cli.load_credentials",
+                        return_value=Credentials(
+                            token="",
+                            workspace_gid="",
+                            skip_ssl_verification=False,
+                            atlassian_username="u",
+                            atlassian_token="t",
+                        ),
+                    ), \
+                    patch(
+                        "scripts.interactive_cli.export_project_to_jira_csv.lookup_jira_project_name",
+                        return_value="New Project",
+                    ), \
+                    patch("builtins.input", side_effect=["2", "1", "new", "y"]), \
+                    redirect_stdout(output):
+                interactive_cli.run_import_jira_project_map("INFO")
+
+            rendered = output.getvalue()
+            self.assertIn("First Project", rendered)
+            self.assertIn("Current Jira project: OLD (Old Project)", rendered)
+            self.assertIn("New Jira project: NEW (New Project)", rendered)
+            with database.connect() as connection:
+                rows = connection.execute(
+                    "SELECT project_gid, jira_project_key, jira_project_name "
+                    "FROM jira_project_mappings ORDER BY project_gid"
+                ).fetchall()
+            self.assertEqual(
+                [
+                    (
+                        row["project_gid"],
+                        row["jira_project_key"],
+                        row["jira_project_name"],
+                    )
+                    for row in rows
+                ],
+                [("proj_1", "NEW", "New Project"), ("proj_2", "NEW", "New Project")],
+            )
+
     def test_attachment_sync_accepts_project_gids_file(self) -> None:
         with patch(
             "scripts.interactive_cli._prompt_project_gids_file",
@@ -1336,14 +1424,15 @@ class LifecycleMenuTest(TestCase):
     def test_migrate_projects_menu_uses_the_durable_attachment_workflow(self) -> None:
         menu = interactive_cli.build_migrate_projects_menu("INFO")
 
-        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "7", "b"])
+        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "7", "8", "b"])
         self.assertEqual(
             menu["3"].label,
             "Associate Jira Task Keys with Asana Task Keys",
         )
         self.assertNotIn("Sync Jira attachments immediately", [item.label for item in menu.values()])
-        self.assertEqual(menu["4"].label, "Validate Jira task migration coverage")
-        self.assertEqual(menu["5"].label, "Manage export IDs")
+        self.assertEqual(menu["4"].label, "Import/update Jira project associations")
+        self.assertEqual(menu["5"].label, "Validate Jira task migration coverage")
+        self.assertEqual(menu["6"].label, "Manage export IDs")
 
     @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli.confirm", return_value=True)
