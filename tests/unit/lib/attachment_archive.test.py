@@ -70,6 +70,42 @@ class AttachmentArchiveTest(TestCase):
         self.assertEqual([source.attachment_gid for source in sources], ["att_asana"])
         self.assertEqual(sources[0].jira_name, "design__att_asana.pdf")
 
+    def test_verify_archive_can_ignore_not_ready_entries(self) -> None:
+        archive_dir = self.root / "archive"
+        archive_dir.mkdir()
+        file_path = archive_dir / "ready.txt"
+        file_path.write_bytes(b"content")
+        manifest = archive_dir / "manifest.json"
+        manifest.write_text(
+            json.dumps({
+                "manifest_version": 1,
+                "archive_id": "wave-partial",
+                "files": [
+                    {
+                        "attachment_gid": "att_ready",
+                        "task_gid": "task_1",
+                        "relative_path": "ready.txt",
+                        "actual_size": 7,
+                        "sha256": "ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73",
+                        "status": "ready",
+                    },
+                    {
+                        "attachment_gid": "att_failed",
+                        "task_gid": "task_1",
+                        "relative_path": "failed.txt",
+                        "actual_size": None,
+                        "sha256": None,
+                        "status": "error",
+                        "error": "download expired",
+                    },
+                ],
+            }),
+            encoding="utf-8",
+        )
+
+        self.assertEqual(verify_archive(manifest, include_not_ready=False), [])
+        self.assertEqual(verify_archive(manifest)[0]["attachment_gid"], "att_failed")
+
     @patch("src.lib.attachment_archive.download_file")
     @patch("src.lib.attachment_archive.fetch_download_source")
     def test_create_archive_records_verified_file(self, mock_source, mock_download) -> None:

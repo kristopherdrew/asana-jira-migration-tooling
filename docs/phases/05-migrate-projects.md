@@ -62,7 +62,9 @@ Jira task mappings exist.
 ### Upload attachment archive to Jira
 
 Runs `scripts.upload_jira_attachments`. It verifies the archive, resolves current
-task mappings at upload time, uploads files, and records per-destination outcomes.
+task mappings at upload time, uploads ready files, and records per-destination outcomes.
+Attachments that failed to download remain skipped in a partial archive instead of
+blocking the ready files from uploading.
 
 ## Expected Result
 
