@@ -28,7 +28,8 @@ project-level migration decisions.
 ### Recover or reconcile Jira task keys by External ID
 
 Runs `scripts.atlassian.search_jira_external_ids`. A dry run shows what mappings were
-found before any local upserts are performed.
+found before any local upserts are performed. Project GID scope can limit recovery to
+the Jira spaces associated with a specific migration batch.
 
 ### Update project Last working day in Jira
 

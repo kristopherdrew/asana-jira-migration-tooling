@@ -132,6 +132,58 @@ class SearchJiraExternalIdsTests(unittest.TestCase):
             'project IN ("ABC", "XYZ") AND "customfield_123" is not EMPTY',
         )
 
+    def test_load_mapped_jira_project_keys_can_scope_to_project_gids(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = f"{temp_dir}/asana.sqlite"
+            database = Database(db_path=db_path)
+            with database.connect() as conn:
+                database.initialize(conn)
+                database.upsert_jira_project_mappings(
+                    conn,
+                    [
+                        {
+                            "project_gid": "proj_1",
+                            "project_name": "Project One",
+                            "project_key": "ABC",
+                        },
+                        {
+                            "project_gid": "proj_2",
+                            "project_name": "Project Two",
+                            "project_key": "XYZ",
+                        },
+                        {
+                            "project_gid": "proj_3",
+                            "project_name": "Project Three",
+                            "project_key": "ABC",
+                        },
+                    ],
+                    datetime.now(timezone.utc),
+                    jira_site_key="sandbox_jira",
+                )
+
+            keys = search_mod.load_mapped_jira_project_keys(
+                db_path,
+                "sandbox_jira",
+                ["proj_3", "proj_2"],
+            )
+
+        self.assertEqual(keys, ["ABC", "XYZ"])
+
+    def test_resolve_project_gid_scope_reads_csv_file_and_dedupes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "projects.csv"
+            path.write_text(
+                "project_gid,project_name\nproj_1,One\nproj_2,Two\nproj_1,One again\n",
+                encoding="utf-8",
+            )
+            gids = search_mod.resolve_project_gid_scope(None, str(path))
+
+        self.assertEqual(gids, ["proj_1", "proj_2"])
+
+    def test_resolve_project_gid_scope_rejects_multiple_sources(self) -> None:
+        with self.assertRaises(ValueError):
+            search_mod.resolve_project_gid_scope("proj_1", "projects.txt")
+
     def test_resolve_external_field_accepts_catalog_hidden_custom_field_id(self) -> None:
         self.assertEqual(
             search_mod.resolve_external_field_id([], "customfield_10509"),
