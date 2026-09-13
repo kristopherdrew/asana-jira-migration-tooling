@@ -2215,6 +2215,17 @@ def export_project(
             tasks = [dict(row) for row in fetch_project_task_rows()]
             if task_gids is not None:
                 tasks = [task for task in tasks if task["gid"] in task_gids]
+            if exported_task_gids:
+                tasks = [task for task in tasks if task["gid"] not in exported_task_gids]
+            if seen_task_gids is not None:
+                tasks = [task for task in tasks if task["gid"] not in seen_task_gids]
+            if not tasks:
+                logger.info(
+                    "All tasks for project %s were filtered out after rebuilding flattened hierarchy.",
+                    project_gid,
+                )
+                return None
+            exported_in_this_project = {task["gid"] for task in tasks if task.get("gid")}
             if _needs_flattened_refresh(tasks):
                 missing_gids = [
                     row["gid"]

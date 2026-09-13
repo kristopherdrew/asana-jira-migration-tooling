@@ -673,6 +673,74 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual([row["task_gid"] for row in rows], ["task_1", "task_2"])
         self.assertEqual({row["project_gid"] for row in rows}, {"proj_1"})
 
+    def test_flattened_hierarchy_refresh_preserves_export_id_skips(self) -> None:
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_3",
+                "name": "Second Project Only",
+                "resource_type": "task",
+                "resource_subtype": "default_task",
+                "created_by": {"gid": "user_1"},
+                "created_at": "2025-03-06T12:00:00Z",
+                "modified_at": "2025-03-06T12:00:00Z",
+                "memberships": [
+                    {"project": {"gid": "proj_2", "name": "Secondary Project"}},
+                ],
+            },
+            self.sync_time,
+        )
+        self.connection.execute(
+            "UPDATE tasks SET hierarchy_depth = 0 WHERE gid IN ('task_1', 'task_3')"
+        )
+        self.connection.execute("DELETE FROM task_hierarchy_flattened")
+        self.connection.commit()
+
+        output_dir = self.workspace / "exports"
+        first_path = export_project(
+            str(self.db_path),
+            "proj_1",
+            output_dir,
+            filename="batch_one.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+            export_id="batch-one",
+        )
+        self.assertTrue(first_path.exists())
+
+        skipped_log = []
+        second_path = export_project(
+            str(self.db_path),
+            "proj_2",
+            output_dir,
+            filename="batch_one_second_project.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+            export_id="batch-one",
+            skipped_log=skipped_log,
+        )
+        self.assertIsNotNone(second_path)
+
+        with second_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        header = rows[0]
+        gid_idx = header.index("External issue ID")
+        exported_gids = [row[gid_idx] for row in rows[1:]]
+        self.assertEqual(exported_gids, ["task_3"])
+        self.assertEqual([row["task_gid"] for row in skipped_log], ["task_1"])
+
+        rows = list(
+            self.connection.execute(
+                "SELECT task_gid, project_gid FROM exported_tasks WHERE export_id = ? ORDER BY task_gid",
+                ("batch-one",),
+            )
+        )
+        self.assertEqual([row["task_gid"] for row in rows], ["task_1", "task_2", "task_3"])
+        self.assertEqual(
+            {row["task_gid"]: row["project_gid"] for row in rows},
+            {"task_1": "proj_1", "task_2": "proj_1", "task_3": "proj_2"},
+        )
+
     def test_fallback_atlassian_id_used_when_mapping_missing(self) -> None:
         missing_gid = "user_missing"
         fallback_id = "atl-fallback"
