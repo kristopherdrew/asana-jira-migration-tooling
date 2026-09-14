@@ -34,6 +34,7 @@ from scripts import (  # noqa: E402
     get_personal_tasks,
     get_personal_tasks_delta,
     get_incremental_updates,
+    inspect_task_apps,
     merge_project_exports,
     export_users,
     export_team_report,
@@ -1491,6 +1492,19 @@ def args_get_project_status_updates(log_level: str) -> List[str]:
     workers = prompt("Workers (default 5)", default="5")
     if workers:
         args.extend(["--workers", workers])
+    return args
+
+
+def args_inspect_task_apps(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    task_gid = prompt("Task GID to inspect", default="")
+    if not task_gid:
+        raise SystemExit("Task GID is required.")
+    args.extend(["--task-gid", task_gid])
+    if confirm("Write JSON to exports/ as well as stdout?", default=True):
+        args.append("--write-file")
+    if not confirm("Fetch per-attachment detail records?", default=True):
+        args.append("--no-details")
     return args
 
 
@@ -3523,10 +3537,15 @@ def build_advanced_recovery_menu(log_level: str) -> Dict[str, MenuItem]:
             "Create anonymized troubleshooting database",
             lambda: run_script(anonymize_database.main, args_anonymize_database(log_level)),
         ),
-        "7": MenuItem("7", "Legacy Initialization menu", lambda: run_group("Legacy Initialization", build_init_menu(log_level))),
-        "8": MenuItem("8", "Legacy Tasks menu", lambda: run_group("Legacy Tasks", build_tasks_menu(log_level))),
-        "9": MenuItem("9", "Legacy Atlassian menu", lambda: run_group("Legacy Atlassian", build_atlassian_menu(log_level))),
-        "10": MenuItem("10", "Legacy Reports menu", lambda: run_group("Legacy Reports", build_reports_menu(log_level))),
+        "7": MenuItem(
+            "7",
+            "Inspect task Apps / attachment payload",
+            lambda: run_script(inspect_task_apps.main, args_inspect_task_apps(log_level)),
+        ),
+        "8": MenuItem("8", "Legacy Initialization menu", lambda: run_group("Legacy Initialization", build_init_menu(log_level))),
+        "9": MenuItem("9", "Legacy Tasks menu", lambda: run_group("Legacy Tasks", build_tasks_menu(log_level))),
+        "10": MenuItem("10", "Legacy Atlassian menu", lambda: run_group("Legacy Atlassian", build_atlassian_menu(log_level))),
+        "11": MenuItem("11", "Legacy Reports menu", lambda: run_group("Legacy Reports", build_reports_menu(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
