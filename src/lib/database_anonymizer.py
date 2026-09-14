@@ -34,7 +34,9 @@ IDENTIFIER_COLUMNS = {
     "export_id",
     "flattened_parent_gid",
     "gid",
+    "global_id",
     "item_gid",
+    "jira_remote_link_id",
     "manifest_sha256",
     "parent_gid",
     "project_gid",
@@ -90,6 +92,7 @@ URL_COLUMNS = {
     "permalink_url",
     "permanent_url",
     "relative_path",
+    "url",
     "view_url",
 }
 JIRA_KEY_COLUMNS = {"jira_key", "jira_project_key"}

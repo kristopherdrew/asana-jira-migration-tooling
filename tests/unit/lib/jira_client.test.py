@@ -32,6 +32,19 @@ class CreateIssueTest(TestCase):
         self.assertEqual(call["path"], "/rest/api/3/issue")
         self.assertEqual(json.loads(call["data"].decode("utf-8")), {"fields": {"summary": "hi"}})
 
+    def test_create_or_update_remote_link_posts_v2_payload(self) -> None:
+        client = _RecordingClient([b'{"id": "77"}'])
+        payload = {
+            "globalId": "system=asana&attachment_gid=att_1",
+            "object": {"url": "https://docs.example/1", "title": "Spec"},
+        }
+        result = client.create_or_update_remote_link("MIG-1", payload)
+        self.assertEqual(result["id"], "77")
+        call = client.calls[0]
+        self.assertEqual(call["method"], "POST")
+        self.assertEqual(call["path"], "/rest/api/2/issue/MIG-1/remotelink")
+        self.assertEqual(json.loads(call["data"].decode("utf-8")), payload)
+
     def test_invalid_json_raises(self) -> None:
         client = _RecordingClient([b"not json"])
         with self.assertRaises(JiraApiError):

@@ -464,6 +464,23 @@ Views are included because they are queryable SQL objects, but the anonymizer on
 | `error` | TEXT |  | yes | text | `redacted <hash>` | Deterministic free-text redaction. |
 | `jira_site_key` | TEXT | ✓ | yes | key | `key_<hash>` | Deterministic fake key. |
 
+#### `attachment_jira_weblinks`
+
+| Column | Type | PK | Anonymized | Method | Replacement shape | Notes |
+|---|---|---|---|---|---|---|
+| `attachment_gid` | TEXT | ✓ | yes | identifier | `gid_<hash>` | Deterministic fake identifier; join relationships remain consistent. |
+| `jira_site_key` | TEXT | ✓ | yes | key | `key_<hash>` | Deterministic fake key. |
+| `jira_key` | TEXT | ✓ | yes | Jira key | `JIRA-<number>` | Deterministic fake Jira key. |
+| `task_gid` | TEXT |  | yes | identifier | `gid_<hash>` | Deterministic fake identifier; join relationships remain consistent. |
+| `url` | TEXT |  | yes | URL | `https://example.invalid/<hash>` | Deterministic fake URL. |
+| `title` | TEXT |  | yes | text | `redacted <hash>` | Deterministic free-text redaction. |
+| `global_id` | TEXT |  | yes | identifier | `gid_<hash>` | Deterministic fake identifier; join relationships remain consistent. |
+| `jira_remote_link_id` | TEXT |  | yes | identifier | `gid_<hash>` | Deterministic fake identifier; join relationships remain consistent. |
+| `status` | TEXT |  | no | none | preserved | Category/status value preserved. |
+| `error` | TEXT |  | yes | text | `redacted <hash>` | Deterministic free-text redaction. |
+| `attempted_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
+| `linked_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
+
 #### `task_jira_mappings`
 
 | Column | Type | PK | Anonymized | Method | Replacement shape | Notes |
