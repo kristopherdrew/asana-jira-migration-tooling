@@ -37,6 +37,7 @@ from scripts import (  # noqa: E402
     merge_project_exports,
     export_users,
     export_team_report,
+    anonymize_database,
     download_asana_attachments,
     manage_export_ids,
     upload_jira_attachments,
@@ -94,6 +95,7 @@ from src.lib.config import (  # noqa: E402
 )
 from src.lib.database import ASANA_JIRA_DB_PATH_ENV, ASANA_JIRA_SITE_KEY_ENV  # noqa: E402
 from src.lib.database import Database  # noqa: E402
+from src.lib.database_anonymizer import default_output_path  # noqa: E402
 from src.lib.export_id_history import (  # noqa: E402
     ExportIdSummary,
     clear_export_id,
@@ -1339,6 +1341,19 @@ def build_common_args(log_level: str) -> List[str]:
 
 
 # ---------------------- Argument builders ---------------------- #
+def args_anonymize_database(log_level: str) -> List[str]:
+    source = active_db_path()
+    output = Path(
+        prompt("Anonymized database output path", default=str(default_output_path(source)))
+    )
+    args = build_common_args(log_level) + ["--database", str(source), "--output", str(output)]
+    if output.exists() and confirm(
+        f"Overwrite existing anonymized database at {output}?", default=False
+    ):
+        args.append("--overwrite")
+    return args
+
+
 def args_initial_metadata(log_level: str) -> List[str]:
     return build_common_args(log_level)
 
@@ -3503,10 +3518,15 @@ def build_advanced_recovery_menu(log_level: str) -> Dict[str, MenuItem]:
         "3": MenuItem("3", "Clear export-ID history", lambda: run_recovery_action("Clear export-ID history", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level)))),
         "4": MenuItem("4", "Reset direct-API Team/Project mappings", lambda: run_recovery_action("Reset direct-API Team/Project mappings", reset_direct_api_mappings)),
         "5": MenuItem("5", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
-        "6": MenuItem("6", "Legacy Initialization menu", lambda: run_group("Legacy Initialization", build_init_menu(log_level))),
-        "7": MenuItem("7", "Legacy Tasks menu", lambda: run_group("Legacy Tasks", build_tasks_menu(log_level))),
-        "8": MenuItem("8", "Legacy Atlassian menu", lambda: run_group("Legacy Atlassian", build_atlassian_menu(log_level))),
-        "9": MenuItem("9", "Legacy Reports menu", lambda: run_group("Legacy Reports", build_reports_menu(log_level))),
+        "6": MenuItem(
+            "6",
+            "Create anonymized troubleshooting database",
+            lambda: run_script(anonymize_database.main, args_anonymize_database(log_level)),
+        ),
+        "7": MenuItem("7", "Legacy Initialization menu", lambda: run_group("Legacy Initialization", build_init_menu(log_level))),
+        "8": MenuItem("8", "Legacy Tasks menu", lambda: run_group("Legacy Tasks", build_tasks_menu(log_level))),
+        "9": MenuItem("9", "Legacy Atlassian menu", lambda: run_group("Legacy Atlassian", build_atlassian_menu(log_level))),
+        "10": MenuItem("10", "Legacy Reports menu", lambda: run_group("Legacy Reports", build_reports_menu(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
