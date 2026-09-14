@@ -1623,6 +1623,11 @@ class LifecycleMenuTest(TestCase):
             advanced_menu["5"].handler()
         mock_migrate.assert_called_once_with(interactive_cli.PROJECT_ROOT)
 
+    def test_advanced_recovery_exposes_database_anonymizer(self) -> None:
+        menu = interactive_cli.build_advanced_recovery_menu("INFO")
+
+        self.assertEqual(menu["6"].label, "Create anonymized troubleshooting database")
+
     def test_prepare_jira_starts_with_standard_import_field_setup(self) -> None:
         menu = interactive_cli.build_prepare_jira_menu("INFO")
         self.assertEqual(menu["1"].label, "Create Jira fields for task-import mappings")

@@ -22,6 +22,23 @@ Optional flags:
 - `--workspace-gid <gid>` to force the workspace used when building URLs in the reports.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
+### Anonymize Database
+Creates a privacy-safer copy of the local SQLite snapshot for troubleshooting. The command copies the source database, then replaces sensitive values with deterministic fake values inside that copy: Asana/Jira identifiers, Jira keys, user names, emails, team/project/task/portfolio names, notes, comments, URLs, paths, custom-field text/display values, JSON blobs, and attachment metadata are rewritten while relationships and counts remain usable for joins and reports. Dates, booleans, numeric counts, statuses, and resource types are preserved. By default each run uses a fresh private salt; pass `--salt` only when you need repeatable anonymized values across runs. The script refuses to run in place.
+```bash
+python3 -m scripts.anonymize_database --database data/asana.sqlite
+```
+Required flags:
+- (none; uses the active profile database by default).
+
+Optional flags:
+- `--output <path>` to choose the anonymized database path (defaults to `<database>_anonymized.sqlite`).
+- `--overwrite` to replace an existing anonymized output database.
+- `--salt <value>` to make generated fake values repeatable across runs.
+- `--no-verify` to skip the post-run scan for obvious email, URL, and token-like values.
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
+In the interactive CLI, this command lives under **Advanced & Recovery** as “Create anonymized troubleshooting database.” For the exact table/column coverage, see [the anonymization map](anonymization-map.md), regenerated with `python3 -m scripts.describe_db --anonymization-markdown > docs/anonymization-map.md`.
+
 ### Export Users
 Writes the `users` table (plus workspace memberships) to a CSV for quick auditing or downstream reporting. Includes GID, name, email, resource type, active flag, Atlassian account id, Atlassian status, per-user task activity counts (`tasks_created`, `tasks_completed`, `tasks_commented`), a `last_active_date`, a direct Asana user URL, last sync date, and a semicolon-separated list of workspaces. Atlassian id/status come from the `user_atlassian_accounts` table (keyed by Asana user GID) and are left blank for users without a mapping. The activity counts come from synced task data: `tasks_created` counts tasks where the user is `created_by`, `tasks_completed` counts tasks where the user is `completed_by`, and `tasks_commented` counts the distinct tasks on which the user authored at least one non-deleted comment (not the number of comments). `last_active_date` (formatted `YYYY-MM-DD`) is the most recent of the user's last task creation, last task completion, or last non-deleted comment. All counts default to `0` and `last_active_date` is blank until the task and comment syncs have populated `tasks` and `task_comments`.
 ```bash
