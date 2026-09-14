@@ -184,6 +184,21 @@ Optional flags:
 - `--detail-limit <n>` max status updates to fetch full detail / nested stories for (default 5).
 - `--log-level <LEVEL>`.
 
+### Inspect Task Apps Data (Diagnostic)
+Read-only probe (no DB writes) for understanding what Asana returns for the Apps section / URL attachment surface on a single task. For the given `--task-gid`, it calls `GET /attachments?parent=<task_gid>` with URL/app-oriented attachment fields (`resource_subtype`, `host`, `service`, `view_url`, `permanent_url`, `download_url`, `connected_to_app`) and, by default, follows each returned attachment with `GET /attachments/<attachment_gid>`. The script prints formatted JSON to stdout and can also write the same payload to `exports/task_apps_probe_<gid>_<timestamp>.json`.
+```bash
+python3 -m scripts.inspect_task_apps --task-gid <gid> --write-file
+```
+Required flags:
+- `--task-gid <gid>`.
+
+Optional flags:
+- `--no-details` to skip per-attachment detail calls.
+- `--output-dir <path>` for optional JSON output (default `exports`).
+- `--write-file` to write JSON to `output-dir` in addition to stdout.
+- `--page-size <n>` to adjust the attachment list pagination limit (default 100).
+- `--log-level <LEVEL>`.
+
 ### Sync Personal Tasks
 Pulls every task assigned to the selected user that does **not** belong to any project (true “My Tasks” items) and stores them with `tasks.is_personal = 1`. Each personal task is linked to a synthetic project named after the assignee (e.g., `personal_<user_gid>`) and that pseudo-project is flagged via `projects.is_personal_project = 1`.
 ```bash
