@@ -295,6 +295,25 @@ CREATE TABLE IF NOT EXISTS attachment_jira_uploads (
 );
 """
 
+ATTACHMENT_JIRA_WEBLINKS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS attachment_jira_weblinks (
+    attachment_gid TEXT NOT NULL,
+    jira_site_key TEXT NOT NULL DEFAULT 'legacy_unknown',
+    jira_key TEXT NOT NULL,
+    task_gid TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    global_id TEXT NOT NULL,
+    jira_remote_link_id TEXT,
+    status TEXT NOT NULL,
+    error TEXT,
+    attempted_at TEXT NOT NULL,
+    linked_at TEXT,
+    PRIMARY KEY (attachment_gid, jira_site_key, jira_key),
+    FOREIGN KEY (attachment_gid) REFERENCES task_attachments(gid)
+);
+"""
+
 JIRA_PROJECT_MAPPINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS jira_project_mappings (
     project_gid TEXT NOT NULL,
@@ -768,6 +787,7 @@ class Database:
         connection.executescript(ATTACHMENT_ARCHIVES_SCHEMA)
         connection.executescript(ATTACHMENT_ARCHIVE_FILES_SCHEMA)
         connection.executescript(ATTACHMENT_JIRA_UPLOADS_SCHEMA)
+        connection.executescript(ATTACHMENT_JIRA_WEBLINKS_SCHEMA)
         connection.executescript(TASK_JIRA_MAPPINGS_SCHEMA)
         connection.executescript(JIRA_PROJECT_MAPPINGS_SCHEMA)
         connection.executescript(TAG_SCHEMA)
@@ -2367,6 +2387,12 @@ class Database:
         self._ensure_index(connection, "idx_task_followers_task_gid", "task_followers", "task_gid")
         self._ensure_index(connection, "idx_task_comments_task_gid", "task_comments", "task_gid")
         self._ensure_index(connection, "idx_task_attachments_task_gid", "task_attachments", "task_gid")
+        self._ensure_index(
+            connection,
+            "idx_attachment_jira_weblinks_task_gid",
+            "attachment_jira_weblinks",
+            "task_gid",
+        )
         self._ensure_index(connection, "idx_project_updates_project_gid", "project_updates", "project_gid")
         self._ensure_index(connection, "idx_project_members_user_gid", "project_members", "user_gid")
         self._ensure_index(connection, "idx_portfolio_items_portfolio_gid", "portfolio_items", "portfolio_gid")

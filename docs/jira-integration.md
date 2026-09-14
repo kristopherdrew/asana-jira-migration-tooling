@@ -366,11 +366,13 @@ Run `--verify-manifest` after every copy and immediately before a delayed Jira u
 ### Upload a Local Attachment Archive to Jira
 
 Verifies every ready archived file, resolves each Asana Task GID through the database's
-current `task_jira_mappings`, and uploads the file to every mapped Jira work item. Jira
-keys do not need to exist when the archive is created. Partial archive entries from
-attachments that could not be downloaded are warned about and skipped; corrupt or missing
-ready files still cancel the upload so they can be investigated before Jira receives bad
-payloads.
+current `task_jira_mappings`, and uploads the file to every mapped Jira work item. It
+also creates Jira remote web links for active non-Asana URL/app attachments captured in
+`task_attachments` (for example Google Drive and external links) using the current
+SQLite snapshot. Jira keys do not need to exist when the archive is created. Partial
+archive entries from attachments that could not be downloaded are warned about and
+skipped; corrupt or missing ready files still cancel the upload so they can be
+investigated before Jira receives bad payloads.
 
 ```bash
 python3 -m scripts.upload_jira_attachments \
@@ -391,11 +393,17 @@ python3 -m scripts.upload_jira_attachments \
 otherwise sandbox is used. Omit project scope to upload all attachments in the archive, or
 use exactly one of `--project-gid`, `--project-gids`, or `--project-gids-file` to upload
 only files whose task is associated with the selected project(s). `--workers` and
-`--throttle-seconds` control Jira request rate.
+`--throttle-seconds` control Jira request rate. Web-link creation is enabled by default;
+pass `--no-weblinks` to upload only archived files.
 Every run writes `reports/jira_upload_<timestamp>.csv` inside the archive. Per-destination
 results are persisted in `attachment_jira_uploads`, including the Jira attachment ID and
 returned size when available. Missing mappings are reported without blocking other files,
-and Jira files with the generated `filename__attachment_gid.ext` name are skipped.
+and Jira files with the generated `filename__attachment_gid.ext` name are skipped. When
+web links are enabled, a companion `reports/jira_weblinks_<timestamp>.csv` is written and
+outcomes are persisted in `attachment_jira_weblinks`. Re-runs use a stable Jira
+`globalId` (`system=asana&attachment_gid=<attachment_gid>`) so Jira updates existing
+remote links instead of duplicating them. `--dry-run` reports both intended file uploads
+and intended web-link creates/updates without calling Jira.
 
 In the Interactive CLI, the upload action lists every existing archive manifest beneath
 the default `attachment_archives/` directory for numbered selection, then offers all

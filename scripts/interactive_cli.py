@@ -538,7 +538,7 @@ def _prompt_attachment_archive_manifest() -> str:
             manifest = manifest / "manifest.json"
     if not selection or not manifest.is_file():
         raise SystemExit(f"Attachment archive manifest not found: {selection or '(blank)'}")
-    return str(manifest.resolve())
+    return str(manifest.absolute())
 
 
 def confirm(text: str, default: bool = True) -> bool:

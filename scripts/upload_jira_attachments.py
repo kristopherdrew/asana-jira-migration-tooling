@@ -8,7 +8,12 @@ import logging
 from pathlib import Path
 from typing import Iterable, Optional
 
-from src.lib.attachment_archive import load_manifest, upload_archive, verify_archive
+from src.lib.attachment_archive import (
+    load_manifest,
+    upload_archive,
+    upload_attachment_weblinks,
+    verify_archive,
+)
 from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.database import resolve_default_db_path
 from src.lib.jira_client import JiraClient
@@ -27,6 +32,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--prod", action="store_true", help="Target production Jira; default is sandbox.")
     parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
     parser.add_argument("--dry-run", action="store_true", help="Resolve destinations and report without Jira calls.")
+    parser.add_argument("--no-weblinks", action="store_true", help="Skip Jira remote web links for non-Asana URL/app attachments.")
     parser.add_argument("--workers", type=int, default=2, help="Concurrent upload workers (default: 2).")
     parser.add_argument("--throttle-seconds", type=float, default=0.5, help="Delay before each upload (default: 0.5).")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
@@ -67,6 +73,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.atlassian_token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
+    project_gids = resolve_project_gids(args)
     report = upload_archive(
         database_path=args.database,
         manifest_path=manifest,
@@ -75,9 +82,21 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         workers=max(1, args.workers),
         throttle_seconds=max(0.0, args.throttle_seconds),
         jira_site_key=args.jira_site,
-        project_gids=resolve_project_gids(args),
+        project_gids=project_gids,
     )
     logging.info("Jira attachment report written to %s", report)
+    if not args.no_weblinks:
+        weblink_report = upload_attachment_weblinks(
+            database_path=args.database,
+            manifest_path=manifest,
+            jira_client=client,
+            dry_run=args.dry_run,
+            workers=max(1, args.workers),
+            throttle_seconds=max(0.0, args.throttle_seconds),
+            jira_site_key=args.jira_site,
+            project_gids=project_gids,
+        )
+        logging.info("Jira web-link report written to %s", weblink_report)
 
 
 if __name__ == "__main__":

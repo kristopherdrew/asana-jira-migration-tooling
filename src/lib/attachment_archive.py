@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from urllib import error, request
 
 from src.lib.attachments import jira_unique_attachment_name
@@ -67,6 +67,16 @@ class ArchiveFile:
     error: str
 
 
+@dataclass(frozen=True)
+class WebLinkSource:
+    attachment_gid: str
+    task_gid: str
+    title: str
+    url: str
+    host: str
+    resource_subtype: str
+
+
 def collect_asana_attachment_sources(
     connection,
     project_gids: Optional[Sequence[str]] = None,
@@ -101,6 +111,47 @@ def collect_asana_attachment_sources(
             jira_name=jira_unique_attachment_name(row["name"], row["gid"]),
             expected_size=row["size"],
             permanent_url=row["permanent_url"],
+        )
+        for row in rows
+    ]
+
+
+def collect_attachment_weblink_sources(
+    connection,
+    project_gids: Optional[Sequence[str]] = None,
+    task_gid: Optional[str] = None,
+) -> List[WebLinkSource]:
+    """Return active non-Asana URL/app attachments for Jira remote links."""
+    query = [
+        "SELECT ta.gid, ta.task_gid, ta.name, ta.view_url, ta.host, ta.resource_subtype",
+        "FROM task_attachments ta",
+        "WHERE COALESCE(ta.is_deleted, 0) = 0",
+        "  AND ta.view_url IS NOT NULL",
+        "  AND TRIM(ta.view_url) != ''",
+        "  AND COALESCE(ta.host, '') != 'asana'",
+        "  AND COALESCE(ta.resource_subtype, '') != 'asana'",
+    ]
+    params: List[str] = []
+    if project_gids:
+        placeholders = ",".join("?" for _ in project_gids)
+        query.append(
+            "  AND EXISTS (SELECT 1 FROM task_projects tp "
+            f"WHERE tp.task_gid = ta.task_gid AND tp.project_gid IN ({placeholders}))"
+        )
+        params.extend(project_gids)
+    if task_gid:
+        query.append("  AND ta.task_gid = ?")
+        params.append(task_gid)
+    query.append("ORDER BY ta.task_gid, ta.gid")
+    rows = connection.execute("\n".join(query), tuple(params)).fetchall()
+    return [
+        WebLinkSource(
+            attachment_gid=row["gid"],
+            task_gid=row["task_gid"],
+            title=row["name"] or row["view_url"],
+            url=row["view_url"],
+            host=row["host"] or "",
+            resource_subtype=row["resource_subtype"] or "",
         )
         for row in rows
     ]
@@ -453,6 +504,227 @@ def _record_upload(
             error_message, jira_site_key,
         ),
     )
+
+
+def attachment_weblink_global_id(attachment_gid: str) -> str:
+    return f"system=asana&attachment_gid={attachment_gid}"
+
+
+def build_attachment_weblink_payload(source: WebLinkSource) -> Dict[str, Any]:
+    return {
+        "globalId": attachment_weblink_global_id(source.attachment_gid),
+        "application": {
+            "type": "com.asana.app-link",
+            "name": "Asana App Link",
+        },
+        "relationship": "links to",
+        "object": {
+            "url": source.url,
+            "title": source.title or source.url,
+        },
+    }
+
+
+def _record_weblink(
+    connection,
+    source: WebLinkSource,
+    jira_key: str,
+    status: str,
+    error_message: str,
+    jira_site_key: Optional[str] = None,
+    jira_remote_link_id: Optional[str] = None,
+) -> None:
+    now = utc_now()
+    connection.execute(
+        """
+        INSERT INTO attachment_jira_weblinks (
+            attachment_gid, jira_site_key, jira_key, task_gid, url, title,
+            global_id, jira_remote_link_id, status, error, attempted_at, linked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(attachment_gid, jira_site_key, jira_key) DO UPDATE SET
+            task_gid=excluded.task_gid, url=excluded.url, title=excluded.title,
+            global_id=excluded.global_id, jira_remote_link_id=excluded.jira_remote_link_id,
+            status=excluded.status, error=excluded.error,
+            attempted_at=excluded.attempted_at, linked_at=excluded.linked_at
+        """,
+        (
+            source.attachment_gid,
+            jira_site_key or "legacy_unknown",
+            jira_key,
+            source.task_gid,
+            source.url,
+            source.title,
+            attachment_weblink_global_id(source.attachment_gid),
+            jira_remote_link_id,
+            status,
+            error_message,
+            now,
+            now if status == "created-or-updated" else None,
+        ),
+    )
+
+
+def _weblink_scope_from_manifest(
+    payload: Dict[str, Any],
+    project_gids: Optional[Sequence[str]],
+) -> Tuple[Optional[Sequence[str]], Optional[str]]:
+    if project_gids is not None:
+        return project_gids, None
+    scope = payload.get("scope", {}) if isinstance(payload.get("scope"), dict) else {}
+    if scope.get("all", False):
+        return None, scope.get("task_gid")
+    scoped_projects = scope.get("project_gids") or None
+    return scoped_projects, scope.get("task_gid")
+
+
+def upload_attachment_weblinks(
+    database_path: str,
+    manifest_path: Path,
+    jira_client: JiraClient,
+    dry_run: bool = True,
+    workers: int = 2,
+    throttle_seconds: float = 0.5,
+    jira_site_key: Optional[str] = None,
+    project_gids: Optional[Sequence[str]] = None,
+) -> Path:
+    """Create Jira remote links for active non-Asana attachment URLs."""
+    payload = load_manifest(manifest_path)
+    archive_id = payload["archive_id"]
+    archive_dir = manifest_path.parent
+    database = Database(database_path)
+    source_project_gids, source_task_gid = _weblink_scope_from_manifest(payload, project_gids)
+    mappings: Dict[str, List[str]] = {}
+    with database.connect() as connection:
+        database.initialize(connection)
+        sources = collect_attachment_weblink_sources(connection, source_project_gids, source_task_gid)
+        task_gids = sorted({source.task_gid for source in sources})
+        if task_gids:
+            placeholders = ",".join("?" for _ in task_gids)
+            site_clause = "jira_site_key = ? AND " if jira_site_key else ""
+            params = ((jira_site_key,) if jira_site_key else ()) + tuple(task_gids)
+            rows = connection.execute(
+                f"SELECT task_gid, jira_key FROM task_jira_mappings WHERE {site_clause}task_gid IN ({placeholders})",
+                params,
+            ).fetchall()
+            for row in rows:
+                mappings.setdefault(row["task_gid"], []).append(row["jira_key"])
+        connection.commit()
+
+    jobs = [(source, key) for source in sources for key in mappings.get(source.task_gid, [])]
+    mapped_gids = {source.attachment_gid for source, _key in jobs}
+    unmapped = [source for source in sources if source.attachment_gid not in mapped_gids]
+    LOGGER.info(
+        "Archive %s: %d web link source(s), %d remote-link job(s) across %d Jira issue(s), %d unmapped",
+        archive_id,
+        len(sources),
+        len(jobs),
+        len({key for _source, key in jobs}),
+        len(unmapped),
+    )
+
+    results: List[Dict[str, str]] = []
+    completed: List[Tuple[Dict[str, str], WebLinkSource, Optional[str]]] = []
+    for source in unmapped:
+        row = {
+            "attachment_gid": source.attachment_gid,
+            "task_gid": source.task_gid,
+            "jira_key": "",
+            "title": source.title,
+            "url": source.url,
+            "global_id": attachment_weblink_global_id(source.attachment_gid),
+            "jira_remote_link_id": "",
+            "status": "missing-mapping",
+            "message": "No current Jira mapping for task",
+        }
+        results.append(row)
+        completed.append((row, source, None))
+
+    def worker(job) -> Tuple[Dict[str, str], WebLinkSource, Optional[str]]:
+        source, jira_key = job
+        base = {
+            "attachment_gid": source.attachment_gid,
+            "task_gid": source.task_gid,
+            "jira_key": jira_key,
+            "title": source.title,
+            "url": source.url,
+            "global_id": attachment_weblink_global_id(source.attachment_gid),
+        }
+        try:
+            if dry_run:
+                return ({**base, "jira_remote_link_id": "", "status": "dry-run", "message": ""}, source, None)
+            time.sleep(max(0.0, throttle_seconds))
+            response = jira_client.create_or_update_remote_link(
+                jira_key,
+                build_attachment_weblink_payload(source),
+            )
+            remote_id = response.get("id")
+            remote_id_text = str(remote_id) if remote_id is not None else ""
+            return (
+                {
+                    **base,
+                    "jira_remote_link_id": remote_id_text,
+                    "status": "created-or-updated",
+                    "message": "",
+                },
+                source,
+                remote_id_text or None,
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve per-link retry information
+            return ({**base, "jira_remote_link_id": "", "status": "error", "message": str(exc)}, source, None)
+
+    total_jobs = len(jobs)
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        futures = [executor.submit(worker, job) for job in jobs]
+        for n, future in enumerate(as_completed(futures), start=1):
+            result = future.result()
+            completed.append(result)
+            row, _source, _remote_id = result
+            status = row["status"]
+            if n == 1 or n == total_jobs or n % 25 == 0 or status not in ("created-or-updated", "dry-run"):
+                LOGGER.info(
+                    "Archive %s: [%d/%d] web link %s -> %s (%s)",
+                    archive_id, n, total_jobs,
+                    row["attachment_gid"], row["jira_key"] or "(unmapped)", status,
+                )
+    results.extend(row for row, _source, _remote_id in completed if row not in results)
+    results.sort(key=lambda row: (row["jira_key"], row["task_gid"], row["attachment_gid"]))
+
+    by_status: Dict[str, int] = {}
+    for row in results:
+        by_status[row["status"]] = by_status.get(row["status"], 0) + 1
+    LOGGER.info(
+        "Archive %s: web-link processing complete - %s",
+        archive_id,
+        ", ".join(f"{count} {status}" for status, count in sorted(by_status.items())) or "0 links",
+    )
+
+    with database.connect() as connection:
+        database.initialize(connection)
+        for row, source, remote_id in completed:
+            _record_weblink(
+                connection,
+                source,
+                row["jira_key"],
+                row["status"],
+                row["message"],
+                jira_site_key,
+                remote_id,
+            )
+        connection.commit()
+
+    reports_dir = archive_dir / "reports"
+    reports_dir.mkdir(exist_ok=True)
+    suffix = datetime.now().strftime("%Y%m%d-%H%M%S")
+    report_path = reports_dir / f"jira_weblinks_{suffix}.csv"
+    fieldnames = [
+        "attachment_gid", "task_gid", "jira_key", "title", "url",
+        "global_id", "jira_remote_link_id", "status", "message",
+    ]
+    with report_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(results)
+    return report_path
 
 
 def upload_archive(

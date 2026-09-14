@@ -315,6 +315,12 @@ class JiraClient:
             return entries[0]
         return None
 
+    def create_or_update_remote_link(self, jira_key: str, payload: Dict[str, object]) -> Dict[str, object]:
+        """Create or update an issue remote link via an idempotent ``globalId``."""
+        encoded_key = parse.quote(jira_key)
+        path = f"/rest/api/2/issue/{encoded_key}/remotelink"
+        return self._request_json("POST", path, payload=payload)
+
     @staticmethod
     def _build_multipart(boundary: str, filename: str, file_bytes: bytes) -> bytes:
         parts = [

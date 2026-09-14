@@ -226,6 +226,15 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "upload_archive",
         "Upsert by (archive_id, attachment_gid, jira_site_key, jira_key); records retries and Jira attachment IDs.",
     ),
+    "attachment_jira_weblinks": _m(
+        "attachment_jira_weblinks",
+        "Jira / Atlassian mapping",
+        "Per-destination delivery state for Jira remote web links created from non-Asana task attachment URLs.",
+        "Active non-Asana URL/app rows in task_attachments joined to current task_jira_mappings and Jira remote-link API responses.",
+        ["scripts/upload_jira_attachments.py"],
+        "upload_attachment_weblinks",
+        "Upsert by (attachment_gid, jira_site_key, jira_key); records idempotent globalId, Jira remote-link ID, status, and retry errors.",
+    ),
     "task_tags": _m(
         "task_tags",
         "Task sub-resources",
