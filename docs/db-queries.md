@@ -146,7 +146,7 @@ WHERE t.modified_at IS NOT NULL
 ORDER BY t.modified_at DESC, t.gid;
 ```
 
-Use the same cutoff for the live API query:
+Use the same cutoff for the live API comparison command:
 ```bash
 python3 -m scripts.export_recent_task_changes_api \
   --project-gids-file inputs/project_gids.txt \
