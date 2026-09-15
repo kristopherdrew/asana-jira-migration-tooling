@@ -136,10 +136,10 @@ During every run the script:
 During an interactive task sync, the CLI also records any project that had a positive `num_tasks` count from the project metadata pull but produced zero imported task rows. The candidate list is written to `exports/missing_service_user_projects.json`, then the CLI offers to add a service user (resolved automatically as the token's own account) to those projects and optionally retry the missed project list immediately.
 
 ### Export Recently Changed Tasks from Asana
-Runs a read-only live Asana query for tasks modified after a UTC cutoff in selected projects. It
-queries workspace task search once per project, follows pagination, deduplicates multi-homed tasks,
-and writes a comparison-friendly CSV plus a JSON file containing the cutoff, raw task records, and
-per-project errors. It does not write to SQLite. The command is also available under the
+Runs a read-only live Asana query for tasks modified after a UTC cutoff in selected projects,
+compares those records with the selected local SQLite snapshot, and writes only tasks with detected
+differences. It queries workspace task search once per project, follows pagination, and deduplicates
+multi-homed tasks. It does not write to SQLite. The command is also available under the
 Interactive CLI’s **Maintain & Validate** menu.
 ```bash
 python3 -m scripts.export_recent_task_changes_api \
@@ -153,8 +153,10 @@ Optional flags:
 - `--days-back <n>` to change the default 14-day window when `--since` is omitted.
 - `--workspace-gid`, `--output-dir`, `--page-size`, `--workers`, and `--log-level`.
 
-The output files are `exports/recent_task_changes_<timestamp>.csv` and `.json`. Use the JSON or CSV
-cutoff value as the `<utc_cutoff>` in the matching SQL recipe in [Database Query Cookbook](db-queries.md).
+The output file is `exports/recent_task_differences_<timestamp>.csv`. Each row contains the task GID,
+the differing fields, API/DB names and modification timestamps, local `synced_at`, and selected
+project GIDs. Use the same `--since` value as the `<utc_cutoff>` in the matching SQL recipe in
+[Database Query Cookbook](db-queries.md).
 
 ### Sync Task Extras
 Pulls task comments and attachment metadata for the selected projects (using the same scope flags as above) and stores them in `task_comments` and `task_attachments` tables. Only human-authored comments (`resource_subtype = comment_added`) are captured; system events are excluded.
