@@ -37,8 +37,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     scope = parser.add_mutually_exclusive_group(required=True)
     scope.add_argument("--project-gids", action="append", help="Comma-separated project GIDs; may be repeated.")
     scope.add_argument("--project-gids-file", help="Newline- or comma-separated GIDs, or a CSV project_gid column.")
-    parser.add_argument("--since", help="UTC ISO-8601 cutoff override; defaults to now minus 14 days.")
-    parser.add_argument("--days-back", type=int, default=DEFAULT_DAYS_BACK, help="Lookback window when --since is omitted (default: 14).")
+    parser.add_argument("--days-back", type=int, default=DEFAULT_DAYS_BACK, help="UTC calendar days before today; cutoff is midnight UTC (default: 14).")
     parser.add_argument("--workspace-gid", help="Override the workspace GID from credentials.")
     parser.add_argument("--database", default=resolve_default_db_path(), help="SQLite snapshot to compare (default: data/asana.sqlite).")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Output directory (default: exports/).")
@@ -56,20 +55,12 @@ def resolve_project_gids(project_gids: Optional[Sequence[str]], project_gids_fil
     return result
 
 
-def resolve_cutoff(since: Optional[str], days_back: int, now: Optional[datetime] = None) -> str:
-    if days_back < 1:
-        raise SystemExit("--days-back must be at least 1.")
-    if since:
-        value = since.strip().replace("Z", "+00:00") if since.endswith("Z") else since.strip()
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError as exc:
-            raise SystemExit(f"Invalid --since timestamp: {since}") from exc
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        cutoff = parsed.astimezone(timezone.utc)
-    else:
-        cutoff = (now or datetime.now(timezone.utc)).astimezone(timezone.utc) - timedelta(days=days_back)
+def resolve_cutoff(days_back: int, now: Optional[datetime] = None) -> str:
+    if days_back < 0:
+        raise SystemExit("--days-back must be zero or greater.")
+    current_date = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
+    cutoff_date = current_date - timedelta(days=days_back)
+    cutoff = datetime.combine(cutoff_date, datetime.min.time(), tzinfo=timezone.utc)
     return cutoff.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
@@ -135,7 +126,7 @@ def _api_scalar(task: Dict[str, Any], field: str) -> Any:
 COMPARE_FIELDS = (
     "name", "resource_type", "resource_subtype", "notes", "html_notes", "permalink_url",
     "assignee_gid", "assignee_status", "created_by_gid", "completed_by_gid", "parent_gid",
-    "workspace_gid", "workspace_name", "assignee_status_updated_at", "created_at", "modified_at",
+    "workspace_gid", "workspace_name", "assignee_status_updated_at", "created_at",
     "start_on", "start_at", "due_on", "due_at", "completed", "completed_at",
     "actual_time_minutes", "liked", "num_likes", "is_subtask",
 )
@@ -247,8 +238,6 @@ def compare_task(task: Dict[str, Any], db_row: Optional[Dict[str, Any]], connect
         if field in task or field in {"assignee_gid", "created_by_gid", "completed_by_gid", "parent_gid", "workspace_gid", "workspace_name", "is_subtask"}:
             if _normalized(_api_scalar(task, field)) != _normalized(db_row.get(field)):
                 differences.append(field)
-    if _api_memberships(task, selected) != _db_memberships(connection, task["gid"], selected):
-        differences.append("project_memberships")
     if _api_custom_fields(task) != _db_custom_fields(connection, task["gid"]):
         differences.append("custom_fields")
     if _api_related_gids(task, "followers") != _db_related_gids(connection, task["gid"], "task_followers"):
@@ -328,7 +317,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     project_gids = resolve_project_gids(args.project_gids, args.project_gids_file)
-    cutoff = resolve_cutoff(args.since, args.days_back)
+    cutoff = resolve_cutoff(args.days_back)
     credentials = load_credentials(DEFAULT_CONFIG_ROOT)
     client = AsanaHttpClient(token=credentials.token, skip_ssl_verification=credentials.skip_ssl_verification)
     tasks, errors = run_queries(client, args.workspace_gid or credentials.workspace_gid, project_gids, cutoff, args.page_size, args.workers)

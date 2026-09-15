@@ -150,7 +150,7 @@ Use the same cutoff for the live API comparison command:
 ```bash
 python3 -m scripts.export_recent_task_changes_api \
   --project-gids-file inputs/project_gids.txt \
-  --since 2026-09-01T12:00:00Z
+  --days-back 14
 ```
 
 **Latest sync time per core table** — quickly see how stale a snapshot is:
