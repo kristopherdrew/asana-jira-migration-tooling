@@ -79,7 +79,7 @@ def resolve_cutoff(since: Optional[str], days_back: int, now: Optional[datetime]
 def fetch_project_changes(client: AsanaHttpClient, workspace_gid: str, project_gid: str, cutoff: str, page_size: int) -> List[Dict[str, Any]]:
     params = {
         "projects.any": project_gid,
-        "modified_on.after": cutoff,
+        "modified_at.after": cutoff,
         "opt_fields": ",".join(TASK_FIELDS),
         "limit": str(page_size),
     }
@@ -145,7 +145,7 @@ def run_queries(client: AsanaHttpClient, workspace_gid: str, project_gids: Seque
             try:
                 payloads = future.result()
             except AsanaHttpError as exc:
-                logger.warning("Project %s query failed: HTTP %s", project_gid, exc.status)
+                logger.warning("Project %s query failed: HTTP %s: %s", project_gid, exc.status, exc.body or exc)
                 errors.append({"project_gid": project_gid, "status": exc.status, "body": exc.body})
             except Exception as exc:  # noqa: BLE001 - preserve per-project diagnostics
                 logger.warning("Project %s query failed: %s", project_gid, exc)
