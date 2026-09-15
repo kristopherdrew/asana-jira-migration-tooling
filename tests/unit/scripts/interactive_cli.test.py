@@ -172,17 +172,17 @@ class IncrementalArgsBuilderTest(TestCase):
             args = interactive_cli.args_get_tasks("INFO")
         self.assertEqual(args, ["--log-level", "INFO", "--team-gids", "team_42", "--workers", "8"])
 
-    def test_recent_task_changes_args_accept_project_file_and_explicit_cutoff(self) -> None:
+    def test_recent_task_changes_args_accept_project_file_and_days_back(self) -> None:
         with patch(
             "scripts.interactive_cli._prompt_project_gids_file", return_value="inputs/projects.txt"
-        ), patch("scripts.interactive_cli.prompt", side_effect=["2", "2026-09-01T12:00:00Z"]):
+        ), patch("scripts.interactive_cli.prompt", side_effect=["2", "21"]):
             args = interactive_cli.args_recent_task_changes_api("DEBUG")
         self.assertEqual(
             args,
             [
                 "--log-level", "DEBUG",
                 "--project-gids-file", "inputs/projects.txt",
-                "--since", "2026-09-01T12:00:00Z",
+                "--days-back", "21",
             ],
         )
 

@@ -1390,12 +1390,10 @@ def args_recent_task_changes_api(log_level: str) -> List[str]:
     else:
         raise SystemExit("Invalid project GID scope.")
 
-    since = prompt(
-        "Exact UTC cutoff (blank = last 14 days)",
-        default="",
-    ).strip()
-    if since:
-        args.extend(["--since", since])
+    days_back = prompt("Days back from today (UTC)", default="14").strip()
+    if not days_back.isdigit():
+        raise SystemExit("Days back must be a whole number zero or greater.")
+    args.extend(["--days-back", days_back])
     return args
 
 
