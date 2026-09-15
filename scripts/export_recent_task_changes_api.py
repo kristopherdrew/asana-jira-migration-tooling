@@ -17,7 +17,7 @@ from src.lib.database import Database, resolve_default_db_path
 from src.lib.http_client import AsanaHttpClient, AsanaHttpError
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.project_scope import parse_gid_list, read_project_gids_file
-from src.tasks.tasks import TASK_DETAIL_FIELDS
+from src.tasks.tasks import TASK_DETAIL_FIELDS, fetch_task_detail
 
 DEFAULT_CONFIG_ROOT = "."
 DEFAULT_OUTPUT_DIR = "exports"
@@ -151,6 +151,10 @@ def _db_memberships(connection: sqlite3.Connection, task_gid: str, selected: set
     return [tuple(row) for row in rows]
 
 
+def _db_selected_project_gids(connection: sqlite3.Connection, task_gid: str, selected: set[str]) -> List[str]:
+    return [membership[0] for membership in _db_memberships(connection, task_gid, selected)]
+
+
 def _api_memberships(task: Dict[str, Any], selected: set[str]) -> List[Tuple[Any, ...]]:
     memberships = []
     for membership in task.get("memberships") or []:
@@ -277,6 +281,41 @@ def compare_tasks(api_tasks: Sequence[Dict[str, Any]], db_tasks: Dict[str, Dict[
     return sorted(rows, key=lambda row: (row["api_modified_at"] or row["db_modified_at"] or "", row["task_gid"]), reverse=True)
 
 
+def resolve_missing_in_api_tasks(
+    client: AsanaHttpClient,
+    api_tasks: Sequence[Dict[str, Any]],
+    db_tasks: Dict[str, Dict[str, Any]],
+    connection: sqlite3.Connection,
+    project_gids: Sequence[str],
+    workers: int,
+) -> List[Dict[str, Any]]:
+    """Directly retrieve DB-only tasks to distinguish missing search results from stale data."""
+    selected = set(project_gids)
+    api_gids = {task.get("gid") for task in api_tasks}
+    missing_gids = sorted(gid for gid in db_tasks if gid not in api_gids)
+    if not missing_gids:
+        return []
+    resolved: List[Dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
+        futures = {
+            executor.submit(fetch_task_detail, client, task_gid, TASK_FIELDS): task_gid
+            for task_gid in missing_gids
+        }
+        for future in as_completed(futures):
+            task_gid = futures[future]
+            try:
+                task = future.result()
+            except AsanaHttpError as exc:
+                logger.warning("Direct task lookup %s failed: HTTP %s: %s", task_gid, exc.status, exc.body or exc)
+            except Exception as exc:  # noqa: BLE001 - retain missing_in_api for failed lookups
+                logger.warning("Direct task lookup %s failed: %s", task_gid, exc)
+            else:
+                task["_selected_project_gids"] = _db_selected_project_gids(connection, task_gid, selected)
+                resolved.append(task)
+                logger.info("Direct task lookup %s succeeded", task_gid)
+    return resolved
+
+
 def run_queries(client: AsanaHttpClient, workspace_gid: str, project_gids: Sequence[str], cutoff: str, page_size: int, workers: int) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     results: List[Tuple[str, List[Dict[str, Any]]]] = []
     errors: List[Dict[str, Any]] = []
@@ -329,7 +368,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     connection = database.connect()
     try:
         db_tasks = load_recent_db_tasks(connection, successful_projects, cutoff)
-        differences = compare_tasks(tasks, db_tasks, connection, successful_projects)
+        direct_tasks = resolve_missing_in_api_tasks(
+            client, tasks, db_tasks, connection, successful_projects, args.workers
+        )
+        differences = compare_tasks(tasks + direct_tasks, db_tasks, connection, successful_projects)
         csv_path = write_outputs(args.output_dir, differences)
     finally:
         connection.close()

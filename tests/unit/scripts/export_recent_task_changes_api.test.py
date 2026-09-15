@@ -5,7 +5,7 @@ import sqlite3
 from datetime import datetime, timezone
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from scripts.export_recent_task_changes_api import (
     deduplicate_tasks,
@@ -13,6 +13,7 @@ from scripts.export_recent_task_changes_api import (
     fetch_project_changes,
     resolve_cutoff,
     resolve_project_gids,
+    resolve_missing_in_api_tasks,
     write_outputs,
 )
 
@@ -90,6 +91,25 @@ class RecentTaskChangesApiTest(TestCase):
         rows = compare_tasks([{"gid": "api-only", "name": "API task"}], db_tasks, connection, ["p1"])
         self.assertEqual({row["task_gid"] for row in rows}, {"api-only", "db-only"})
         self.assertEqual({row["difference_types"] for row in rows}, {"missing_in_db", "missing_in_api"})
+        connection.close()
+
+    def test_resolve_missing_in_api_tasks_directly_fetches_db_only_tasks(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute("CREATE TABLE task_projects (task_gid TEXT, project_gid TEXT, section_gid TEXT, section_name TEXT, is_primary INTEGER)")
+        connection.execute("INSERT INTO task_projects VALUES ('subtask-1', 'project-1', NULL, NULL, 1)")
+        client = Mock()
+        db_tasks = {"subtask-1": {"gid": "subtask-1", "name": "Subtask"}}
+        with patch(
+            "scripts.export_recent_task_changes_api.fetch_task_detail",
+            return_value={"gid": "subtask-1", "name": "Subtask", "modified_at": "2026-09-03T00:00:00Z"},
+        ) as fetch:
+            resolved = resolve_missing_in_api_tasks(client, [], db_tasks, connection, ["project-1"], 2)
+        fetch.assert_called_once()
+        self.assertIs(fetch.call_args.args[0], client)
+        self.assertEqual(fetch.call_args.args[1], "subtask-1")
+        self.assertEqual(resolved[0]["gid"], "subtask-1")
+        self.assertEqual(resolved[0]["_selected_project_gids"], ["project-1"])
         connection.close()
 
     def test_write_outputs_writes_only_csv(self) -> None:
