@@ -139,7 +139,9 @@ During an interactive task sync, the CLI also records any project that had a pos
 Runs a read-only live Asana query for tasks modified after a UTC cutoff in selected projects,
 compares those records with the selected local SQLite snapshot, and writes only tasks with detected
 differences (ignoring modification timestamps and project-membership-only changes). It queries workspace task search once per project, follows pagination, and deduplicates
-multi-homed tasks. It does not write to SQLite. The command is also available under the
+multi-homed tasks. For tasks present locally but absent from search results, it performs a direct
+task lookup before retaining `missing_in_api`, which accounts for subtasks found through inherited
+project context. It does not write to SQLite. The command is also available under the
 Interactive CLI’s **Maintain & Validate** menu.
 ```bash
 python3 -m scripts.export_recent_task_changes_api \
