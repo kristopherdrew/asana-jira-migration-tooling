@@ -35,7 +35,7 @@ class RecentTaskChangesApiTest(TestCase):
         args, kwargs = client.get_paginated.call_args
         self.assertEqual(args[0], "/workspaces/workspace-1/tasks/search")
         self.assertEqual(kwargs["params"]["projects.any"], "project-1")
-        self.assertEqual(kwargs["params"]["modified_on.after"], "2026-09-01T00:00:00Z")
+        self.assertEqual(kwargs["params"]["modified_at.after"], "2026-09-01T00:00:00Z")
         self.assertEqual(kwargs["params"]["limit"], "25")
 
     def test_deduplicate_tasks_preserves_multi_project_provenance(self) -> None:
