@@ -114,6 +114,45 @@ LIMIT 50;
 
 ## Data freshness
 
+**Tasks changed in the last 14 days for selected projects** — replace the values in the
+`selected_projects` CTE and the cutoff with the exact UTC cutoff used by the API export:
+```sql
+WITH selected_projects(project_gid) AS (
+    VALUES ('<project_gid_1>'), ('<project_gid_2>')
+),
+selected_task_projects AS (
+    SELECT tp.task_gid,
+           GROUP_CONCAT(tp.project_gid, ';') AS selected_project_gids,
+           GROUP_CONCAT(p.name, ';') AS selected_project_names
+    FROM task_projects tp
+    JOIN selected_projects sp ON sp.project_gid = tp.project_gid
+    LEFT JOIN projects p ON p.gid = tp.project_gid
+    GROUP BY tp.task_gid
+)
+SELECT t.gid AS task_gid,
+       t.name,
+       t.modified_at,
+       t.synced_at,
+       t.completed,
+       t.completed_at,
+       t.parent_gid,
+       t.permalink_url,
+       stp.selected_project_gids,
+       stp.selected_project_names
+FROM tasks t
+JOIN selected_task_projects stp ON stp.task_gid = t.gid
+WHERE t.modified_at IS NOT NULL
+  AND julianday(t.modified_at) > julianday('<utc_cutoff>')
+ORDER BY t.modified_at DESC, t.gid;
+```
+
+Use the same cutoff for the live API query:
+```bash
+python3 -m scripts.export_recent_task_changes_api \
+  --project-gids-file inputs/project_gids.txt \
+  --since 2026-09-01T12:00:00Z
+```
+
 **Latest sync time per core table** — quickly see how stale a snapshot is:
 ```sql
 SELECT 'tasks'           AS tbl, MAX(synced_at) FROM tasks

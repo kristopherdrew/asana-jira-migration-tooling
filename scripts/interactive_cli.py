@@ -51,6 +51,7 @@ from scripts import (  # noqa: E402
     export_field_section_review_report,
     export_project_members_report,
     export_project_last_updated_report,
+    export_recent_task_changes_api,
     export_jira_migration_validation,
     export_all_reports_xlsx,
     export_recurring_tasks_report,
@@ -1374,6 +1375,28 @@ def args_initial_teams(log_level: str) -> List[str]:
 
 def args_report_defaults(log_level: str) -> List[str]:
     return build_common_args(log_level)
+
+
+def args_recent_task_changes_api(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    print("\nSelect recent Asana task-change scope:")
+    print("[1] Paste project GIDs (comma-separated)")
+    print("[2] Project GID file")
+    choice = prompt("Scope", default="1")
+    if choice == "1":
+        args.extend(["--project-gids", prompt_required("Project GIDs (comma-separated)")])
+    elif choice == "2":
+        args.extend(["--project-gids-file", _prompt_project_gids_file("recent task changes")])
+    else:
+        raise SystemExit("Invalid project GID scope.")
+
+    since = prompt(
+        "Exact UTC cutoff (blank = last 14 days)",
+        default="",
+    ).strip()
+    if since:
+        args.extend(["--since", since])
+    return args
 
 
 def args_get_tasks(log_level: str) -> List[str]:
@@ -3507,6 +3530,7 @@ def build_maintain_validate_menu(log_level: str) -> Dict[str, MenuItem]:
         "4": MenuItem("4", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
         "5": MenuItem("5", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
         "6": MenuItem("6", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
+        "7": MenuItem("7", "Export recent Asana task changes (live API)", lambda: run_script(export_recent_task_changes_api.main, args_recent_task_changes_api(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
