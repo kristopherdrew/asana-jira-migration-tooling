@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Set the "Last working day" date field on migrated project Jira issues.
+"""Set the "Last working day" and "Task Count (Asana)" fields on migrated project Jira issues.
 
 For every Asana project that was migrated to a Jira **Task** (the
 ``team_project_jira_mappings`` rows with ``kind='project'``), this PUTs the
 project's most recent task-update date — ``MAX(tasks.modified_at)``, the same value
 the project last-updated CSV report computes — onto the Jira issue's date custom
-field (``customfield_11475`` / "Last working day") via
+field (``customfield_11475`` / "Last working day"), and the total task count onto a
+numeric custom field (``--task-count-field-id`` / "Task Count (Asana)") via
 ``PUT /rest/api/3/issue/{key}``, editing the issues in place (comments, attachments,
 and history are preserved — no delete/recreate).
 
-Projects with no tasks (no last-updated date) are skipped, leaving their Jira field
-untouched. Unmapped projects are skipped too. The field is written as a plain
-``YYYY-MM-DD`` date string, which is what a Jira date custom field expects on edit;
-the field must be on the issue's edit screen or the per-issue PUT is reported as an
-error (the run continues). Defaults to the sandbox Jira site; pass ``--prod`` to
-target production. Mirrors ``update_personal_project_jira_urls.py``.
+Projects with no tasks (no last-updated date) are skipped, leaving their Jira fields
+untouched. Unmapped projects are skipped too. The date field is written as a plain
+``YYYY-MM-DD`` string; the task count is written as an integer. Both fields must be
+on the issue's edit screen or the per-issue PUT is reported as an error (the run
+continues). Defaults to the sandbox Jira site; pass ``--prod`` to target production.
+Mirrors ``update_personal_project_jira_urls.py``.
 """
 
 from __future__ import annotations
@@ -50,8 +51,10 @@ DEFAULT_OUTPUT_DIR = "exports"
 
 # "Last working day" date custom field the last-updated date is written to.
 DEFAULT_FIELD_ID = "customfield_11475"
+# "Task Count (Asana)" numeric custom field. No default — must be supplied via --task-count-field-id.
+DEFAULT_TASK_COUNT_FIELD_ID = ""
 
-REPORT_FIELDNAMES = ["project_gid", "project_name", "jira_key", "last_updated", "status", "message"]
+REPORT_FIELDNAMES = ["project_gid", "project_name", "jira_key", "last_updated", "task_count", "status", "message"]
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -63,7 +66,8 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
     )
     parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
-    parser.add_argument("--field-id", default=DEFAULT_FIELD_ID, help=f"Jira date custom field id to set (default: {DEFAULT_FIELD_ID}).")
+    parser.add_argument("--field-id", default=DEFAULT_FIELD_ID, help=f"Jira date custom field id for 'Last working day' (default: {DEFAULT_FIELD_ID}).")
+    parser.add_argument("--task-count-field-id", default=DEFAULT_TASK_COUNT_FIELD_ID, help="Jira numeric custom field id for 'Task Count (Asana)'. Required to update that field.")
     parser.add_argument("--team-gid", help="Optional team GID to scope the update to one team's projects.")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Concurrent workers for the update pass (default: {DEFAULT_WORKERS}).")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help=f"Directory for the run report CSV (default: {DEFAULT_OUTPUT_DIR}/).")
@@ -74,12 +78,13 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _result(project_gid: str, project_name: str, jira_key: str, last_updated: str, status: str, message: str) -> Dict[str, str]:
+def _result(project_gid: str, project_name: str, jira_key: str, last_updated: str, task_count: str, status: str, message: str) -> Dict[str, str]:
     return {
         "project_gid": project_gid,
         "project_name": project_name,
         "jira_key": jira_key,
         "last_updated": last_updated,
+        "task_count": task_count,
         "status": status,
         "message": message,
     }
@@ -100,6 +105,7 @@ def set_project_last_updated_jira_field(
     output_dir: Path,
     *,
     field_id: str = DEFAULT_FIELD_ID,
+    task_count_field_id: str = DEFAULT_TASK_COUNT_FIELD_ID,
     team_gid: Optional[str] = None,
     workers: int = DEFAULT_WORKERS,
     limit: Optional[int] = None,
@@ -124,32 +130,38 @@ def set_project_last_updated_jira_field(
     }
 
     results: List[Dict[str, str]] = []
-    pending: List[Dict[str, object]] = []  # {project_gid, project_name, jira_key, date_str, payload}
+    pending: List[Dict[str, object]] = []  # {project_gid, project_name, jira_key, date_str, task_count, payload}
     for row in project_rows:
         project_gid = row["project_gid"]
         project_name = row["project_name"]
         jira_key = project_to_key.get(project_gid)
         date_str = format_report_date(row["latest_task_update"])
+        task_count = row["task_count"]
+        task_count_str = str(task_count) if task_count is not None else ""
         if not jira_key:
-            results.append(_result(project_gid, project_name, "", date_str, "skipped-unmapped", "no Jira issue mapped"))
+            results.append(_result(project_gid, project_name, "", date_str, task_count_str, "skipped-unmapped", "no Jira issue mapped"))
             continue
         if not date_str:
-            results.append(_result(project_gid, project_name, jira_key, "", "skipped-no-date", "project has no tasks / last-updated date"))
+            results.append(_result(project_gid, project_name, jira_key, "", task_count_str, "skipped-no-date", "project has no tasks / last-updated date"))
             continue
-        payload = {"fields": {field_id: date_str}}
+        fields: Dict[str, object] = {field_id: date_str}
+        if task_count_field_id:
+            fields[task_count_field_id] = task_count
+        payload = {"fields": fields}
         pending.append(
             {
                 "project_gid": project_gid,
                 "project_name": project_name,
                 "jira_key": jira_key,
                 "date_str": date_str,
+                "task_count_str": task_count_str,
                 "payload": payload,
             }
         )
 
     if limit is not None and len(pending) > limit:
         for p in pending[limit:]:
-            results.append(_result(p["project_gid"], p["project_name"], p["jira_key"], p["date_str"], "skipped-limit", ""))
+            results.append(_result(p["project_gid"], p["project_name"], p["jira_key"], p["date_str"], p["task_count_str"], "skipped-limit", ""))
         pending = pending[:limit]
 
     logger.info(
@@ -158,10 +170,14 @@ def set_project_last_updated_jira_field(
         len(results),
     )
 
+    fields_updating = [f"'{field_id}' (Last working day)"]
+    if task_count_field_id:
+        fields_updating.append(f"'{task_count_field_id}' (Task Count (Asana))")
+
     if dry_run:
         for p in pending:
             logger.info("[dry-run] %s payload:\n%s", p["jira_key"], json.dumps(p["payload"], indent=2))
-            results.append(_result(p["project_gid"], p["project_name"], p["jira_key"], p["date_str"], "dry-run-updated", ""))
+            results.append(_result(p["project_gid"], p["project_name"], p["jira_key"], p["date_str"], p["task_count_str"], "dry-run-updated", ""))
     elif pending:
         if client is None:
             client = JiraClient(
@@ -172,7 +188,7 @@ def set_project_last_updated_jira_field(
             )
         if not assume_yes:
             answer = input(
-                f"About to set {field_id} on {len(pending)} Jira issue(s). Continue? [y/N] "
+                f"About to update {', '.join(fields_updating)} on {len(pending)} Jira issue(s). Continue? [y/N] "
             ).strip().lower()
             if answer not in {"y", "yes"}:
                 raise SystemExit("Aborted by user.")
@@ -181,9 +197,9 @@ def set_project_last_updated_jira_field(
         for p in pending:
             error = outcomes.get(p["jira_key"])
             if error:
-                results.append(_result(p["project_gid"], p["project_name"], p["jira_key"], p["date_str"], "error", error))
+                results.append(_result(p["project_gid"], p["project_name"], p["jira_key"], p["date_str"], p["task_count_str"], "error", error))
             else:
-                results.append(_result(p["project_gid"], p["project_name"], p["jira_key"], p["date_str"], "updated", ""))
+                results.append(_result(p["project_gid"], p["project_name"], p["jira_key"], p["date_str"], p["task_count_str"], "updated", ""))
 
     report_path = write_report(results, output_dir / "project_last_updated_jira_update_report.csv")
     return report_path
@@ -208,6 +224,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             jira_base_url=jira_base_url,
             output_dir=Path(args.output_dir),
             field_id=args.field_id,
+            task_count_field_id=args.task_count_field_id,
             team_gid=args.team_gid,
             workers=max(args.workers, 1),
             limit=args.limit,
