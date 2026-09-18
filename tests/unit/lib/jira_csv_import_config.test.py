@@ -168,9 +168,9 @@ class JiraCsvImportConfigTest(TestCase):
             csv_path = Path(tmpdir) / "archive.csv"
             csv_path.write_text(
                 "task_name,modified_section,Section,Asana Project Link,Asana Task Link,"
-                "External issue ID,start_on,completed,Tags\n"
+                "External issue ID,start_on,completed,Resolution,Tags\n"
                 "Task,Open,Inbox,https://asana/project,https://asana/task,1,"
-                "01/Jan/25 1:00 PM,Yes,Migration\n",
+                "01/Jan/25 1:00 PM,Yes,Done,Migration\n",
                 encoding="utf-8",
             )
             settings = ArchiveImportSettings(
@@ -187,10 +187,12 @@ class JiraCsvImportConfigTest(TestCase):
             )
             self.assertEqual(mappings["modified_section"]["jira.field"], "status")
             self.assertEqual(mappings["Tags"]["jira.field"], "labels")
-            self.assertEqual(mappings["completed"]["jira.field"], "resolution")
-            self.assertTrue(mappings["completed"]["manualMapping"])
+            self.assertEqual(mappings["Resolution"]["jira.field"], "resolution")
+            self.assertEqual(mappings["Resolution"]["manualMapping"], "false")
+            self.assertNotIn("completed", mappings)
             self.assertNotIn("modified_section", config["config.value.mappings"])
             self.assertNotIn("completed", config["config.value.mappings"])
+            self.assertNotIn("Resolution", config["config.value.mappings"])
             json.dumps(config)
 
     def test_config_maps_collaborator_atlassian_ids_to_watches(self) -> None:

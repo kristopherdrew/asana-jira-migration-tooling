@@ -2812,6 +2812,9 @@ def args_set_project_last_updated_jira_field(log_level: str) -> List[str]:
     )
     if team_gid:
         args.extend(["--team-gid", team_gid])
+    task_count_field_id = prompt("Jira field ID for 'Task Count (Asana)' (blank = skip)", default="")
+    if task_count_field_id:
+        args.extend(["--task-count-field-id", task_count_field_id])
     if confirm("Dry run (print payloads, update nothing)?", default=True):
         args.append("--dry-run")
     return args

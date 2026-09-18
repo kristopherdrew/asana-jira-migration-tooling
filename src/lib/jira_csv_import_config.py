@@ -386,6 +386,7 @@ SYSTEM_FIELD_MAPPINGS = {
     "assignee_atlassian_id": {"jira.field": "assignee", "userChanged": "false", "manualMapping": "false"},
     "collaborator_atlassian_id": {"jira.field": "watches", "userChanged": "false", "manualMapping": "false"},
     "Tags": {"jira.field": "labels", "userChanged": "false", "manualMapping": "false"},
+    "Resolution": {"jira.field": "resolution", "userChanged": "false", "manualMapping": "false"},
 }
 
 CANONICAL_TASK_IMPORT_COLUMNS = tuple(SYSTEM_FIELD_MAPPINGS) + (
@@ -474,12 +475,6 @@ def build_archive_import_config_for_columns(
                 "existing.custom.field": numeric_id,
             }
     value_mappings: Dict[str, object] = {}
-    if "completed" in header:
-        mappings["completed"] = {
-            "jira.field": "resolution",
-            "userChanged": "true",
-            "manualMapping": "true",
-        }
     return {
         "config.version": "2.0",
         "config.project.from.csv": "true",
