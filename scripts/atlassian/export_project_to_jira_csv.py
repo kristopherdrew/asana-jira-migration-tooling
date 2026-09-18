@@ -2934,6 +2934,7 @@ def export_project(
                 "due_date",
                 "completed",
                 "completed_at",
+                "Resolution",
                 "actual_time_minutes",
             ]
         )
@@ -2993,6 +2994,7 @@ def export_project(
             completed_flag = ""
             if task["completed"] is not None:
                 completed_flag = "Yes" if task["completed"] else "No"
+            resolution_value = "Done" if task["completed"] else ""
             depth = task["hierarchy_depth"]
             hierarchy_value = "" if depth is None else str(depth)
             jira_parent_gid = task["jira_parent_gid"] or ""
@@ -3184,6 +3186,7 @@ def export_project(
                     due_date,
                     completed_flag,
                     completed_at_value,
+                    resolution_value,
                     actual_time_value,
                 ]
             )

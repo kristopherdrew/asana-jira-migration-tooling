@@ -309,6 +309,7 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(len(comment_columns), 2)
         asana_id_index = header.index("External issue ID")
         self.assertNotIn("completed", header)
+        self.assertNotIn("Resolution", header)
         assignee_atl_index = header.index("assignee_atlassian_id")
         creator_index = header.index("creator")
         creator_email_index = header.index("creator_email")
@@ -414,6 +415,23 @@ class ExportProjectToJiraCsvTest(TestCase):
         )
         self.assertEqual(summary_rows[1], ["Customer Tier", "cf_text", "2", "Yes"])
         self.assertEqual(summary_rows[2], ["Region", "cf_multi", "2", "Yes"])
+
+    def test_export_maps_completed_tasks_to_resolution_done(self) -> None:
+        self.connection.execute("UPDATE tasks SET completed = 1 WHERE gid = ?", ("task_1",))
+        self.connection.commit()
+
+        csv_path = export_project(
+            str(self.db_path), "proj_1", self.workspace / "exports", filename="resolution.csv",
+            jira_base_url=self.jira_base_url, prompt_for_custom_fields=False,
+        )
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        header = rows[0]
+        self.assertIn("Resolution", header)
+        resolution_index = header.index("Resolution")
+        rows_by_gid = {row[header.index("External issue ID")]: row for row in rows[1:]}
+        self.assertEqual(rows_by_gid["task_1"][resolution_index], "Done")
+        self.assertEqual(rows_by_gid["task_2"][resolution_index], "")
 
     def test_export_substitutes_dated_placeholders_for_blank_titles_and_comments(self) -> None:
         self.connection.execute("UPDATE tasks SET name = ? WHERE gid = ?", ("   ", "task_1"))

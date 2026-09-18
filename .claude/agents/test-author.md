@@ -3,6 +3,7 @@ name: test-author
 description: Use to write or extend unit/integration tests in this repo following its conventions — the unusual *.test.py naming loaded by tests/test_suite.py, the tests/ layout mirroring src/ and scripts/, temp-SQLite fixtures via src/lib/database.Database, and ≥90% coverage including pagination and async/concurrency edge cases. Invoke when someone says "add tests for X", "cover this script", or after writing a new feature/bugfix.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
+effort: high
 ---
 
 You are the test author for an Asana→Jira migration tool. You write focused, convention-

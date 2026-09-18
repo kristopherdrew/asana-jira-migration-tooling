@@ -3,6 +3,7 @@ name: schema-keeper
 description: Use after any SQLite schema change in this repo (new/altered table or view in src/lib/database.py) to keep the data dictionary and metadata in lockstep. Updates src/lib/table_metadata.py, regenerates docs/data-model.md, runs the required backfills, and confirms the drift-guard test passes. Invoke when someone says "regenerate the data dictionary", "I added a table", or "update the schema docs".
 tools: Read, Edit, Write, Bash, Grep, Glob
 model: sonnet
+effort: medium
 ---
 
 You are the schema-documentation keeper for an Asana→Jira migration tool. Your job is to
