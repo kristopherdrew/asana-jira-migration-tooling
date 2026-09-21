@@ -124,6 +124,24 @@ When you provide `--export-id`, every exported task GID is persisted to the `exp
 
 When `--export-id` is present and you're writing to the default `exports/` directory, each run (even single-project exports) now uses a dedicated `exports/export-XX-<export-id>` folder so the task CSV, field counts, link modifications, and skipped-task reports stay grouped together.
 
+### Merge Project Export CSVs
+Consolidates multiple per-project Jira export CSVs (from [Export Project Tasks To Jira CSV](#export-project-tasks-to-jira-csv) or the [archival exporter](#export-archival-project-tasks-to-jira-csv)) into one file — useful when a migration wave was exported project-by-project and needs a single CSV for the Jira import wizard. Builds a union of column headers across all input files (repeating a label positionally if one file has more occurrences of it than another, e.g. multiple `Labels` columns) and writes one combined task CSV. By default it also merges each file's companion `*_field_counts.csv` and `*_link_modifications.csv`/`.txt` sidecars (when present) into their own consolidated outputs. If the combined header includes `hierarchy_depth`, rows are sorted parents-before-children (by depth, then `current_project`, then parsed `created_at`).
+```bash
+python3 -m scripts.merge_project_exports --inputs "exports/*-*.csv"
+# multiple explicit patterns/paths, with a source-tracking column
+python3 -m scripts.merge_project_exports --inputs exports/ProjectA-20260101-1200.csv exports/ProjectB-20260101-1201.csv --source-column source_project --strip-suffix "-20260101-1200"
+```
+Required flags:
+- `--inputs <pattern...>` one or more glob patterns or literal file paths for the per-project task CSVs (companion `_field_counts.csv`/`_link_modifications.csv`/`.txt` files matched by pattern are excluded from the task-CSV merge and handled separately).
+
+Optional flags:
+- `--output <path>` for the combined task CSV (default `exports/_Consolidated-<timestamp>_tasks.csv`).
+- `--source-column <name>` to add a column recording each row's originating file stem (with export/timestamp suffixes stripped); errors if the name collides with an existing column.
+- `--strip-suffix <suffix>` to additionally strip a shared suffix (e.g. a common timestamp) from the derived source value.
+- `--no-merge-field-counts` / `--no-merge-link-mods` to skip merging the respective companion files (merged by default when present).
+- `--field-counts-output <path>` / `--link-mods-output <path>` to override the companion output paths (default `<output_stem>_field_counts.csv` / `<output_stem>_link_modifications.csv`).
+- `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
+
 ### Manage Export IDs
 Reviews and clears the persisted `exported_tasks` history that powers `--export-id` skipping. It does not add task GIDs manually; new IDs are created when an export runs with `--export-id`.
 ```bash
@@ -274,12 +292,14 @@ Writes a run report CSV (`personal_project_url_update_report.csv`) with `asana_g
 ### Set Project "Last Working Day" Field
 New issues created by [Create Team/Project Jira Issues](#create-teamproject-jira-issues-direct-api) already get this date at creation (the `Last Working Day`→`customfield_11475` field-map entry). This script is the way to **update** it on issues that already exist — a re-run after more Asana data has synced, or a backfill of issues created before the field was folded in.
 
-Pushes each Asana project's most recent task-update date onto the migrated Jira **Task** issue that represents it. The value is `MAX(tasks.modified_at)` per project — the same figure the [project last-updated report](reports.md) computes — written as a `YYYY-MM-DD` date string to the "Last working day" date custom field (`customfield_11475` by default) via an in-place `PUT /rest/api/3/issue/{key}` (comments, attachments, and history are preserved). Only `team_project_jira_mappings` rows with `kind='project'` are targeted (Team→Epic issues are left alone). Projects with no tasks (no last-updated date) are skipped (`skipped-no-date`, field left untouched); unmapped projects are `skipped-unmapped`.
+Pushes each Asana project's most recent task-update date onto the migrated Jira **Task** issue that represents it. The value is `MAX(tasks.modified_at)` per project — the same figure the [project last-updated report](reports.md) computes — written as a `YYYY-MM-DD` date string to the "Last working day" date custom field (`customfield_11475` by default) via an in-place `PUT /rest/api/3/issue/{key}` (comments, attachments, and history are preserved). The same PUT can also write the project's actual task count onto a "Task Count (Asana)" numeric custom field when `--task-count-field-id` is supplied (no default — omit the flag to skip that field entirely). Only `team_project_jira_mappings` rows with `kind='project'` are targeted (Team→Epic issues are left alone). Projects with no tasks (no last-updated date) are skipped (`skipped-no-date`, field left untouched); unmapped projects are `skipped-unmapped`.
 ```bash
 # Safe preview first (no writes):
 python3 -m scripts.atlassian.set_project_last_updated_jira_field --dry-run
 # Then a small live sandbox batch, then promote to --prod:
 python3 -m scripts.atlassian.set_project_last_updated_jira_field --limit 2 --yes
+# Also write the Task Count (Asana) numeric field in the same PUT:
+python3 -m scripts.atlassian.set_project_last_updated_jira_field --task-count-field-id customfield_11480 --prod
 ```
 The field is written as a plain date string, which is what a Jira date custom field expects on edit; the field must be present on the issue's edit screen or that issue's PUT is reported as an `error` (the run continues). Defaults to the sandbox site; pass `--prod` for production.
 
@@ -289,12 +309,13 @@ Required flags:
 Optional flags:
 - `--prod` to target production (`JIRA_BASE_URL`); omit for the sandbox `JIRA_SANDBOX_BASE_URL`.
 - `--field-id <id>` to write a different Jira date custom field (default `customfield_11475`).
+- `--task-count-field-id <id>` to also write the project's actual task count onto a Jira numeric custom field in the same PUT (no default — omit to skip updating a task-count field).
 - `--team-gid <gid>` to scope the update to one team's projects.
 - `--workers <n>` concurrent update workers (default 4); `--limit <n>` caps updates this run.
 - `--dry-run` print the PUT payloads without updating; `--yes` skip the confirmation prompt.
 - `--database <path>`, `--output-dir <path>`, `--log-level <LEVEL>` as elsewhere.
 
-Writes a run report CSV (`project_last_updated_jira_update_report.csv`) with `project_gid`, `project_name`, `jira_key`, `last_updated`, `status` (`updated`, `skipped-no-date`, `skipped-unmapped`, `skipped-limit`, `dry-run-updated`, or `error`), and a `message`.
+Writes a run report CSV (`project_last_updated_jira_update_report.csv`) with `project_gid`, `project_name`, `jira_key`, `last_updated`, `task_count`, `status` (`updated`, `skipped-no-date`, `skipped-unmapped`, `skipped-limit`, `dry-run-updated`, or `error`), and a `message`.
 
 ### Clear Jira Task Keys
 Removes stored Jira mappings when you need a fresh slate before re-importing.

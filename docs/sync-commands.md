@@ -208,6 +208,21 @@ Optional flags:
 - `--detail-limit <n>` max status updates to fetch full detail / nested stories for (default 5).
 - `--log-level <LEVEL>`.
 
+### Debug Fetch Task Comments (Diagnostic)
+Read-only probe (no DB writes) for comparing a task's raw story feed against the filtered comment list `get_task_extras.py` actually stores. Fetches every story on `--task-gid` via `GET /tasks/{gid}/stories` and prints each one prefixed `RAW`, then calls the same `fetch_task_comments` helper the sync path uses and prints the filtered (`resource_subtype == comment_added`) subset prefixed `FILTERED`, so you can see exactly which raw stories get dropped and why.
+```bash
+python3 -m scripts.debug_fetch_task_comments --task-gid <gid>
+```
+Required flags:
+- (none; `--task-gid` defaults to a specific task GID left over from prior debugging — always pass your own).
+
+Optional flags:
+- `--task-gid <gid>` the task to inspect.
+- `--page-size <n>` pagination limit for the stories endpoint (default 100).
+- `--preview-length <n>` characters of story text to print per line (default 200).
+
+Not wired into the Interactive CLI; run it directly like the other diagnostic probes.
+
 ### Inspect Task Apps Data (Diagnostic)
 Read-only probe (no DB writes) for understanding what Asana returns for the Apps section / URL attachment surface on a single task. For the given `--task-gid`, it calls `GET /attachments?parent=<task_gid>` with URL/app-oriented attachment fields (`resource_subtype`, `host`, `service`, `view_url`, `permanent_url`, `download_url`, `connected_to_app`) and, by default, follows each returned attachment with `GET /attachments/<attachment_gid>`. The script prints formatted JSON to stdout and can also write the same payload to `exports/task_apps_probe_<gid>_<timestamp>.json`.
 ```bash
