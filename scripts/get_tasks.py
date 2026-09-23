@@ -304,6 +304,16 @@ def process_tasks_for_project(
         if committed_since:
             connection.commit()
 
+        deleted_count = database.mark_tasks_as_deleted(
+            connection,
+            seen_task_gids,
+            sync_time,
+            scope_project_gids={project_gid},
+        )
+        if deleted_count > 0:
+            connection.commit()
+            logger.info("%sMarked %s task(s) as deleted for '%s'.", prefix, deleted_count, project_name)
+
         logger.info("%sCompleted task sync for '%s'. Total tasks processed: %s.", prefix, project_name, processed)
     finally:
         detail_executor.shutdown(wait=True)

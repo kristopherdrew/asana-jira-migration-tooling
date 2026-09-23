@@ -104,6 +104,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     recurrence_checked_at TEXT,
     is_subtask INTEGER,
     is_personal INTEGER DEFAULT 0,
+    is_deleted INTEGER DEFAULT 0,
+    deleted_at TEXT,
     hierarchy_depth INTEGER,
     synced_at TEXT NOT NULL
 );
@@ -1683,6 +1685,8 @@ class Database:
             "recurrence_checked_at": synced_at.isoformat() if "recurrence" in task else None,
             "is_subtask": _bool_to_int(bool(parent.get("gid"))),
             "is_personal": _bool_to_int(task.get("is_personal", False)),
+            "is_deleted": 0,
+            "deleted_at": None,
             "synced_at": synced_at.isoformat(),
         }
         connection.execute(
@@ -1694,7 +1698,7 @@ class Database:
                 assignee_status_updated_at, created_at, modified_at, start_on,
                 start_at, due_on, due_at, completed, completed_at,
                 actual_time_minutes, liked, num_likes, recurrence, recurrence_checked_at,
-                is_subtask, is_personal, synced_at
+                is_subtask, is_personal, is_deleted, deleted_at, synced_at
             )
             VALUES (
                 :gid, :name, :resource_type, :resource_subtype, :notes, :html_notes,
@@ -1703,7 +1707,7 @@ class Database:
                 :assignee_status_updated_at, :created_at, :modified_at, :start_on,
                 :start_at, :due_on, :due_at, :completed, :completed_at,
                 :actual_time_minutes, :liked, :num_likes, :recurrence, :recurrence_checked_at,
-                :is_subtask, :is_personal, :synced_at
+                :is_subtask, :is_personal, :is_deleted, :deleted_at, :synced_at
             )
             ON CONFLICT(gid) DO UPDATE SET
                 name=excluded.name,
@@ -1735,6 +1739,8 @@ class Database:
                 recurrence_checked_at=excluded.recurrence_checked_at,
                 is_subtask=excluded.is_subtask,
                 is_personal=excluded.is_personal,
+                is_deleted=excluded.is_deleted,
+                deleted_at=excluded.deleted_at,
                 synced_at=excluded.synced_at
             """,
             payload,
@@ -3305,6 +3311,75 @@ class Database:
                 """,
                 rows,
             )
+
+    def mark_tasks_as_deleted(
+        self,
+        connection: sqlite3.Connection,
+        found_task_gids: Set[str],
+        deleted_at: datetime,
+        scope_project_gids: Optional[Set[str]] = None,
+    ) -> int:
+        """Mark tasks as deleted if not found in the current sync.
+
+        Args:
+            connection: SQLite connection.
+            found_task_gids: Set of task GIDs found in the current sync.
+            deleted_at: Timestamp to record when deletion was detected.
+            scope_project_gids: Optional set of project GIDs to scope the deletion check.
+                If provided, only tasks in these projects can be marked deleted.
+
+        Returns:
+            Number of tasks marked as deleted.
+        """
+        deleted_at_iso = deleted_at.isoformat()
+
+        if scope_project_gids:
+            placeholders = ",".join("?" * len(scope_project_gids))
+            query = f"""
+                UPDATE tasks
+                SET is_deleted = 1, deleted_at = ?
+                WHERE is_deleted = 0
+                  AND gid NOT IN ({','.join('?' * len(found_task_gids)) if found_task_gids else "''"}  )
+                  AND gid IN (
+                    SELECT DISTINCT task_gid FROM task_projects
+                    WHERE project_gid IN ({placeholders})
+                  )
+            """
+            params = [deleted_at_iso] + list(found_task_gids) + list(scope_project_gids)
+        else:
+            if found_task_gids:
+                placeholders = ",".join("?" * len(found_task_gids))
+                query = f"""
+                    UPDATE tasks
+                    SET is_deleted = 1, deleted_at = ?
+                    WHERE is_deleted = 0 AND gid NOT IN ({placeholders})
+                """
+                params = [deleted_at_iso] + list(found_task_gids)
+            else:
+                query = """
+                    UPDATE tasks
+                    SET is_deleted = 1, deleted_at = ?
+                    WHERE is_deleted = 0
+                """
+                params = [deleted_at_iso]
+
+        cursor = connection.execute(query, params)
+        return cursor.rowcount
+
+
+def build_task_deletion_filter_clause(include_deleted: bool = False) -> str:
+    """Return a SQL WHERE clause fragment for filtering deleted tasks.
+
+    By default, filters out deleted tasks (is_deleted = 0). When include_deleted=True,
+    returns an empty string (no filtering).
+
+    Example: query = f"SELECT * FROM tasks WHERE {build_task_deletion_filter_clause()} AND ..."
+
+    See DELETION_FEATURE_MIGRATION.md for comprehensive guide to updating all export scripts.
+    """
+    if include_deleted:
+        return ""
+    return "is_deleted = 0"
 
 
 def synced_at_timestamp(override: Optional[datetime] = None) -> datetime:
