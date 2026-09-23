@@ -527,6 +527,73 @@ class ExportProjectToJiraCsvTest(TestCase):
         self.assertEqual(rows_by_gid["task_1"][jira_parent_idx], "proj_1")
         self.assertEqual(rows_by_gid["task_2"][jira_parent_idx], "proj_1")
 
+    def test_export_project_with_no_tasks_writes_synthetic_epic_instead_of_failing(self) -> None:
+        self.connection.execute(
+            "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
+            ("proj_empty", "Empty Project", self.sync_time.isoformat()),
+        )
+        self.connection.commit()
+
+        output_dir = self.workspace / "exports"
+        with self.assertLogs("scripts.atlassian.export_project_to_jira_csv", level="WARNING") as logs:
+            csv_path = export_project(
+                str(self.db_path),
+                "proj_empty",
+                output_dir,
+                filename="empty_project.csv",
+                jira_base_url=self.jira_base_url,
+                prompt_for_custom_fields=False,
+            )
+        self.assertIn("No tasks found for project proj_empty", "\n".join(logs.output))
+
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["task_gid"], "proj_empty")
+        self.assertEqual(rows[0]["task_name"], "Empty Project")
+        self.assertEqual(rows[0]["jira_hierarchy_depth"], "Epic")
+
+    def test_export_project_with_no_tasks_but_project_updates_adds_them_as_comments(self) -> None:
+        self.connection.execute(
+            "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
+            ("proj_empty", "Empty Project", self.sync_time.isoformat()),
+        )
+        self.connection.commit()
+        self.database.replace_project_updates(
+            self.connection,
+            "proj_empty",
+            [
+                {
+                    "gid": "update_1",
+                    "kind": "status_update",
+                    "title": "Weekly Check-in",
+                    "status_type": "on_track",
+                    "text": "Everything is fine.",
+                    "html_text": "<body>Everything is fine.</body>",
+                    "created_at": "2025-01-02T00:00:00.000Z",
+                    "created_by_gid": "user_1",
+                }
+            ],
+            self.sync_time,
+        )
+        self.connection.commit()
+
+        output_dir = self.workspace / "exports"
+        csv_path = export_project(
+            str(self.db_path),
+            "proj_empty",
+            output_dir,
+            filename="empty_project_with_updates.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+        )
+
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        self.assertEqual(len(rows), 1)
+        self.assertIn("Weekly Check-in", rows[0]["Comment"])
+        self.assertIn("Everything is fine.", rows[0]["Comment"])
+
     def test_html_hyperlinks_convert_to_jira_format(self) -> None:
         html_notes = (
             "<body>See <a href=\"https://docs.honeycomb.io/troubleshoot/product-lifecycle/"

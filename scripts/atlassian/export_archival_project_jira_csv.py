@@ -35,10 +35,12 @@ from scripts.atlassian.export_project_to_jira_csv import (
     ensure_tasks_suffix,
     export_task_name,
     extract_profile_gid_overrides,
+    fetch_project_update_comment_rows,
     format_export_datetime,
     format_jira_hierarchy_depth,
     collaborator_column_headers,
     format_task_collaborator_values,
+    format_comment_row,
     format_project_entry,
     format_user_display_name,
     load_project_names,
@@ -227,10 +229,36 @@ def export_archival_project(
 
         bundle = _bundle()
         tasks = [dict(row) for row in bundle["tasks"]]
+        project_has_no_tasks = not tasks
         if task_gids is not None:
             tasks = [task for task in tasks if task["gid"] in task_gids]
-        if not tasks:
-            raise NoTasksFoundError(f"No tasks found for project {project_gid}.")
+            if not tasks and not project_has_no_tasks:
+                raise NoTasksFoundError(
+                    f"None of the requested task gids were found in project {project_gid}."
+                )
+
+        epic_comment_strings: List[str] = []
+        if project_has_no_tasks:
+            logger.warning(
+                "No tasks found for project %s; exporting a synthetic epic only.",
+                project_gid,
+            )
+            for row in fetch_project_update_comment_rows(connection, project_gid):
+                epic_comment_strings.append(
+                    format_comment_row(
+                        row,
+                        user_map,
+                        user_display_names,
+                        project_names,
+                        bundle["missing_accounts"],
+                        jira_base_url,
+                        bundle["attachment_names"],
+                        fallback_atlassian_id,
+                    )
+                )
+                record_user_association(
+                    row["created_by_gid"], "commenter", row["author_email"], bundle["associations"], user_emails
+                )
 
         if _needs_flattened_refresh(tasks):
             logger.info(
@@ -270,7 +298,7 @@ def export_archival_project(
                     continue
                 retained_tasks.append(task)
             tasks = retained_tasks
-            if not tasks:
+            if not tasks and not project_has_no_tasks:
                 logger.info(
                     "All tasks for archival project %s are already recorded for export_id %s; "
                     "skipping export.",
@@ -281,7 +309,7 @@ def export_archival_project(
 
         if seen_task_gids is not None:
             tasks = [task for task in tasks if task["gid"] not in seen_task_gids]
-            if not tasks:
+            if not tasks and not project_has_no_tasks:
                 logger.info(
                     "All tasks for archival project %s were already included in this export run; "
                     "skipping.",
@@ -305,7 +333,7 @@ def export_archival_project(
         last_active: Dict[str, str] = bundle["last_active"]
         max_sections = bundle["max_sections"]
         max_tags = bundle["max_tags"]
-        max_comments = bundle["max_comments"]
+        max_comments = max(bundle["max_comments"], len(epic_comment_strings))
 
         project_row = connection.execute(
             "SELECT name FROM projects WHERE gid = ?", (project_gid,)
@@ -577,8 +605,16 @@ def export_archival_project(
         project_jira_key = project_jira.get("jira_project_key", "")
         project_display_name = project_name or project_gid
 
-        def _make_synthetic_row(gid: str, depth_label: str, name: str, parent_gid: str = "") -> List[str]:
+        def _make_synthetic_row(
+            gid: str,
+            depth_label: str,
+            name: str,
+            parent_gid: str = "",
+            comments: Optional[List[str]] = None,
+        ) -> List[str]:
             row = [""] * len(header)
+            if comments and max_comments:
+                row[len(row) - max_comments : len(row) - max_comments + len(comments)] = comments
             values = {
                 "current_project": current_project_display,
                 "jira_project_name": project_jira_name,
@@ -661,7 +697,9 @@ def export_archival_project(
             # Default: one synthetic Epic per project.
             epic_gid = f"{project_gid}::archival::epic"
             synthetic_rows.append(
-                _make_synthetic_row(epic_gid, "Epic", project_display_name)
+                _make_synthetic_row(
+                    epic_gid, "Epic", project_display_name, comments=epic_comment_strings
+                )
             )
             for row in rows:
                 if not row[jira_parent_index] and row[jira_depth_index] == "Task":
