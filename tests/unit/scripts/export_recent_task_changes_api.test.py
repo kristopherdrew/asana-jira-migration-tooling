@@ -11,6 +11,7 @@ from scripts.export_recent_task_changes_api import (
     deduplicate_tasks,
     compare_tasks,
     fetch_project_changes,
+    load_jira_keys,
     resolve_cutoff,
     resolve_project_gids,
     resolve_missing_in_api_tasks,
@@ -52,45 +53,51 @@ class RecentTaskChangesApiTest(TestCase):
         self.assertEqual(tasks[0]["_queried_project_gids"], ["p1", "p2"])
 
     def test_compare_tasks_returns_only_differences(self) -> None:
-        connection = sqlite3.connect(":memory:")
-        connection.row_factory = sqlite3.Row
-        connection.execute("CREATE TABLE task_projects (task_gid TEXT, project_gid TEXT, section_gid TEXT, section_name TEXT, is_primary INTEGER)")
-        connection.execute("CREATE TABLE task_custom_fields (task_gid TEXT, custom_field_gid TEXT, text_value TEXT, number_value REAL, date_value TEXT, display_value TEXT, is_value_set INTEGER, enabled INTEGER, enum_option_gid TEXT)")
-        connection.execute("CREATE TABLE task_custom_field_multi_enum (task_gid TEXT, custom_field_gid TEXT, enum_option_gid TEXT, position INTEGER)")
-        connection.execute("CREATE TABLE task_followers (task_gid TEXT, user_gid TEXT)")
-        connection.execute("CREATE TABLE task_relationships (task_gid TEXT, related_task_gid TEXT, relation_type TEXT)")
-        connection.execute("CREATE TABLE task_tags (task_gid TEXT, tag_gid TEXT)")
-        connection.execute("INSERT INTO task_projects VALUES ('t1', 'p1', NULL, NULL, 1)")
-        db_tasks = {"t1": {"gid": "t1", "name": "Old name", "modified_at": "2026-09-03T00:00:00Z", "synced_at": "2026-09-03T01:00:00Z", "parent_gid": None, "is_subtask": 0}}
-        api_tasks = [{"gid": "t1", "name": "New name", "modified_at": "2026-09-04T00:00:00Z", "memberships": [{"project": {"gid": "p1"}, "is_primary": True}]}]
-        rows = compare_tasks(api_tasks, db_tasks, connection, ["p1"])
+        db_tasks = {"t1": {"gid": "t1", "name": "Old name", "modified_at": "2026-09-03T00:00:00Z", "due_on": "2026-09-10", "completed": 0}}
+        api_tasks = [{"gid": "t1", "name": "New name", "modified_at": "2026-09-04T00:00:00Z", "due_on": "2026-09-10", "completed": False, "memberships": [{"project": {"gid": "p1"}, "is_primary": True}]}]
+        rows = compare_tasks(api_tasks, db_tasks)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["difference_types"], "name")
-        connection.close()
+
+    def test_compare_tasks_flags_due_date_and_completion_changes(self) -> None:
+        db_tasks = {"t1": {"gid": "t1", "name": "Task", "modified_at": "2026-09-03T00:00:00Z", "due_on": "2026-09-10", "completed": 0, "completed_at": None}}
+        api_tasks = [{"gid": "t1", "name": "Task", "modified_at": "2026-09-04T00:00:00Z", "due_on": "2026-09-20", "completed": True, "completed_at": "2026-09-04T00:00:00Z"}]
+        rows = compare_tasks(api_tasks, db_tasks)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(set(rows[0]["difference_types"].split(";")), {"due_on", "completed", "completed_at"})
 
     def test_compare_tasks_omits_modified_and_membership_only_changes(self) -> None:
-        connection = sqlite3.connect(":memory:")
-        connection.row_factory = sqlite3.Row
-        connection.execute("CREATE TABLE task_projects (task_gid TEXT, project_gid TEXT, section_gid TEXT, section_name TEXT, is_primary INTEGER)")
-        connection.execute("CREATE TABLE task_custom_fields (task_gid TEXT, custom_field_gid TEXT, text_value TEXT, number_value REAL, date_value TEXT, display_value TEXT, is_value_set INTEGER, enabled INTEGER, enum_option_gid TEXT)")
-        connection.execute("CREATE TABLE task_custom_field_multi_enum (task_gid TEXT, custom_field_gid TEXT, enum_option_gid TEXT, position INTEGER)")
-        connection.execute("CREATE TABLE task_followers (task_gid TEXT, user_gid TEXT)")
-        connection.execute("CREATE TABLE task_relationships (task_gid TEXT, related_task_gid TEXT, relation_type TEXT)")
-        connection.execute("CREATE TABLE task_tags (task_gid TEXT, tag_gid TEXT)")
-        connection.execute("INSERT INTO task_projects VALUES ('t1', 'p1', 'old-section', 'Old section', 1)")
-        db_tasks = {"t1": {"gid": "t1", "name": "Task", "modified_at": "2026-09-03T00:00:00Z", "synced_at": "2026-09-03T01:00:00Z", "parent_gid": None, "is_subtask": 0}}
-        api_tasks = [{"gid": "t1", "name": "Task", "modified_at": "2026-09-04T00:00:00Z", "memberships": [{"project": {"gid": "p1"}, "section": {"gid": "new-section", "name": "New section"}, "is_primary": True}]}]
-        self.assertEqual(compare_tasks(api_tasks, db_tasks, connection, ["p1"]), [])
-        connection.close()
+        db_tasks = {"t1": {"gid": "t1", "name": "Task", "modified_at": "2026-09-03T00:00:00Z", "due_on": None, "completed": 0, "completed_at": None}}
+        api_tasks = [{"gid": "t1", "name": "Task", "modified_at": "2026-09-04T00:00:00Z", "due_on": None, "completed": False, "completed_at": None, "memberships": [{"project": {"gid": "p1"}, "section": {"gid": "new-section", "name": "New section"}, "is_primary": True}]}]
+        self.assertEqual(compare_tasks(api_tasks, db_tasks), [])
 
     def test_compare_tasks_reports_missing_local_and_api_rows(self) -> None:
-        connection = sqlite3.connect(":memory:")
-        connection.row_factory = sqlite3.Row
-        connection.execute("CREATE TABLE task_projects (task_gid TEXT, project_gid TEXT, section_gid TEXT, section_name TEXT, is_primary INTEGER)")
-        db_tasks = {"db-only": {"gid": "db-only", "name": "DB task", "modified_at": "2026-09-03T00:00:00Z", "synced_at": "2026-09-03T01:00:00Z"}}
-        rows = compare_tasks([{"gid": "api-only", "name": "API task"}], db_tasks, connection, ["p1"])
+        db_tasks = {"db-only": {"gid": "db-only", "name": "DB task", "modified_at": "2026-09-03T00:00:00Z"}}
+        rows = compare_tasks([{"gid": "api-only", "name": "API task"}], db_tasks)
         self.assertEqual({row["task_gid"] for row in rows}, {"api-only", "db-only"})
         self.assertEqual({row["difference_types"] for row in rows}, {"missing_in_db", "missing_in_api"})
+
+    def test_compare_tasks_includes_jira_key_when_provided(self) -> None:
+        db_tasks = {"t1": {"gid": "t1", "name": "Old name", "modified_at": "2026-09-03T00:00:00Z"}}
+        api_tasks = [{"gid": "t1", "name": "New name", "modified_at": "2026-09-04T00:00:00Z"}]
+        rows = compare_tasks(api_tasks, db_tasks, {"t1": "ATJM-42"})
+        self.assertEqual(rows[0]["jira_key"], "ATJM-42")
+
+    def test_compare_tasks_defaults_jira_key_to_blank(self) -> None:
+        db_tasks = {"t1": {"gid": "t1", "name": "Old name", "modified_at": "2026-09-03T00:00:00Z"}}
+        api_tasks = [{"gid": "t1", "name": "New name", "modified_at": "2026-09-04T00:00:00Z"}]
+        rows = compare_tasks(api_tasks, db_tasks)
+        self.assertEqual(rows[0]["jira_key"], "")
+
+    def test_load_jira_keys_scopes_to_site_when_given(self) -> None:
+        connection = sqlite3.connect(":memory:")
+        connection.row_factory = sqlite3.Row
+        connection.execute("CREATE TABLE task_jira_mappings (task_gid TEXT, jira_key TEXT, jira_site_key TEXT)")
+        connection.execute("INSERT INTO task_jira_mappings VALUES ('t1', 'ATJM-1', 'production_jira')")
+        connection.execute("INSERT INTO task_jira_mappings VALUES ('t1', 'FACARC-1', 'sandbox_jira')")
+        self.assertEqual(load_jira_keys(connection, ["t1"], "production_jira"), {"t1": "ATJM-1"})
+        self.assertEqual(load_jira_keys(connection, ["t1"]), {"t1": "ATJM-1;FACARC-1"})
+        self.assertEqual(load_jira_keys(connection, []), {})
         connection.close()
 
     def test_resolve_missing_in_api_tasks_directly_fetches_db_only_tasks(self) -> None:
@@ -114,7 +121,14 @@ class RecentTaskChangesApiTest(TestCase):
 
     def test_write_outputs_writes_only_csv(self) -> None:
         with TemporaryDirectory() as temp_dir:
-            row = {"task_gid": "t1", "difference_types": "name", "api_name": "New", "db_name": "Old", "api_modified_at": "", "db_modified_at": "", "db_synced_at": "", "selected_project_gids": "p1"}
+            row = {
+                "task_gid": "t1", "difference_types": "name", "jira_key": "ATJM-42", "selected_project_gids": "p1",
+                "api_name": "New", "db_name": "Old",
+                "api_due_on": "", "db_due_on": "",
+                "api_due_at": "", "db_due_at": "",
+                "api_completed": "", "db_completed": "",
+                "api_completed_at": "", "db_completed_at": "",
+            }
             csv_path = write_outputs(temp_dir, [row])
             with csv_path.open(newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
