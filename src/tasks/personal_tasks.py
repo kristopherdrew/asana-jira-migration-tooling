@@ -52,6 +52,8 @@ def sync_personal_tasks(
     skipped = 0
     committed_since = 0
     max_modified_at: Optional[str] = None
+    found_task_gids: Set[str] = set()
+    personal_project_gid: Optional[str] = None
     detail_executor = ThreadPoolExecutor(max_workers=max(1, workers))
     pending: Dict[Future, Dict] = {}
 
@@ -90,7 +92,7 @@ def sync_personal_tasks(
             process_task(summary, future)
 
     def process_task(summary: Dict, future: Future) -> None:
-        nonlocal processed, committed_since, max_modified_at, skipped
+        nonlocal processed, committed_since, max_modified_at, skipped, personal_project_gid
         try:
             detail = future.result()
         except Exception as exc:  # noqa: BLE001
@@ -121,13 +123,15 @@ def sync_personal_tasks(
 
         user_backfill.ensure_users(connection, collect_user_gids_from_task(task_payload), sync_time)
 
-        personal_project_gid, personal_project_name = _ensure_personal_project(
+        personal_proj_gid, personal_project_name = _ensure_personal_project(
             connection=connection,
             database=database,
             assignee_gid=assignee_gid,
             assignee_name=assignee_name,
             sync_time=sync_time,
         )
+        if personal_project_gid is None:
+            personal_project_gid = personal_proj_gid
 
         task_payload["is_personal"] = True
         task_payload["memberships"] = [
@@ -138,6 +142,9 @@ def sync_personal_tasks(
         ]
 
         database.upsert_task(connection, task_payload, sync_time)
+        task_gid = task_payload.get("gid")
+        if task_gid:
+            found_task_gids.add(task_gid)
 
         processed += 1
         committed_since += 1
@@ -173,6 +180,17 @@ def sync_personal_tasks(
 
         if committed_since:
             connection.commit()
+
+        if personal_project_gid and found_task_gids is not None:
+            deleted_count = database.mark_tasks_as_deleted(
+                connection,
+                found_task_gids,
+                sync_time,
+                scope_project_gids={personal_project_gid},
+            )
+            if deleted_count > 0:
+                connection.commit()
+                logger.info("Marked %s personal task(s) as deleted for assignee %s.", deleted_count, assignee)
     finally:
         detail_executor.shutdown(wait=True)
 
