@@ -123,6 +123,39 @@ class SearchJiraExternalIdsTests(unittest.TestCase):
                 row = conn.execute("SELECT jira_site_key FROM task_jira_mappings").fetchone()
             self.assertEqual(row["jira_site_key"], "client_jira")
 
+    def test_upsert_mappings_overwrite_replaces_existing_key(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = f"{temp_dir}/asana.sqlite"
+            database = Database(db_path=db_path)
+            with database.connect() as conn:
+                database.initialize(conn)
+                conn.execute(
+                    "INSERT INTO tasks (gid, name, synced_at) VALUES (?, ?, ?)",
+                    ("task_1", "Task 1", datetime.now(timezone.utc).isoformat()),
+                )
+                conn.commit()
+
+            search_mod.upsert_mappings(
+                db_path,
+                [search_mod.JiraIssue(key="ENG-1", created="2024-01-01T00:00:00.000+0000", external_id="task_1")],
+            )
+            summary = search_mod.upsert_mappings(
+                db_path,
+                [search_mod.JiraIssue(key="ENG-2", created="2024-01-02T00:00:00.000+0000", external_id="task_1")],
+                overwrite=True,
+            )
+            self.assertEqual(summary["written"], 1)
+
+            with database.connect() as conn:
+                row = conn.execute("SELECT jira_key FROM task_jira_mappings WHERE task_gid = 'task_1'").fetchone()
+            self.assertEqual(row["jira_key"], "ENG-2")
+
+    def test_overwrite_flag_defaults_to_false_and_parses(self) -> None:
+        args = search_mod.parse_args([])
+        self.assertFalse(args.overwrite)
+        args = search_mod.parse_args(["--overwrite"])
+        self.assertTrue(args.overwrite)
+
     def test_resolve_external_field_and_build_mapped_jql(self) -> None:
         fields = [{"id": "customfield_123", "name": "External issue ID"}]
         field_id = search_mod.resolve_external_field_id(fields, "external ISSUE id")

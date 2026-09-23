@@ -103,6 +103,46 @@ class DatabaseJiraMappingsTest(TestCase):
                 self.sync_time,
             )
 
+    def test_upsert_task_jira_mappings_overwrite_replaces_key_for_task(self) -> None:
+        self.database.upsert_task_jira_mappings(
+            self.connection,
+            [{"task_gid": "task_1", "jira_key": "ENG-100"}],
+            self.sync_time,
+        )
+
+        summary = self.database.upsert_task_jira_mappings(
+            self.connection,
+            [{"task_gid": "task_1", "jira_key": "ENG-200"}],
+            self.sync_time,
+            overwrite=True,
+        )
+        self.assertEqual(summary["written"], 1)
+
+        rows = self.connection.execute(
+            "SELECT task_gid, jira_key FROM task_jira_mappings"
+        ).fetchall()
+        self.assertEqual([(row["task_gid"], row["jira_key"]) for row in rows], [("task_1", "ENG-200")])
+
+    def test_upsert_task_jira_mappings_overwrite_reclaims_conflicting_key(self) -> None:
+        self.database.upsert_task_jira_mappings(
+            self.connection,
+            [{"task_gid": "task_1", "jira_key": "ENG-999"}],
+            self.sync_time,
+        )
+
+        summary = self.database.upsert_task_jira_mappings(
+            self.connection,
+            [{"task_gid": "task_2", "jira_key": "ENG-999"}],
+            self.sync_time,
+            overwrite=True,
+        )
+        self.assertEqual(summary["written"], 1)
+
+        rows = self.connection.execute(
+            "SELECT task_gid, jira_key FROM task_jira_mappings"
+        ).fetchall()
+        self.assertEqual([(row["task_gid"], row["jira_key"]) for row in rows], [("task_2", "ENG-999")])
+
     def test_same_jira_key_is_independent_between_sites(self) -> None:
         self.database.upsert_task_jira_mappings(
             self.connection, [{"task_gid": "task_1", "jira_key": "MIG-1"}],

@@ -207,7 +207,7 @@ class IncrementalArgsBuilderTest(TestCase):
         )
 
     def test_search_jira_external_ids_builds_sandbox_dry_run_args(self) -> None:
-        with patch("builtins.input", side_effect=["1", "y"]):
+        with patch("builtins.input", side_effect=["1", "y", "n"]):
             args = interactive_cli.args_search_jira_external_ids("DEBUG")
 
         self.assertEqual(
@@ -221,20 +221,20 @@ class IncrementalArgsBuilderTest(TestCase):
 
     def test_search_jira_external_ids_uses_production_session(self) -> None:
         interactive_cli._session.use_prod = True
-        with patch("builtins.input", side_effect=["1", "n"]):
+        with patch("builtins.input", side_effect=["1", "n", "n"]):
             args = interactive_cli.args_search_jira_external_ids("INFO")
 
         self.assertIn("--prod", args)
         self.assertNotIn("--dry-run", args)
 
     def test_search_jira_external_ids_uses_saved_or_discovered_field_by_default(self) -> None:
-        with patch("builtins.input", side_effect=["1", "y"]):
+        with patch("builtins.input", side_effect=["1", "y", "n"]):
             args = interactive_cli.args_search_jira_external_ids("INFO")
         self.assertNotIn("--external-id-field", args)
         self.assertNotIn("--jql", args)
 
     def test_search_jira_external_ids_accepts_project_gid_scope(self) -> None:
-        with patch("builtins.input", side_effect=["2", "proj_1,proj_2", "n"]):
+        with patch("builtins.input", side_effect=["2", "proj_1,proj_2", "n", "n"]):
             args = interactive_cli.args_search_jira_external_ids("INFO")
 
         self.assertEqual(
@@ -249,7 +249,7 @@ class IncrementalArgsBuilderTest(TestCase):
             gids_path = inputs_dir / "migration_project_gids.txt"
             gids_path.write_text("proj_a\nproj_b\n", encoding="utf-8")
             with patch("scripts.interactive_cli.PROJECT_ROOT", Path(tmpdir)), patch(
-                "builtins.input", side_effect=["3", "1", "y"]
+                "builtins.input", side_effect=["3", "1", "y", "n"]
             ):
                 args = interactive_cli.args_search_jira_external_ids("INFO")
 
@@ -263,6 +263,12 @@ class IncrementalArgsBuilderTest(TestCase):
                 "--dry-run",
             ],
         )
+
+    def test_search_jira_external_ids_accepts_overwrite_flag(self) -> None:
+        with patch("builtins.input", side_effect=["1", "n", "y"]):
+            args = interactive_cli.args_search_jira_external_ids("INFO")
+
+        self.assertIn("--overwrite", args)
 
     def test_user_and_project_map_imports_use_inputs_csv_picker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -2441,6 +2441,12 @@ def args_search_jira_external_ids(log_level: str) -> List[str]:
         raise SystemExit("Invalid Jira task-key association scope.")
     if confirm("Dry run (fetch and print mappings, write nothing)?", default=True):
         args.append("--dry-run")
+    if confirm(
+        "Overwrite Jira keys already recorded for these tasks "
+        "(use after a task was removed/re-added and got a new Jira key)?",
+        default=False,
+    ):
+        args.append("--overwrite")
     return args
 
 
