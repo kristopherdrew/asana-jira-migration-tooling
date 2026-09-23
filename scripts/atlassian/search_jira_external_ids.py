@@ -423,6 +423,7 @@ def upsert_mappings(
     issues: Sequence[JiraIssue],
     skip_missing_tasks: bool = True,
     jira_site_key: Optional[str] = None,
+    overwrite: bool = False,
 ) -> Dict[str, int]:
     def chunked(items: Sequence[Dict[str, str]], size: int) -> Iterable[Sequence[Dict[str, str]]]:
         for i in range(0, len(items), size):
@@ -446,7 +447,9 @@ def upsert_mappings(
         now = datetime.now(timezone.utc)
         # SQLite parameter limit is ~999; chunk to stay well below that (400 rows per batch).
         for batch in chunked(filtered, 400):
-            partial = database.upsert_task_jira_mappings(connection, batch, now, jira_site_key=jira_site_key)
+            partial = database.upsert_task_jira_mappings(
+                connection, batch, now, jira_site_key=jira_site_key, overwrite=overwrite
+            )
             written += partial.get("written", 0)
     if missing:
         logger.warning(
@@ -499,6 +502,15 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Fetch and display mappings without writing them to the database.",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "Overwrite Jira keys already recorded for these tasks with the latest Jira "
+            "search results. Use after a task was removed and re-added to a project, "
+            "which gives it a new Jira key. Default: skip conflicting mappings."
+        ),
     )
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(argv)
@@ -578,7 +590,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             logger.info("Jira: %s | Created: %s | External ID: %s", issue.key, issue.created, issue.external_id or "<missing>")
         return
 
-    summary = upsert_mappings(args.database, issues, jira_site_key=selected_site)
+    summary = upsert_mappings(
+        args.database, issues, jira_site_key=selected_site, overwrite=args.overwrite
+    )
     logger.info(
         "Import complete: processed=%s written=%s skipped=%s",
         summary["processed"],

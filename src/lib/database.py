@@ -3041,6 +3041,7 @@ class Database:
         mappings: Iterable[Dict[str, str]],
         synced_at: datetime,
         jira_site_key: Optional[str] = None,
+        overwrite: bool = False,
     ) -> Dict[str, int]:
         jira_site_key = _site_key(jira_site_key)
         entries = []
@@ -3076,15 +3077,27 @@ class Database:
                 (jira_site_key, *jira_keys),
             ).fetchall()
             conflict_map = {row["jira_key"]: row["task_gid"] for row in conflicts}
+            stale_jira_keys: List[str] = []
             for entry in entries:
                 existing_task = conflict_map.get(entry["jira_key"])
                 if existing_task and existing_task != entry["task_gid"]:
-                    raise ValueError(
-                        "Jira key '%s' already mapped to task %s"
-                        % (entry["jira_key"], existing_task)
-                    )
+                    if not overwrite:
+                        raise ValueError(
+                            "Jira key '%s' already mapped to task %s"
+                            % (entry["jira_key"], existing_task)
+                        )
+                    stale_jira_keys.append(entry["jira_key"])
+            if stale_jira_keys:
+                placeholders = ",".join("?" for _ in stale_jira_keys)
+                connection.execute(
+                    f"""
+                    DELETE FROM task_jira_mappings
+                    WHERE jira_site_key = ? AND jira_key IN ({placeholders})
+                    """,
+                    (jira_site_key, *stale_jira_keys),
+                )
 
-        if entries:
+        if entries and not overwrite:
             task_gids = [entry["task_gid"] for entry in entries]
             placeholders = ",".join("?" for _ in task_gids)
             existing_rows = connection.execute(
@@ -3105,6 +3118,16 @@ class Database:
         if entries:
             connection.executemany(
                 """
+                INSERT INTO task_jira_mappings (
+                    task_gid, jira_key, synced_at, jira_site_key
+                )
+                VALUES (
+                    :task_gid, :jira_key, :synced_at, :jira_site_key
+                )
+                ON CONFLICT(jira_site_key, task_gid) DO UPDATE SET
+                    jira_key=excluded.jira_key,
+                    synced_at=excluded.synced_at
+                """ if overwrite else """
                 INSERT INTO task_jira_mappings (
                     task_gid, jira_key, synced_at, jira_site_key
                 )
