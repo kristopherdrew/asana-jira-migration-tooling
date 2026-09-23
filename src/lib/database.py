@@ -818,6 +818,8 @@ class Database:
         self._ensure_column(connection, "tasks", "is_personal", "INTEGER DEFAULT 0")
         self._ensure_column(connection, "tasks", "recurrence", "TEXT")
         self._ensure_column(connection, "tasks", "recurrence_checked_at", "TEXT")
+        self._ensure_column(connection, "tasks", "is_deleted", "INTEGER DEFAULT 0")
+        self._ensure_column(connection, "tasks", "deleted_at", "TEXT")
         self._ensure_column(connection, "projects", "archived", "INTEGER")
         self._ensure_column(connection, "projects", "num_tasks", "INTEGER")
         self._ensure_column(connection, "projects", "num_incomplete_tasks", "INTEGER")
