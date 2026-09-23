@@ -575,7 +575,7 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
         self.assertEqual([row["task_gid"] for row in recorded], ["task_1", "task_2"])
         self.assertEqual({row["project_gid"] for row in recorded}, {"proj_1"})
 
-    def test_main_skips_empty_project_and_still_finalizes_batch(self) -> None:
+    def test_main_exports_synthetic_epic_for_empty_project_and_still_finalizes_batch(self) -> None:
         self.connection.execute(
             "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
             ("proj_empty", "Empty Archive", self.sync_time.isoformat()),
@@ -601,10 +601,68 @@ class ExportArchivalProjectJiraCsvTest(TestCase):
             main(argv)
 
         task_files = list((output_dir / "tasks").glob("*.csv"))
-        self.assertEqual(len(task_files), 2)
+        self.assertEqual(len(task_files), 3)
         self.assertTrue(any(path.name.startswith("_Consolidated-") for path in task_files))
         self.assertEqual(len(list((output_dir / "manifests").glob("*_manifest.csv"))), 1)
-        self.assertIn("Empty Archive (proj_empty)", "\n".join(logs.output))
+        self.assertIn("No tasks found for project proj_empty", "\n".join(logs.output))
+
+        empty_project_file = next(path for path in task_files if "proj_empty" in path.name)
+        with empty_project_file.open(newline="", encoding="utf-8") as fp:
+            reader = csv.DictReader(fp)
+            rows = list(reader)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["task_name"], "Empty Archive")
+        self.assertEqual(rows[0]["jira_hierarchy_depth"], "Epic")
+
+    def test_empty_project_epic_carries_project_updates_as_comments(self) -> None:
+        self.connection.execute(
+            "INSERT INTO projects (gid, name, synced_at) VALUES (?, ?, ?)",
+            ("proj_empty", "Empty Archive", self.sync_time.isoformat()),
+        )
+        self.connection.commit()
+        self.database.replace_project_updates(
+            self.connection,
+            "proj_empty",
+            [
+                {
+                    "gid": "update_1",
+                    "kind": "status_update",
+                    "title": "Weekly Check-in",
+                    "status_type": "on_track",
+                    "text": "Everything is fine.",
+                    "html_text": "<body>Everything is fine.</body>",
+                    "created_at": "2025-01-02T00:00:00.000Z",
+                    "created_by_gid": "user_1",
+                }
+            ],
+            self.sync_time,
+        )
+        self.connection.commit()
+
+        output_dir = self.workspace / "taskless-with-updates"
+        argv = [
+            "--project-gid",
+            "proj_empty",
+            "--database",
+            str(self.db_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+        with patch(
+            "scripts.atlassian.export_archival_project_jira_csv.load_credentials"
+        ), patch(
+            "scripts.atlassian.export_archival_project_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ):
+            main(argv)
+
+        output_path = next((output_dir / "tasks").glob("*.csv"))
+        with output_path.open(newline="", encoding="utf-8") as fp:
+            reader = csv.DictReader(fp)
+            rows = list(reader)
+        self.assertEqual(len(rows), 1)
+        self.assertIn("Weekly Check-in", rows[0]["Comment"])
+        self.assertIn("Everything is fine.", rows[0]["Comment"])
 
     def test_populated_fields_folded_into_description(self) -> None:
         header, by_gid = self._run_export()

@@ -1042,6 +1042,88 @@ def fetch_project_task_activity(connection: sqlite3.Connection, project_gid: str
     ).fetchone()
 
 
+def fetch_project_update_comment_rows(connection: sqlite3.Connection, project_gid: str) -> List[Dict[str, object]]:
+    """Load project_updates rows (status updates/comments) shaped like task_comments rows.
+
+    Lets a task-less project's synthetic epic still carry its narrative content —
+    project_updates is the table that exists specifically to cover projects with
+    no tasks (see docs/sync-commands.md "Sync Project Status Updates").
+    """
+    rows = connection.execute(
+        """
+        SELECT
+            pu.created_at,
+            pu.created_by_gid,
+            pu.kind,
+            pu.title,
+            pu.status_type,
+            pu.text,
+            pu.html_text,
+            users.email AS author_email
+        FROM project_updates pu
+        LEFT JOIN users ON users.gid = pu.created_by_gid
+        WHERE pu.project_gid = ?
+          AND pu.created_by_gid IS NOT NULL
+          AND (pu.is_deleted IS NULL OR pu.is_deleted = 0)
+        ORDER BY pu.created_at
+        """,
+        (project_gid,),
+    ).fetchall()
+
+    comment_rows: List[Dict[str, object]] = []
+    for row in rows:
+        text = row["text"]
+        html_text = row["html_text"]
+        if row["kind"] == "status_update":
+            label = f"Status Update ({row['status_type']})" if row["status_type"] else "Status Update"
+            if row["title"]:
+                label = f"{label}: {row['title']}"
+            text = f"{label}\n{text}" if text else label
+            html_text = f"<p><strong>{label}</strong></p>{html_text}" if html_text else f"<p><strong>{label}</strong></p>"
+        comment_rows.append(
+            {
+                "task_gid": project_gid,
+                "created_at": row["created_at"],
+                "created_by_gid": row["created_by_gid"],
+                "text": text,
+                "html_text": html_text,
+                "author_email": row["author_email"],
+            }
+        )
+    return comment_rows
+
+
+def build_synthetic_epic_row(project_gid: str, project_display: str) -> Dict[str, object]:
+    """Base fields for a synthetic project-level epic row (depth -1, no real task data)."""
+    return {
+        "gid": project_gid,
+        "parent_gid": "",
+        "hierarchy_depth": -1,
+        "jira_parent_gid": "",
+        "jira_hierarchy_depth": -1,
+        "name": project_display,
+        "assignee_gid": "",
+        "assignee_name": "",
+        "assignee_email": "",
+        "creator_name": "",
+        "creator_email": "",
+        "creator_atlassian_id": "",
+        "creator_atlassian_email": "",
+        "created_by_gid": "",
+        "completed_by_gid": "",
+        "start_on": "",
+        "start_at": "",
+        "created_at": "",
+        "due_on": "",
+        "due_at": "",
+        "completed": 0,
+        "completed_at": "",
+        "actual_time_minutes": None,
+        "notes": "",
+        "html_notes": "",
+    }
+
+
 def ensure_tasks_suffix(filename: str) -> str:
     if filename.lower().endswith("_tasks.csv"):
         return filename
@@ -2123,10 +2205,22 @@ def export_project(
             return connection.execute(project_task_query, (project_gid,)).fetchall()
 
         tasks = [dict(row) for row in fetch_project_task_rows()]
+        project_has_no_tasks = not tasks
         if task_gids is not None:
             tasks = [task for task in tasks if task["gid"] in task_gids]
-        if not tasks:
-            raise SystemExit(f"No tasks found for project {project_gid}.")
+            if not tasks and not project_has_no_tasks:
+                raise SystemExit(
+                    f"None of the requested task gids were found in project {project_gid}."
+                )
+        if project_has_no_tasks:
+            logger.warning(
+                "No tasks found for project %s; exporting a synthetic epic only.",
+                project_gid,
+            )
+            # above_epic_issue_type already creates its own top-level synthetic row
+            # unconditionally; forcing add_epics too would just duplicate it.
+            if not above_epic_issue_type:
+                add_epics = True
 
         exported_task_gids: Set[str] = set()
         exported_task_projects: Dict[str, str] = {}
@@ -2156,7 +2250,7 @@ def export_project(
                     continue
                 retained_tasks.append(task)
             tasks = retained_tasks
-            if not tasks:
+            if not tasks and not project_has_no_tasks:
                 logger.info(
                     "All tasks for project %s are already recorded for export_id %s; skipping export.",
                     project_gid,
@@ -2166,7 +2260,7 @@ def export_project(
 
         if seen_task_gids is not None:
             tasks = [task for task in tasks if task["gid"] not in seen_task_gids]
-            if not tasks:
+            if not tasks and not project_has_no_tasks:
                 logger.info(
                     "All tasks for project %s were already included in this export run; skipping.",
                     project_gid,
@@ -2242,37 +2336,15 @@ def export_project(
         # Optionally add a synthetic project epic and re-parent top-level tasks
         if add_epics:
             project_display = project_names.get(project_gid, project_gid)
-            epic_row = {
-                "gid": project_gid,
-                "parent_gid": "",
-                "hierarchy_depth": -1,
-                "jira_parent_gid": "",
-                "jira_hierarchy_depth": -1,
-                "name": project_display,
-                "assignee_gid": "",
-                "assignee_name": "",
-                "assignee_email": "",
-                "creator_name": "",
-                "creator_email": "",
-                "creator_atlassian_id": "",
-                "creator_atlassian_email": "",
-                "created_by_gid": "",
-                "completed_by_gid": "",
-                "start_on": "",
-                "start_at": "",
-                "created_at": "",
-                "due_on": "",
-                "due_at": "",
-                "completed": 0,
-                "completed_at": "",
-                "actual_time_minutes": None,
-                "notes": "",
-                "html_notes": "",
-                "project_num_tasks": project_num_tasks,
-                "project_num_incomplete_tasks": project_num_incomplete_tasks,
-                "project_num_completed_tasks": project_num_completed_tasks,
-                "project_task_counts_captured_at": project_task_counts_captured_at,
-            }
+            epic_row = build_synthetic_epic_row(project_gid, project_display)
+            epic_row.update(
+                {
+                    "project_num_tasks": project_num_tasks,
+                    "project_num_incomplete_tasks": project_num_incomplete_tasks,
+                    "project_num_completed_tasks": project_num_completed_tasks,
+                    "project_task_counts_captured_at": project_task_counts_captured_at,
+                }
+            )
             # Place the synthetic epic first so Jira imports see the parent before children.
             tasks.insert(0, epic_row)
             for task in tasks:
@@ -2353,6 +2425,9 @@ def export_project(
                 ).fetchall()
                 comment_rows.extend(rows)
             comment_rows.sort(key=lambda row: (row["task_gid"], row["created_at"] or ""))
+
+        if add_epics and project_gid in task_gids:
+            comment_rows.extend(fetch_project_update_comment_rows(connection, project_gid))
 
         section_rows: List[sqlite3.Row] = []
         if task_gids:
