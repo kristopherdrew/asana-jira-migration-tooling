@@ -26,8 +26,12 @@ DEFAULT_PAGE_SIZE = 100
 DEFAULT_WORKERS = 5
 TASK_FIELDS = tuple(TASK_DETAIL_FIELDS)
 CSV_FIELDS = (
-    "task_gid", "difference_types", "api_name", "db_name", "api_modified_at",
-    "db_modified_at", "db_synced_at", "selected_project_gids",
+    "task_gid", "difference_types", "jira_key", "selected_project_gids",
+    "api_name", "db_name",
+    "api_due_on", "db_due_on",
+    "api_due_at", "db_due_at",
+    "api_completed", "db_completed",
+    "api_completed_at", "db_completed_at",
 )
 logger = logging.getLogger(__name__)
 
@@ -43,6 +47,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR, help="Output directory (default: exports/).")
     parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE, help="Asana page size (default: 100).")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help="Concurrent project queries (default: 5).")
+    parser.add_argument("--jira-site", help="Named Jira site key to scope the reported Jira Task Key to; if omitted, keys from all sites are reported.")
     parser.add_argument("--log-level", default="INFO", help="Logging verbosity (default: INFO).")
     return parser.parse_args(argv)
 
@@ -110,26 +115,10 @@ def deduplicate_tasks(results: Iterable[Tuple[str, List[Dict[str, Any]]]], proje
 
 
 def _api_scalar(task: Dict[str, Any], field: str) -> Any:
-    if field in {"assignee_gid", "created_by_gid", "completed_by_gid"}:
-        return (task.get(field[:-4]) or {}).get("gid")
-    if field == "parent_gid":
-        return (task.get("parent") or {}).get("gid")
-    if field == "workspace_gid":
-        return (task.get("workspace") or {}).get("gid")
-    if field == "workspace_name":
-        return (task.get("workspace") or {}).get("name")
-    if field == "is_subtask":
-        return bool((task.get("parent") or {}).get("gid"))
     return task.get(field)
 
 
-COMPARE_FIELDS = (
-    "name", "resource_type", "resource_subtype", "notes", "html_notes", "permalink_url",
-    "assignee_gid", "assignee_status", "created_by_gid", "completed_by_gid", "parent_gid",
-    "workspace_gid", "workspace_name", "assignee_status_updated_at", "created_at",
-    "start_on", "start_at", "due_on", "due_at", "completed", "completed_at",
-    "actual_time_minutes", "liked", "num_likes", "is_subtask",
-)
+COMPARE_FIELDS = ("name", "due_on", "due_at", "completed", "completed_at")
 
 
 def _normalized(value: Any) -> Any:
@@ -165,57 +154,6 @@ def _api_memberships(task: Dict[str, Any], selected: set[str]) -> List[Tuple[Any
     return sorted(set(memberships))
 
 
-def _api_custom_fields(task: Dict[str, Any]) -> Dict[str, Tuple[Any, ...]]:
-    result: Dict[str, Tuple[Any, ...]] = {}
-    for field in task.get("custom_fields") or []:
-        gid = field.get("gid")
-        if gid:
-            enum_value = field.get("enum_value") or {}
-            result[gid] = (
-                field.get("text_value"), field.get("number_value"), field.get("date_value"),
-                field.get("display_value"), int(bool(field.get("is_value_set"))),
-                int(bool(field.get("enabled"))), enum_value.get("gid"),
-                tuple(sorted(option.get("gid") for option in (field.get("multi_enum_values") or []) if option.get("gid"))),
-            )
-    return result
-
-
-def _db_custom_fields(connection: sqlite3.Connection, task_gid: str) -> Dict[str, Tuple[Any, ...]]:
-    values = {}
-    rows = connection.execute(
-        "SELECT custom_field_gid, text_value, number_value, date_value, display_value, is_value_set, enabled, enum_option_gid FROM task_custom_fields WHERE task_gid = ?",
-        (task_gid,),
-    ).fetchall()
-    multi_rows = connection.execute(
-        "SELECT custom_field_gid, enum_option_gid FROM task_custom_field_multi_enum WHERE task_gid = ? ORDER BY custom_field_gid, position, enum_option_gid",
-        (task_gid,),
-    ).fetchall()
-    multi: Dict[str, List[str]] = {}
-    for row in multi_rows:
-        multi.setdefault(row["custom_field_gid"], []).append(row["enum_option_gid"])
-    for row in rows:
-        values[row["custom_field_gid"]] = (
-            row["text_value"], row["number_value"], row["date_value"], row["display_value"],
-            int(bool(row["is_value_set"])), int(bool(row["enabled"])), row["enum_option_gid"],
-            tuple(multi.get(row["custom_field_gid"], ())),
-        )
-    return values
-
-
-def _api_related_gids(task: Dict[str, Any], key: str) -> set[str]:
-    return {item.get("gid") for item in task.get(key) or [] if item.get("gid")}
-
-
-def _db_related_gids(connection: sqlite3.Connection, task_gid: str, table: str, column: str = "user_gid", relation_type: Optional[str] = None) -> set[str]:
-    query = f"SELECT {column} FROM {table} WHERE task_gid = ?"
-    params: List[Any] = [task_gid]
-    if relation_type:
-        query += " AND relation_type = ?"
-        params.append(relation_type)
-    rows = connection.execute(query, params).fetchall()
-    return {row[0] for row in rows if row[0]}
-
-
 def load_recent_db_tasks(connection: sqlite3.Connection, project_gids: Sequence[str], cutoff: str) -> Dict[str, Dict[str, Any]]:
     if not project_gids:
         return {}
@@ -234,51 +172,70 @@ def load_recent_db_tasks(connection: sqlite3.Connection, project_gids: Sequence[
     return {row["gid"]: dict(row) for row in rows}
 
 
-def compare_task(task: Dict[str, Any], db_row: Optional[Dict[str, Any]], connection: sqlite3.Connection, selected: set[str]) -> List[str]:
+def load_jira_keys(connection: sqlite3.Connection, task_gids: Sequence[str], jira_site_key: Optional[str] = None) -> Dict[str, str]:
+    unique_gids = sorted({gid for gid in task_gids if gid})
+    if not unique_gids:
+        return {}
+    placeholders = ",".join("?" for _ in unique_gids)
+    site_clause = "jira_site_key = ? AND " if jira_site_key else ""
+    params = ((jira_site_key,) if jira_site_key else ()) + tuple(unique_gids)
+    rows = connection.execute(
+        f"SELECT task_gid, jira_key FROM task_jira_mappings WHERE {site_clause}task_gid IN ({placeholders})",
+        params,
+    ).fetchall()
+    keys: Dict[str, List[str]] = {}
+    for row in rows:
+        keys.setdefault(row["task_gid"], []).append(row["jira_key"])
+    return {task_gid: ";".join(sorted(values)) for task_gid, values in keys.items()}
+
+
+def compare_task(task: Dict[str, Any], db_row: Optional[Dict[str, Any]]) -> List[str]:
     if db_row is None:
         return ["missing_in_db"]
     differences: List[str] = []
     for field in COMPARE_FIELDS:
-        if field in task or field in {"assignee_gid", "created_by_gid", "completed_by_gid", "parent_gid", "workspace_gid", "workspace_name", "is_subtask"}:
-            if _normalized(_api_scalar(task, field)) != _normalized(db_row.get(field)):
-                differences.append(field)
-    if _api_custom_fields(task) != _db_custom_fields(connection, task["gid"]):
-        differences.append("custom_fields")
-    if _api_related_gids(task, "followers") != _db_related_gids(connection, task["gid"], "task_followers"):
-        differences.append("followers")
-    if _api_related_gids(task, "dependencies") != _db_related_gids(connection, task["gid"], "task_relationships", "related_task_gid", "dependency"):
-        differences.append("dependencies")
-    if _api_related_gids(task, "dependents") != _db_related_gids(connection, task["gid"], "task_relationships", "related_task_gid", "dependent"):
-        differences.append("dependents")
-    if _api_related_gids(task, "tags") != _db_related_gids(connection, task["gid"], "task_tags", "tag_gid"):
-        differences.append("tags")
+        if _normalized(_api_scalar(task, field)) != _normalized(db_row.get(field)):
+            differences.append(field)
     return differences
 
 
-def csv_row(task: Dict[str, Any], differences: Sequence[str], db_row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def csv_row(task: Dict[str, Any], differences: Sequence[str], db_row: Optional[Dict[str, Any]], jira_key: str = "") -> Dict[str, Any]:
+    db_row = db_row or {}
     return {
         "task_gid": task.get("gid", ""),
         "difference_types": ";".join(differences),
-        "api_name": task.get("name", ""),
-        "db_name": (db_row or {}).get("name", ""),
-        "api_modified_at": task.get("modified_at", ""),
-        "db_modified_at": (db_row or {}).get("modified_at", ""),
-        "db_synced_at": (db_row or {}).get("synced_at", ""),
+        "jira_key": jira_key,
         "selected_project_gids": ";".join(task.get("_selected_project_gids") or []),
+        "api_name": task.get("name", ""),
+        "db_name": db_row.get("name", ""),
+        "api_due_on": task.get("due_on", ""),
+        "db_due_on": db_row.get("due_on", ""),
+        "api_due_at": task.get("due_at", ""),
+        "db_due_at": db_row.get("due_at", ""),
+        "api_completed": task.get("completed", ""),
+        "db_completed": db_row.get("completed", ""),
+        "api_completed_at": task.get("completed_at", ""),
+        "db_completed_at": db_row.get("completed_at", ""),
     }
 
 
-def compare_tasks(api_tasks: Sequence[Dict[str, Any]], db_tasks: Dict[str, Dict[str, Any]], connection: sqlite3.Connection, project_gids: Sequence[str]) -> List[Dict[str, Any]]:
-    selected = set(project_gids)
+def compare_tasks(
+    api_tasks: Sequence[Dict[str, Any]],
+    db_tasks: Dict[str, Dict[str, Any]],
+    jira_keys: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    jira_keys = jira_keys or {}
     api_by_gid = {task["gid"]: task for task in api_tasks if task.get("gid")}
-    rows: List[Dict[str, Any]] = []
+    entries: List[Tuple[str, Dict[str, Any]]] = []
     for task_gid in sorted(set(api_by_gid) | set(db_tasks)):
         task = api_by_gid.get(task_gid)
         db_row = db_tasks.get(task_gid)
-        differences = compare_task(task, db_row, connection, selected) if task else ["missing_in_api"]
+        differences = compare_task(task, db_row) if task else ["missing_in_api"]
         if differences:
-            rows.append(csv_row(task or {"gid": task_gid}, differences, db_row))
-    return sorted(rows, key=lambda row: (row["api_modified_at"] or row["db_modified_at"] or "", row["task_gid"]), reverse=True)
+            modified_at = (task or {}).get("modified_at") or (db_row or {}).get("modified_at") or ""
+            row = csv_row(task or {"gid": task_gid}, differences, db_row, jira_keys.get(task_gid, ""))
+            entries.append((modified_at, row))
+    return [row for _, row in sorted(entries, key=lambda entry: (entry[0], entry[1]["task_gid"]), reverse=True)]
 
 
 def resolve_missing_in_api_tasks(
@@ -371,7 +328,11 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         direct_tasks = resolve_missing_in_api_tasks(
             client, tasks, db_tasks, connection, successful_projects, args.workers
         )
-        differences = compare_tasks(tasks + direct_tasks, db_tasks, connection, successful_projects)
+        all_tasks = tasks + direct_tasks
+        jira_keys = load_jira_keys(
+            connection, set(db_tasks) | {task["gid"] for task in all_tasks if task.get("gid")}, args.jira_site
+        )
+        differences = compare_tasks(all_tasks, db_tasks, jira_keys)
         csv_path = write_outputs(args.output_dir, differences)
     finally:
         connection.close()

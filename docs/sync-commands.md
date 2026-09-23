@@ -137,12 +137,13 @@ During an interactive task sync, the CLI also records any project that had a pos
 
 ### Export Recently Changed Tasks from Asana
 Runs a read-only live Asana query for tasks modified after a UTC cutoff in selected projects,
-compares those records with the selected local SQLite snapshot, and writes only tasks with detected
-differences (ignoring modification timestamps and project-membership-only changes). It queries workspace task search once per project, follows pagination, and deduplicates
-multi-homed tasks. For tasks present locally but absent from search results, it performs a direct
-task lookup before retaining `missing_in_api`, which accounts for subtasks found through inherited
-project context. It does not write to SQLite. The command is also available under the
-Interactive CLI’s **Maintain & Validate** menu.
+compares those records with the selected local SQLite snapshot, and writes only tasks whose
+**name, due date (`due_on`/`due_at`), or completion state (`completed`/`completed_at`)** differ, or
+that are missing on one side. It queries workspace task search once per project, follows
+pagination, and deduplicates multi-homed tasks. For tasks present locally but absent from search
+results, it performs a direct task lookup before retaining `missing_in_api`, which accounts for
+subtasks found through inherited project context. It does not write to SQLite. The command is also
+available under the Interactive CLI’s **Maintain & Validate** menu.
 ```bash
 python3 -m scripts.export_recent_task_changes_api \
   --project-gids-file inputs/project_gids.txt
@@ -152,12 +153,15 @@ Required scope:
 
 Optional flags:
 - `--days-back <n>` to choose the UTC calendar date boundary; `0` means today at `00:00:00Z`, and the default `14` means midnight UTC 14 days before today.
+- `--jira-site <key>` to scope the reported Jira Task Key to one named Jira site (looked up from the locally stored `task_jira_mappings`, not a live Jira call); omit to report keys from any site.
 - `--workspace-gid`, `--output-dir`, `--page-size`, `--workers`, and `--log-level`.
 
 The output file is `exports/recent_task_differences_<timestamp>.csv`. Each row contains the task GID,
-the differing fields, API/DB names and modification timestamps, local `synced_at`, and selected
-project GIDs. Use the same UTC-midnight cutoff date (`today minus n days`) in the matching SQL
-recipe in [Database Query Cookbook](db-queries.md).
+the differing fields (`difference_types`, including `missing_in_db`/`missing_in_api` for tasks that
+no longer exist on one side), the task's Jira Task Key (`jira_key`, blank if never migrated), API/DB
+values for `name`, `due_on`, `due_at`, `completed`, and `completed_at`, and selected project GIDs. Use
+the same UTC-midnight cutoff date (`today minus n days`) in the matching SQL recipe in
+[Database Query Cookbook](db-queries.md).
 
 ### Sync Task Extras
 Pulls task comments and attachment metadata for the selected projects (using the same scope flags as above) and stores them in `task_comments` and `task_attachments` tables. Only human-authored comments (`resource_subtype = comment_added`) are captured; system events are excluded.
