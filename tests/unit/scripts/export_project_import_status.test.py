@@ -43,9 +43,9 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
                 ET.fromstring(zf.read(name))
         return zf
 
-    def test_workbook_has_three_tabs(self) -> None:
+    def test_workbook_has_four_tabs(self) -> None:
         zf = self._run()
-        self.assertEqual(_sheet_names(zf), ["Overview", "Migrated", "Unmigrated"])
+        self.assertEqual(_sheet_names(zf), ["Overview", "Migrated", "Summary", "Unmigrated"])
 
     def test_overview_tab_exists_with_content(self) -> None:
         zf = self._run()
@@ -57,6 +57,11 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
         sheet_names = _sheet_names(zf)
         self.assertIn("Migrated", sheet_names)
 
+    def test_summary_tab_exists(self) -> None:
+        zf = self._run()
+        sheet_names = _sheet_names(zf)
+        self.assertIn("Summary", sheet_names)
+
     def test_unmigrated_tab_exists(self) -> None:
         zf = self._run()
         sheet_names = _sheet_names(zf)
@@ -65,12 +70,12 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
     def test_workbook_with_site_filter(self) -> None:
         zf = self._run(jira_sites=["prod"])
         sheet_names = _sheet_names(zf)
-        self.assertEqual(len(sheet_names), 3)
+        self.assertEqual(len(sheet_names), 4)
 
     def test_workbook_with_project_gids_filter(self) -> None:
         zf = self._run(project_gids=["proj_1", "proj_2"])
         sheet_names = _sheet_names(zf)
-        self.assertEqual(len(sheet_names), 3)
+        self.assertEqual(len(sheet_names), 4)
 
     def test_workbook_structure_is_valid_xlsx(self) -> None:
         zf = self._run()
@@ -80,6 +85,7 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
             "xl/worksheets/sheet1.xml",
             "xl/worksheets/sheet2.xml",
             "xl/worksheets/sheet3.xml",
+            "xl/worksheets/sheet4.xml",
             "_rels/.rels",
         ]
         for filename in required_files:
