@@ -2308,17 +2308,17 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
         # Site selection
         print("\nSelect Jira sites to include:")
-        if _session and _session.configured_jira_sites:
-            for i, site in enumerate(_session.configured_jira_sites, 1):
+        if _session and _session.jira_sites:
+            for i, site in enumerate(_session.jira_sites, 1):
                 print(f"[{i}] {site.name}")
         print("[a] All sites")
         site_choice = input("Choice (default: all): ").strip().lower() or "a"
 
-        if site_choice != "a" and _session and _session.configured_jira_sites:
+        if site_choice != "a" and _session and _session.jira_sites:
             try:
                 idx = int(site_choice) - 1
-                if 0 <= idx < len(_session.configured_jira_sites):
-                    args.extend(["--jira-site", _session.configured_jira_sites[idx].key])
+                if 0 <= idx < len(_session.jira_sites):
+                    args.extend(["--jira-site", _session.jira_sites[idx].key])
             except (ValueError, IndexError):
                 pass
 
