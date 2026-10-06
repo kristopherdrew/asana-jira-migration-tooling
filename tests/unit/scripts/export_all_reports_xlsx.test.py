@@ -16,6 +16,7 @@ SYNC = synced_at_timestamp(datetime(2026, 1, 2, tzinfo=timezone.utc))
 EXPECTED_TABS = [
     "Overview",
     "Projects",
+    "Project Import Status",
     "Users",
     "Team Memberships",
     "Teams",

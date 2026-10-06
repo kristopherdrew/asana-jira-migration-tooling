@@ -45,6 +45,7 @@ from scripts import (  # noqa: E402
 )
 from scripts import (  # noqa: E402
     export_project_details_report,
+    export_project_import_status,
     export_team_memberships,
     export_custom_field_usage_report,
     export_portfolio_report,
@@ -2301,6 +2302,16 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         append_project_report_scope(args, "project last updated")
         run_script(export_project_last_updated_report.main, args)
 
+    def run_project_import_status_report() -> None:
+        args = args_report_defaults(log_level)
+        team_gid = _prompt_team_gid_from_lookup(
+            "project import status",
+            "Team GID to filter imports (blank = all teams)",
+        )
+        if team_gid:
+            args.extend(["--team-gid", team_gid])
+        run_script(export_project_import_status.main, args)
+
     def run_recurring_tasks_report() -> None:
         args = args_report_defaults(log_level)
         print("\nProvide project GIDs to scan for recurring tasks (live Asana query):")
@@ -2404,6 +2415,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "a",
             "Export project last-updated report",
             run_project_last_updated_report,
+        ),
+        "j": MenuItem(
+            "j",
+            "Export project import status report",
+            run_project_import_status_report,
         ),
         "c": MenuItem(
             "c",
