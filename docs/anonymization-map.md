@@ -97,6 +97,8 @@ Views are included because they are queryable SQL objects, but the anonymizer on
 | `recurrence_checked_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
 | `is_subtask` | INTEGER |  | no | none | preserved | Boolean/flag value preserved. |
 | `is_personal` | INTEGER |  | no | none | preserved | Boolean/flag value preserved. |
+| `is_deleted` | INTEGER |  | no | none | preserved | Boolean/flag value preserved. |
+| `deleted_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
 | `hierarchy_depth` | INTEGER |  | no | none | preserved | Numeric/count value preserved. |
 | `synced_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
 
