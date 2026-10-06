@@ -191,7 +191,7 @@ def _build_migrated_tab(
 def _build_summary_tab(
     connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
 ) -> list[list]:
-    """Build Summary tab with unmigrated project counts by decision type."""
+    """Build Summary tab with unmigrated project counts pivoted by decision and team."""
     jira_filter = (
         "" if not jira_sites else f"AND tjm.jira_site_key IN ({','.join('?' * len(jira_sites))})"
     )
@@ -199,37 +199,81 @@ def _build_summary_tab(
 
     params = jira_sites + (project_gids or [])
 
+    # Get all decisions and teams that appear in unmigrated projects
     query = f"""
-    SELECT
+    SELECT DISTINCT
         COALESCE(pjd.decision, '(no decision)') as decision,
-        COUNT(DISTINCT p.gid) as count
+        COALESCE(t.name, p.team_name, '(no team)') as team_name
     FROM projects p
+    LEFT JOIN teams t ON t.gid = p.team_gid
     LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid
     WHERE NOT EXISTS (
         SELECT 1
         FROM task_jira_mappings tjm
-        JOIN tasks t ON t.gid = tjm.task_gid
-        JOIN task_projects tp ON tp.task_gid = t.gid
+        JOIN tasks t2 ON t2.gid = tjm.task_gid
+        JOIN task_projects tp ON tp.task_gid = t2.gid
         WHERE tp.project_gid = p.gid {jira_filter}
     )
     {gid_filter}
-    GROUP BY pjd.decision
-    ORDER BY count DESC
+    ORDER BY team_name, decision
     """
 
-    rows = connection.execute(query, params).fetchall()
-
-    if not rows:
+    distinct_rows = connection.execute(query, params).fetchall()
+    if not distinct_rows:
         return [["(no unmigrated projects)"]]
 
-    result = [["Migration Decision", "Project Count"]]
-    total = 0
-    for decision, count in rows:
-        result.append([decision, str(count)])
-        total += count
+    # Get all unique decisions and teams
+    decisions = sorted(set(row[0] for row in distinct_rows))
+    teams = sorted(set(row[1] for row in distinct_rows))
 
-    result.append([None, None])
-    result.append(["Total Unmigrated", str(total)])
+    # Build pivot counts: (team, decision) -> count
+    count_query = f"""
+    SELECT
+        COALESCE(t.name, p.team_name, '(no team)') as team_name,
+        COALESCE(pjd.decision, '(no decision)') as decision,
+        COUNT(DISTINCT p.gid) as count
+    FROM projects p
+    LEFT JOIN teams t ON t.gid = p.team_gid
+    LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid
+    WHERE NOT EXISTS (
+        SELECT 1
+        FROM task_jira_mappings tjm
+        JOIN tasks t2 ON t2.gid = tjm.task_gid
+        JOIN task_projects tp ON tp.task_gid = t2.gid
+        WHERE tp.project_gid = p.gid {jira_filter}
+    )
+    {gid_filter}
+    GROUP BY team_name, decision
+    """
+
+    count_rows = connection.execute(count_query, params).fetchall()
+    pivot_data = {(row[0], row[1]): row[2] for row in count_rows}
+
+    # Build result with pivot table
+    result = [["Team / Decision"] + decisions + ["Team Total"]]
+
+    total_by_team = {}
+    for team in teams:
+        row = [team]
+        team_total = 0
+        for decision in decisions:
+            count = pivot_data.get((team, decision), 0)
+            row.append(count)
+            team_total += count
+        row.append(team_total)
+        result.append(row)
+        total_by_team[team] = team_total
+
+    # Add total row
+    result.append([None] * len(result[0]))  # Blank row for spacing
+    total_row = ["Total by Decision"]
+    grand_total = 0
+    for decision in decisions:
+        decision_total = sum(pivot_data.get((team, decision), 0) for team in teams)
+        total_row.append(decision_total)
+        grand_total += decision_total
+    total_row.append(grand_total)
+    result.append(total_row)
 
     return result
 
@@ -268,7 +312,7 @@ def _build_unmigrated_tab(
     )
     {gid_filter}
     GROUP BY p.gid
-    ORDER BY p.name
+    ORDER BY COALESCE(team_name, ''), COALESCE(pjd.decision, '(no decision)'), p.name
     """
 
     rows = connection.execute(query, params).fetchall()
