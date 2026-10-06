@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export project import status as multi-tab workbook: Overview, Migrated, Unmigrated projects."""
+"""Export project import status as multi-tab workbook: Overview, Migrated, Summary, Unmigrated."""
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def _build_overview_tab(
     gid_filter = "" if not project_gids else f"AND project_gid IN ({','.join('?' * len(project_gids))})"
     params_migrated = jira_sites + (project_gids or [])
 
-    # Workspace stats
+    # Workspace stats - count total projects in scope
     workspace_query = "SELECT COUNT(DISTINCT gid) FROM projects"
     workspace_params = []
     if project_gids:
@@ -103,7 +103,7 @@ def _build_overview_tab(
         workspace_params = project_gids
     total_projects = connection.execute(workspace_query, workspace_params).fetchone()[0]
 
-    # Migrated count
+    # Migrated count - only for selected sites
     migrated_query = f"""
     SELECT COUNT(DISTINCT je.project_gid)
     FROM (
@@ -113,6 +113,7 @@ def _build_overview_tab(
         FROM task_jira_mappings tjm
         JOIN tasks t ON t.gid = tjm.task_gid
         JOIN task_projects tp ON tp.task_gid = t.gid
+        WHERE INSTR(tjm.jira_key, '-') > 0
     ) je
     WHERE 1=1 {jira_filter} {gid_filter}
     """
@@ -130,6 +131,7 @@ def _build_overview_tab(
         FROM task_jira_mappings tjm
         JOIN tasks t ON t.gid = tjm.task_gid
         JOIN task_projects tp ON tp.task_gid = t.gid
+        WHERE INSTR(tjm.jira_key, '-') > 0
     ) je
     WHERE 1=1 {jira_filter} {gid_filter}
     GROUP BY je.jira_site_key
@@ -141,11 +143,11 @@ def _build_overview_tab(
     rows = [
         ["Project Import Status Report"],
         ["Generated (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")],
-        ["Total Projects", str(total_projects)],
-        ["Migrated Projects", str(migrated_projects)],
-        ["Unmigrated Projects", str(total_projects - migrated_projects)],
+        ["Total Projects in Scope", str(total_projects)],
+        ["Migrated to Selected Sites", str(migrated_projects)],
+        ["Not Yet Migrated", str(total_projects - migrated_projects)],
         [
-            "Overall Coverage",
+            "Overall Coverage %",
             f"{100.0 * migrated_projects / total_projects:.1f}%" if total_projects > 0 else "0%",
         ],
         [None, None],
@@ -173,7 +175,7 @@ def _build_migrated_tab(
         p.name,
         COUNT(DISTINCT tp.task_gid) as total_tasks,
         SUM(CASE WHEN t.is_deleted = 0 THEN 1 ELSE 0 END) as active_tasks,
-        SUM(CASE WHEN tjm.task_gid IS NOT NULL THEN 1 ELSE 0 END) as imported_tasks
+        SUM(CASE WHEN tjm.task_gid IS NOT NULL AND tjm.jira_site_key = je.jira_site_key THEN 1 ELSE 0 END) as imported_tasks
     FROM (
         SELECT DISTINCT project_gid, jira_site_key, jira_project_key, jira_project_name
         FROM jira_project_mappings
@@ -205,6 +207,63 @@ def _build_migrated_tab(
     for env, proj_key, proj_gid, proj_name, total, active, imported in rows:
         coverage = 100.0 * imported / total if total > 0 else 0
         result.append([env, proj_key, proj_gid, proj_name, str(total), str(active), str(imported), f"{coverage:.1f}%"])
+
+    return result
+
+
+def _build_summary_tab(
+    connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
+) -> list[list]:
+    """Build Summary tab with unmigrated project counts by decision type."""
+    jira_filter = (
+        "" if not jira_sites else f"AND pjd.jira_site_key IN ({','.join('?' * len(jira_sites))})"
+    )
+    gid_filter = "" if not project_gids else f"AND p.gid IN ({','.join('?' * len(project_gids))})"
+    migration_jira_filter = (
+        "" if not jira_sites else f"AND je.jira_site_key IN ({','.join('?' * len(jira_sites))})"
+    )
+
+    params_pjd = jira_sites
+    params_mig = jira_sites
+    params_gid = project_gids or []
+
+    query = f"""
+    SELECT
+        COALESCE(pjd.decision, '(no decision)') as decision,
+        COUNT(DISTINCT p.gid) as count
+    FROM projects p
+    LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid {jira_filter}
+    WHERE NOT EXISTS (
+        SELECT 1 FROM (
+            SELECT DISTINCT project_gid, jira_site_key FROM jira_project_mappings
+            UNION
+            SELECT DISTINCT tp2.project_gid, tjm.jira_site_key
+            FROM task_jira_mappings tjm
+            JOIN tasks t2 ON t2.gid = tjm.task_gid
+            JOIN task_projects tp2 ON tp2.task_gid = t2.gid
+            WHERE INSTR(tjm.jira_key, '-') > 0
+        ) je
+        WHERE je.project_gid = p.gid {migration_jira_filter}
+    )
+    {gid_filter}
+    GROUP BY pjd.decision
+    ORDER BY count DESC
+    """
+
+    params = params_pjd + params_mig + params_gid
+    rows = connection.execute(query, params).fetchall()
+
+    if not rows:
+        return [["(no unmigrated projects)"]]
+
+    result = [["Migration Decision", "Project Count"]]
+    total = 0
+    for decision, count in rows:
+        result.append([decision, str(count)])
+        total += count
+
+    result.append([None, None])
+    result.append(["Total Unmigrated", str(total)])
 
     return result
 
@@ -260,21 +319,9 @@ def _build_unmigrated_tab(
     if not rows:
         return [["(no data)"]]
 
-    # Build summary of decision counts
-    decision_counts = {}
-    for _, _, _, _, _, decision, _ in rows:
-        key = decision if decision else "(no decision)"
-        decision_counts[key] = decision_counts.get(key, 0) + 1
-
     result = [
-        ["Unmigrated Projects Summary"],
-        ["Decision", "Count"],
+        ["Asana Project GID", "Asana Project Name", "Team GID", "Team Name", "Total Tasks", "Jira Migration Decision", "Jira Tracking Key"]
     ]
-    for decision, count in sorted(decision_counts.items()):
-        result.append([decision, str(count)])
-
-    result.append([None, None])  # Blank line separator
-    result.append(["Asana Project GID", "Asana Project Name", "Team GID", "Team Name", "Total Tasks", "Jira Migration Decision", "Jira Tracking Key"])
 
     for proj_gid, proj_name, team_gid, team_name, total, decision, jira_key in rows:
         result.append([
@@ -323,11 +370,13 @@ def export_project_import_status_workbook(
         # Build sheets
         overview_rows = _build_overview_tab(connection, jira_sites, project_gids)
         migrated_rows = _build_migrated_tab(connection, jira_sites, project_gids)
+        summary_rows = _build_summary_tab(connection, jira_sites, project_gids)
         unmigrated_rows = _build_unmigrated_tab(connection, jira_sites, project_gids)
 
         sheets = [
             ("Overview", overview_rows),
             ("Migrated", migrated_rows),
+            ("Summary", summary_rows),
             ("Unmigrated", unmigrated_rows),
         ]
 

@@ -89,11 +89,12 @@ Optional flags:
 Use `--team-gid` to scope by team, or `--project-gids <gid1,gid2>` / `--project-gids-file <path>` for an explicit migration-wave project list. The interactive Assessment menu offers team lookup, pasted GIDs, a GID file, or the whole workspace.
 
 ### Project Import Status Report (.xlsx)
-A multi-tab workbook showing which Asana projects have been exported to Jira, by Jira environment, with import coverage and migration decision tracking. Three tabs:
+A multi-tab workbook showing which Asana projects have been exported to Jira, by Jira environment, with import coverage and migration decision tracking. Four tabs:
 
-- **Overview** — Workspace-wide and per-environment summary: total projects, migrated count, unmigrated count, coverage percentage, and per-site breakdown.
-- **Migrated** — Projects with Jira exports, one row per (project, site) combination, sorted by environment → Jira project key → Asana project name. Columns: `environment`, `jira_project_key`, `asana_project_gid`, `asana_project_name`, `total_tasks`, `active_tasks`, `imported_tasks`, `coverage_percent`. Project key is extracted from imported Jira issue keys (e.g., `ABC-123` → `ABC`) when no explicit mapping exists.
-- **Unmigrated** — Projects with no Jira exports, with summary of decision counts at the top. Data rows: `asana_project_gid`, `asana_project_name`, `team_gid`, `team_name`, `total_tasks`, `jira_migration_decision` (scoped to selected sites, shows "(no decision)" when blank), `jira_tracking_key` (the Jira issue key from the migration decision, if present). Summary section shows count breakdown by decision type.
+- **Overview** — Workspace-wide and per-environment summary: total projects in scope, migrated count (to selected sites), unmigrated count, coverage percentage (for selected sites), and per-site breakdown.
+- **Migrated** — Projects with Jira exports, one row per (project, site) combination, sorted by environment → Jira project key → Asana project name. Columns: `environment`, `jira_project_key`, `asana_project_gid`, `asana_project_name`, `total_tasks`, `active_tasks`, `imported_tasks`, `coverage_percent` (calculated per-site: only counts imports for the selected environment). Project key is extracted from imported Jira issue keys (e.g., `ABC-123` → `ABC`) when no explicit mapping exists.
+- **Summary** — Count breakdown of unmigrated projects by migration decision type, showing how many projects have each decision status (including "(no decision)" projects). Useful for seeing the landscape of migration decisions at a glance.
+- **Unmigrated** — Detailed list of projects with no Jira exports. Columns: `asana_project_gid`, `asana_project_name`, `team_gid`, `team_name`, `total_tasks`, `jira_migration_decision` (scoped to selected sites, shows "(no decision)" when blank), `jira_tracking_key` (the Jira issue key from the migration decision, if present).
 
 ```bash
 python3 -m scripts.export_project_import_status --database data/asana.sqlite --jira-site prod
