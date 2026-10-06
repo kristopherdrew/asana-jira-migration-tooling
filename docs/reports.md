@@ -88,23 +88,30 @@ Optional flags:
 
 Use `--team-gid` to scope by team, or `--project-gids <gid1,gid2>` / `--project-gids-file <path>` for an explicit migration-wave project list. The interactive Assessment menu offers team lookup, pasted GIDs, a GID file, or the whole workspace.
 
-### Project Import Status Report
-Exports one row per (project, Jira environment) combination, showing which Asana projects have been exported to Jira and the import coverage for each target. Rows are only emitted when either an explicit project mapping exists (from `jira_project_mappings`, populated by `scripts/atlassian/import_jira_project_map.py`) or when tasks from the project have been imported (detected via `task_jira_mappings`). For each export, the report derives the Jira project key by extracting the prefix from imported Jira issue keys (e.g., `ABC-123` → `ABC`) when no explicit mapping exists.
+### Project Import Status Report (.xlsx)
+A multi-tab workbook showing which Asana projects have been exported to Jira, by Jira environment, with import coverage and migration decision tracking. Three tabs:
 
-Each row carries `asana_project_gid`/`asana_project_name`, team info (`team_gid`, `team_name`), the target `jira_environment` (Jira site key; `'No Export'` for projects with no mappings), `jira_project_key`/`jira_project_name` (project name is blank when inferred from task keys), and task counts: `total_tasks` (non-deleted tasks in the project), `active_tasks` (non-deleted, non-completed), `completed_tasks`, `incomplete_tasks`, `imported_tasks` (tasks with Jira keys in this environment), `unimported_tasks`, and `import_coverage_percent` (100 × imported / total). Rows are sorted by team, then project name, then environment. The report stays empty until projects and tasks have been synced and Jira mappings created.
+- **Overview** — Workspace-wide and per-environment summary: total projects, migrated count, unmigrated count, coverage percentage, and per-site breakdown.
+- **Migrated** — Projects with Jira exports, one row per (project, site) combination, sorted by environment → Jira project key → Asana project name. Columns: `environment`, `jira_project_key`, `asana_project_gid`, `asana_project_name`, `total_tasks`, `active_tasks`, `imported_tasks`, `coverage_percent`. Project key is extracted from imported Jira issue keys (e.g., `ABC-123` → `ABC`) when no explicit mapping exists.
+- **Unmigrated** — Projects with no Jira exports, one row per project. Columns: `asana_project_gid`, `asana_project_name`, `team_gid`, `team_name`, `total_tasks`, `jira_migration_decision` (scoped to selected sites), `last_attempted_jira_key`. Decision field shows the value recorded for the selected Jira site(s) only.
+
 ```bash
-python3 -m scripts.export_project_import_status --database data/asana.sqlite
+python3 -m scripts.export_project_import_status --database data/asana.sqlite --jira-site prod
+python3 -m scripts.export_project_import_status --database data/asana.sqlite --jira-site prod --jira-site dev
 ```
+
 Required flags:
 - (none; uses `data/asana.sqlite` by default).
 
 Optional flags:
 - `--output-dir <path>` to choose the destination directory (defaults to `exports/`).
-- `--filename <name>` to override the auto-generated `project_import_status_<timestamp>.csv` filename.
-- `--team-gid <gid>` to limit the report to one team's projects.
+- `--filename <name>` to override the auto-generated `project_import_status_<timestamp>.xlsx` filename.
+- `--jira-site <key>` (can be repeated for multi-select) to include only specific Jira environments. If omitted, includes all sites.
+- `--project-gids <gid1,gid2,...>` to limit the report to an explicit project list.
+- `--project-gids-file <path>` to read comma- or newline-separated project GIDs from a file.
 - `--log-level <LEVEL>` to adjust logging verbosity (default `INFO`).
 
-In the interactive Reports menu, this export can search team names from the local SQLite snapshot before falling back to a raw team GID prompt.
+In the interactive Maintain & Validate menu (option 8), the report prompts for Jira site selection (single site, multiple sites, or all) and optional project GID filtering.
 
 ### Custom Field Usage Report
 Exports one row per (project, custom field) so you can see which custom fields are actually in use per project — and of what kind — before deciding what to migrate into Jira. Only fields populated on at least one task in the project are emitted (a field enabled on a project but never filled in is omitted). Each row carries `project_gid`/`project_name`/`project_url`, `team_gid`/`team_name`, `archived`, `custom_field_gid`/`custom_field_name`, `field_type` (the field's `resource_subtype`: text/number/enum/multi_enum/date/people), `is_global_to_workspace`, `is_important` (from the project's custom field settings), `tasks_with_values` (distinct tasks in that project with a value set for the field), `project_task_count`, and `usage_pct` (`tasks_with_values / project_task_count`). A field counts as populated when it has a non-empty single value or any multi-enum selection; this matches the `values_found` semantic used by the `export_project_to_jira_csv.py` field-counts companion. The report stays empty until the task sync has populated `tasks`/`task_custom_fields`.

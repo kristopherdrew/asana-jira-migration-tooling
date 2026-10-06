@@ -1,29 +1,26 @@
 #!/usr/bin/env python3
-"""Export project import status: which Asana projects have been exported to which Jira environments with task coverage."""
+"""Export project import status as multi-tab workbook: Overview, Migrated, Unmigrated projects."""
 
 from __future__ import annotations
 
 import argparse
-import csv
 import logging
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.config import load_credentials
 from src.lib.database import Database, resolve_default_db_path
-from src.lib.date_formatting import format_report_date
 from src.lib.logging_utils import configure_logging, resolve_log_level
-
+from src.lib.xlsx_writer import write_workbook
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
-DEFAULT_CONFIG_ROOT = "."
 logger = logging.getLogger(__name__)
 
 
@@ -37,15 +34,25 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         default=DEFAULT_OUTPUT_DIR,
-        help="Directory to store the CSV export (default: exports/).",
+        help="Directory to store the workbook (default: exports/).",
     )
     parser.add_argument(
         "--filename",
-        help="Optional filename for the export. Defaults to project_import_status_<timestamp>.csv.",
+        help="Optional filename for the workbook. Defaults to project_import_status_<timestamp>.xlsx.",
     )
     parser.add_argument(
-        "--team-gid",
-        help="Optional team GID to limit the export to projects assigned to one team.",
+        "--jira-site",
+        action="append",
+        dest="jira_sites",
+        help="Jira site key to include (can be repeated for multi-select). Default: all sites.",
+    )
+    parser.add_argument(
+        "--project-gids",
+        help="Comma-separated project GIDs to scope the report.",
+    )
+    parser.add_argument(
+        "--project-gids-file",
+        help="File containing comma- or newline-separated project GIDs.",
     )
     parser.add_argument(
         "--log-level",
@@ -55,164 +62,265 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def export_project_import_status(
+def _load_project_gids(gids_arg: Optional[str], gids_file: Optional[str]) -> Optional[list[str]]:
+    """Load project GIDs from argument and/or file. Returns None if not scoped."""
+    gids = []
+    if gids_arg:
+        gids.extend([g.strip() for g in gids_arg.split(",") if g.strip()])
+    if gids_file:
+        with Path(gids_file).open("r", encoding="utf-8") as f:
+            content = f.read()
+            gids.extend([g.strip() for g in content.replace(",", "\n").split("\n") if g.strip()])
+    return gids if gids else None
+
+
+def _get_all_jira_sites(connection: sqlite3.Connection) -> list[str]:
+    """Get all distinct jira_site_key values from mapping tables."""
+    query = """
+    SELECT DISTINCT jira_site_key FROM (
+        SELECT DISTINCT jira_site_key FROM jira_project_mappings
+        UNION
+        SELECT DISTINCT jira_site_key FROM task_jira_mappings
+    )
+    ORDER BY jira_site_key
+    """
+    return [row[0] for row in connection.execute(query).fetchall()]
+
+
+def _build_overview_tab(
+    connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
+) -> list[list]:
+    """Build Overview tab with workspace-wide and per-environment stats."""
+    jira_filter = "" if not jira_sites else f"AND jira_site_key IN ({','.join('?' * len(jira_sites))})"
+    gid_filter = "" if not project_gids else f"AND project_gid IN ({','.join('?' * len(project_gids))})"
+    params_migrated = jira_sites + (project_gids or [])
+
+    # Workspace stats
+    workspace_query = "SELECT COUNT(DISTINCT gid) FROM projects"
+    workspace_params = []
+    if project_gids:
+        workspace_query += f" WHERE gid IN ({','.join('?' * len(project_gids))})"
+        workspace_params = project_gids
+    total_projects = connection.execute(workspace_query, workspace_params).fetchone()[0]
+
+    # Migrated count
+    migrated_query = f"""
+    SELECT COUNT(DISTINCT je.project_gid)
+    FROM (
+        SELECT DISTINCT project_gid, jira_site_key FROM jira_project_mappings
+        UNION
+        SELECT DISTINCT tp.project_gid, tjm.jira_site_key
+        FROM task_jira_mappings tjm
+        JOIN tasks t ON t.gid = tjm.task_gid
+        JOIN task_projects tp ON tp.task_gid = t.gid
+    ) je
+    WHERE 1=1 {jira_filter} {gid_filter}
+    """
+    migrated_projects = connection.execute(migrated_query, params_migrated).fetchone()[0]
+
+    # Per-environment stats
+    per_env_query = f"""
+    SELECT
+        je.jira_site_key,
+        COUNT(DISTINCT je.project_gid) as migrated_count
+    FROM (
+        SELECT DISTINCT project_gid, jira_site_key FROM jira_project_mappings
+        UNION
+        SELECT DISTINCT tp.project_gid, tjm.jira_site_key
+        FROM task_jira_mappings tjm
+        JOIN tasks t ON t.gid = tjm.task_gid
+        JOIN task_projects tp ON tp.task_gid = t.gid
+    ) je
+    WHERE 1=1 {jira_filter} {gid_filter}
+    GROUP BY je.jira_site_key
+    ORDER BY je.jira_site_key
+    """
+    per_env_rows = connection.execute(per_env_query, params_migrated).fetchall()
+
+    # Build overview rows
+    rows = [
+        ["Project Import Status Report"],
+        ["Generated (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")],
+        ["Total Projects", str(total_projects)],
+        ["Migrated Projects", str(migrated_projects)],
+        ["Unmigrated Projects", str(total_projects - migrated_projects)],
+        [
+            "Overall Coverage",
+            f"{100.0 * migrated_projects / total_projects:.1f}%" if total_projects > 0 else "0%",
+        ],
+        [None, None],
+        ["Environment", "Migrated Count"],
+    ]
+    for site_key, count in per_env_rows:
+        rows.append([site_key, str(count)])
+
+    return rows
+
+
+def _build_migrated_tab(
+    connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
+) -> list[list]:
+    """Build Migrated tab with projects sorted by environment, project key, project name."""
+    jira_filter = "" if not jira_sites else f"AND je.jira_site_key IN ({','.join('?' * len(jira_sites))})"
+    gid_filter = "" if not project_gids else f"AND p.gid IN ({','.join('?' * len(project_gids))})"
+    params = jira_sites + (project_gids or [])
+
+    query = f"""
+    SELECT
+        je.jira_site_key,
+        je.jira_project_key,
+        p.gid,
+        p.name,
+        COUNT(DISTINCT tp.task_gid) as total_tasks,
+        SUM(CASE WHEN t.is_deleted = 0 THEN 1 ELSE 0 END) as active_tasks,
+        SUM(CASE WHEN tjm.task_gid IS NOT NULL THEN 1 ELSE 0 END) as imported_tasks
+    FROM (
+        SELECT DISTINCT project_gid, jira_site_key, jira_project_key, jira_project_name
+        FROM jira_project_mappings
+        UNION
+        SELECT DISTINCT tp.project_gid, tjm.jira_site_key,
+            SUBSTR(tjm.jira_key, 1, INSTR(tjm.jira_key, '-') - 1) as jira_project_key,
+            NULL
+        FROM task_jira_mappings tjm
+        JOIN tasks t ON t.gid = tjm.task_gid
+        JOIN task_projects tp ON tp.task_gid = t.gid
+        WHERE INSTR(tjm.jira_key, '-') > 0
+    ) je
+    INNER JOIN projects p ON p.gid = je.project_gid
+    LEFT JOIN task_projects tp ON tp.project_gid = p.gid
+    LEFT JOIN tasks t ON t.gid = tp.task_gid
+    LEFT JOIN task_jira_mappings tjm ON tjm.task_gid = t.gid AND tjm.jira_site_key = je.jira_site_key
+    WHERE 1=1 {jira_filter} {gid_filter}
+    GROUP BY je.jira_site_key, je.jira_project_key, p.gid
+    ORDER BY je.jira_site_key, je.jira_project_key, p.name
+    """
+
+    rows = connection.execute(query, params).fetchall()
+    if not rows:
+        return [["(no data)"]]
+
+    result = [
+        ["Environment", "Jira Project Key", "Asana Project GID", "Asana Project Name", "Total Tasks", "Active Tasks", "Imported Tasks", "Coverage %"]
+    ]
+    for env, proj_key, proj_gid, proj_name, total, active, imported in rows:
+        coverage = 100.0 * imported / total if total > 0 else 0
+        result.append([env, proj_key, proj_gid, proj_name, str(total), str(active), str(imported), f"{coverage:.1f}%"])
+
+    return result
+
+
+def _build_unmigrated_tab(
+    connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
+) -> list[list]:
+    """Build Unmigrated tab with projects not yet exported, including their decision."""
+    jira_filter = (
+        "" if not jira_sites else f"AND pjd.jira_site_key IN ({','.join('?' * len(jira_sites))})"
+    )
+    gid_filter = "" if not project_gids else f"AND p.gid IN ({','.join('?' * len(project_gids))})"
+    migration_jira_filter = (
+        "" if not jira_sites else f"AND je.jira_site_key IN ({','.join('?' * len(jira_sites))})"
+    )
+
+    params_pjd = jira_sites
+    params_mig = jira_sites
+    params_gid = project_gids or []
+
+    query = f"""
+    SELECT
+        p.gid,
+        p.name,
+        p.team_gid,
+        COALESCE(t.name, p.team_name) as team_name,
+        COUNT(DISTINCT tp.task_gid) as total_tasks,
+        pjd.decision,
+        pjd.jira_key
+    FROM projects p
+    LEFT JOIN teams t ON t.gid = p.team_gid
+    LEFT JOIN task_projects tp ON tp.project_gid = p.gid
+    LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid {jira_filter}
+    WHERE NOT EXISTS (
+        SELECT 1 FROM (
+            SELECT DISTINCT project_gid, jira_site_key FROM jira_project_mappings
+            UNION
+            SELECT DISTINCT tp2.project_gid, tjm.jira_site_key
+            FROM task_jira_mappings tjm
+            JOIN tasks t2 ON t2.gid = tjm.task_gid
+            JOIN task_projects tp2 ON tp2.task_gid = t2.gid
+            WHERE INSTR(tjm.jira_key, '-') > 0
+        ) je
+        WHERE je.project_gid = p.gid {migration_jira_filter}
+    )
+    {gid_filter}
+    GROUP BY p.gid
+    ORDER BY p.name
+    """
+
+    params = params_pjd + params_mig + params_gid
+    rows = connection.execute(query, params).fetchall()
+    if not rows:
+        return [["(no data)"]]
+
+    result = [
+        ["Asana Project GID", "Asana Project Name", "Team GID", "Team Name", "Total Tasks", "Jira Migration Decision", "Last Attempted Jira Key"]
+    ]
+    for proj_gid, proj_name, team_gid, team_name, total, decision, jira_key in rows:
+        result.append([
+            proj_gid,
+            proj_name,
+            team_gid or "",
+            team_name or "",
+            str(total),
+            decision or "",
+            jira_key or "",
+        ])
+
+    return result
+
+
+def export_project_import_status_workbook(
     database_path: str,
     output_dir: Path,
     filename: Optional[str] = None,
-    team_gid: Optional[str] = None,
+    jira_sites: Optional[list[str]] = None,
+    project_gids: Optional[list[str]] = None,
 ) -> Path:
+    """Generate multi-tab workbook for project import status."""
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not filename:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        filename = f"project_import_status_{timestamp}.csv"
+        filename = f"project_import_status_{timestamp}.xlsx"
 
     output_path = output_dir / filename
-    logger.debug("Writing project import status export to %s", output_path)
+    logger.debug("Generating project import status workbook: %s", output_path)
 
     with database.connect() as connection:
         database.initialize(connection)
 
-        filters = []
-        params = []
-        if team_gid:
-            filters.append("p.team_gid = ?")
-            params.append(team_gid)
+        # Resolve site selection
+        if not jira_sites:
+            jira_sites = _get_all_jira_sites(connection)
+            if not jira_sites:
+                jira_sites = ["legacy_unknown"]
 
-        team_filter = "WHERE " + " AND ".join(filters) if filters else ""
+        logger.info("Generating workbook for sites: %s", ", ".join(jira_sites))
 
-        query = f"""
-            WITH jira_exports AS (
-                -- Explicit project mappings from jira_project_mappings
-                SELECT DISTINCT
-                    jpm.project_gid,
-                    jpm.jira_site_key,
-                    jpm.jira_project_key,
-                    jpm.jira_project_name
-                FROM jira_project_mappings jpm
+        # Build sheets
+        overview_rows = _build_overview_tab(connection, jira_sites, project_gids)
+        migrated_rows = _build_migrated_tab(connection, jira_sites, project_gids)
+        unmigrated_rows = _build_unmigrated_tab(connection, jira_sites, project_gids)
 
-                UNION
+        sheets = [
+            ("Overview", overview_rows),
+            ("Migrated", migrated_rows),
+            ("Unmigrated", unmigrated_rows),
+        ]
 
-                -- Infer from task-level imports (extract project key from issue key)
-                SELECT DISTINCT
-                    tp.project_gid,
-                    tjm.jira_site_key,
-                    SUBSTR(tjm.jira_key, 1, INSTR(tjm.jira_key, '-') - 1) AS jira_project_key,
-                    NULL AS jira_project_name
-                FROM task_jira_mappings tjm
-                JOIN tasks t ON t.gid = tjm.task_gid
-                JOIN task_projects tp ON tp.task_gid = t.gid
-                WHERE INSTR(tjm.jira_key, '-') > 0
-            ),
-            project_task_summary AS (
-                SELECT
-                    p.gid AS project_gid,
-                    COUNT(DISTINCT tp.task_gid) AS total_tasks,
-                    SUM(CASE WHEN t.is_deleted = 0 THEN 1 ELSE 0 END) AS active_tasks,
-                    SUM(CASE WHEN t.is_deleted = 0 AND t.completed = 1 THEN 1 ELSE 0 END) AS completed_tasks,
-                    SUM(CASE WHEN t.is_deleted = 0 AND t.completed = 0 THEN 1 ELSE 0 END) AS incomplete_tasks
-                FROM projects p
-                LEFT JOIN task_projects tp ON tp.project_gid = p.gid
-                LEFT JOIN tasks t ON t.gid = tp.task_gid
-                GROUP BY p.gid
-            ),
-            project_environment_imports AS (
-                SELECT
-                    je.project_gid,
-                    je.jira_site_key,
-                    je.jira_project_key,
-                    MAX(je.jira_project_name) AS jira_project_name,
-                    COUNT(DISTINCT tjm.task_gid) AS imported_tasks
-                FROM jira_exports je
-                LEFT JOIN task_jira_mappings tjm ON tjm.task_gid IN (
-                    SELECT t.gid
-                    FROM task_projects tp
-                    JOIN tasks t ON t.gid = tp.task_gid
-                    WHERE tp.project_gid = je.project_gid
-                )
-                AND tjm.jira_site_key = je.jira_site_key
-                AND SUBSTR(tjm.jira_key, 1, INSTR(tjm.jira_key, '-') - 1) = je.jira_project_key
-                GROUP BY je.project_gid, je.jira_site_key, je.jira_project_key
-            )
-            SELECT
-                p.gid AS asana_project_gid,
-                p.name AS asana_project_name,
-                p.team_gid,
-                COALESCE(t.name, p.team_name) AS team_name,
-                pe.jira_site_key AS jira_environment,
-                pe.jira_project_key,
-                COALESCE(pe.jira_project_name, '') AS jira_project_name,
-                COALESCE(pts.total_tasks, 0) AS total_tasks,
-                COALESCE(pts.active_tasks, 0) AS active_tasks,
-                COALESCE(pts.completed_tasks, 0) AS completed_tasks,
-                COALESCE(pts.incomplete_tasks, 0) AS incomplete_tasks,
-                COALESCE(pe.imported_tasks, 0) AS imported_tasks,
-                COALESCE(pts.total_tasks, 0) - COALESCE(pe.imported_tasks, 0) AS unimported_tasks,
-                CASE
-                    WHEN COALESCE(pts.total_tasks, 0) = 0 THEN 0
-                    ELSE ROUND(100.0 * COALESCE(pe.imported_tasks, 0) / COALESCE(pts.total_tasks, 0), 2)
-                END AS import_coverage_percent,
-                p.archived,
-                p.synced_at
-            FROM projects p
-            LEFT JOIN teams t ON t.gid = p.team_gid
-            LEFT JOIN project_task_summary pts ON pts.project_gid = p.gid
-            INNER JOIN project_environment_imports pe ON pe.project_gid = p.gid
-            {team_filter}
-            ORDER BY p.team_gid, p.name COLLATE NOCASE, jira_environment
-        """
-        rows = connection.execute(query, params).fetchall()
+        write_workbook(output_path, sheets)
 
-    if not rows:
-        logger.info("No projects found in %s; generated an empty export.", database_path)
-
-    fieldnames = [
-        "asana_project_gid",
-        "asana_project_name",
-        "team_gid",
-        "team_name",
-        "jira_environment",
-        "jira_project_key",
-        "jira_project_name",
-        "total_tasks",
-        "active_tasks",
-        "completed_tasks",
-        "incomplete_tasks",
-        "imported_tasks",
-        "unimported_tasks",
-        "import_coverage_percent",
-        "archived",
-        "synced_at",
-    ]
-
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(
-                {
-                    "asana_project_gid": row["asana_project_gid"],
-                    "asana_project_name": row["asana_project_name"],
-                    "team_gid": row["team_gid"],
-                    "team_name": row["team_name"],
-                    "jira_environment": row["jira_environment"],
-                    "jira_project_key": row["jira_project_key"],
-                    "jira_project_name": row["jira_project_name"],
-                    "total_tasks": row["total_tasks"],
-                    "active_tasks": row["active_tasks"],
-                    "completed_tasks": row["completed_tasks"],
-                    "incomplete_tasks": row["incomplete_tasks"],
-                    "imported_tasks": row["imported_tasks"],
-                    "unimported_tasks": row["unimported_tasks"],
-                    "import_coverage_percent": row["import_coverage_percent"],
-                    "archived": "true" if row["archived"] else "false",
-                    "synced_at": format_report_date(row["synced_at"]),
-                }
-            )
-
-    logger.info("Exported %s project-environment(s) to %s.", len(rows), output_path)
+    logger.info("Project import status workbook completed: %s", output_path)
     return output_path
 
 
@@ -224,13 +332,16 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         raise SystemExit(str(exc)) from exc
     configure_logging(log_level)
 
-    output_path = export_project_import_status(
+    project_gids = _load_project_gids(args.project_gids, args.project_gids_file)
+
+    output_path = export_project_import_status_workbook(
         database_path=args.database,
         output_dir=Path(args.output_dir),
         filename=args.filename,
-        team_gid=args.team_gid,
+        jira_sites=args.jira_sites,
+        project_gids=project_gids,
     )
-    logger.info("Project import status export completed: %s", output_path)
+    logger.info("Export completed: %s", output_path)
 
 
 if __name__ == "__main__":

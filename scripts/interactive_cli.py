@@ -2304,12 +2304,37 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
     def run_project_import_status_report() -> None:
         args = args_report_defaults(log_level)
-        team_gid = _prompt_team_gid_from_lookup(
-            "project import status",
-            "Team GID to filter imports (blank = all teams)",
-        )
-        if team_gid:
-            args.extend(["--team-gid", team_gid])
+        append_jira_env_flag(args)
+
+        # Site selection
+        print("\nSelect Jira sites to include:")
+        if _session and _session.configured_jira_sites:
+            for i, site in enumerate(_session.configured_jira_sites, 1):
+                print(f"[{i}] {site.name}")
+        print("[a] All sites")
+        site_choice = input("Choice (default: all): ").strip().lower() or "a"
+
+        if site_choice != "a" and _session and _session.configured_jira_sites:
+            try:
+                idx = int(site_choice) - 1
+                if 0 <= idx < len(_session.configured_jira_sites):
+                    args.extend(["--jira-site", _session.configured_jira_sites[idx].key])
+            except (ValueError, IndexError):
+                pass
+
+        # Project GID filtering
+        print("\nProvide project scope (optional):")
+        print("[1] No filter (all projects)")
+        print("[2] Paste project GIDs (comma-separated)")
+        print("[3] Project GID file")
+        gid_choice = input("Choice (default 1): ").strip() or "1"
+
+        if gid_choice == "2":
+            gids = prompt_required("Project GIDs (comma-separated)")
+            args.extend(["--project-gids", gids])
+        elif gid_choice == "3":
+            args.extend(["--project-gids-file", _prompt_project_gids_file("project import status")])
+
         run_script(export_project_import_status.main, args)
 
     def run_recurring_tasks_report() -> None:

@@ -34,7 +34,6 @@ from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.xlsx_writer import write_workbook
 from scripts import (
     export_project_details_report,
-    export_project_import_status,
     export_users,
     export_team_memberships,
     export_team_report,
@@ -53,7 +52,6 @@ logger = logging.getLogger(__name__)
 # Each report: (module, temp filename, accepts --workspace-gid, [(sheet title, produced filename), ...]).
 REPORT_SPECS = [
     (export_project_details_report, "projects.csv", True, [("Projects", "projects.csv")]),
-    (export_project_import_status, "project_import_status.csv", False, [("Project Import Status", "project_import_status.csv")]),
     (export_users, "users.csv", True, [("Users", "users.csv")]),
     (export_team_memberships, "team_memberships.csv", True, [("Team Memberships", "team_memberships.csv")]),
     (export_team_report, "teams.csv", False, [("Teams", "teams.csv")]),
