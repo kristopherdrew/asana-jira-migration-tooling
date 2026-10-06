@@ -56,6 +56,7 @@ from scripts import (  # noqa: E402
     export_jira_migration_validation,
     export_all_reports_xlsx,
     export_recurring_tasks_report,
+    export_atjm_coverage_report,
 )
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
@@ -2338,6 +2339,52 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
         run_script(export_project_import_status.main, args)
 
+    def run_atjm_coverage_report() -> None:
+        args = args_report_defaults(log_level)
+        append_jira_env_flag(args)
+
+        # Site selection (multi-select)
+        print("\nSelect Jira sites to include (enter comma-separated numbers or 'all'):")
+        if _session and _session.jira_sites:
+            for i, site in enumerate(_session.jira_sites, 1):
+                print(f"[{i}] {site.name}")
+        print("Examples: '1' (single), '1,2,3' (multiple), 'all' (all sites)")
+        site_choice = input("Choice (default: all): ").strip().lower() or "all"
+
+        if site_choice != "all" and _session and _session.jira_sites:
+            try:
+                indices = [int(x.strip()) - 1 for x in site_choice.split(",")]
+                for idx in indices:
+                    if 0 <= idx < len(_session.jira_sites):
+                        args.extend(["--jira-site", _session.jira_sites[idx].key])
+            except (ValueError, IndexError):
+                pass
+
+        # Team/Project scoping
+        print("\nProvide ATJM coverage scope (optional):")
+        print("[1] Whole workspace")
+        print("[2] Single team")
+        print("[3] Paste project GIDs")
+        print("[4] Project GID file")
+        scope_choice = input("Choice (default 1): ").strip() or "1"
+
+        if scope_choice == "2":
+            team_gid = _prompt_team_gid_from_lookup(
+                "ATJM coverage",
+                "Team GID to scope ATJM coverage (blank = all teams)",
+            )
+            if team_gid:
+                args.extend(["--team-gid", team_gid])
+        elif scope_choice == "3":
+            gids = prompt_required("Project GIDs (comma-separated)")
+            args.extend(["--project-gids", gids])
+        elif scope_choice == "4":
+            args.extend(["--project-gids-file", _prompt_project_gids_file("ATJM coverage")])
+        elif scope_choice != "1":
+            raise SystemExit("Invalid ATJM coverage scope.")
+
+        run_script(export_atjm_coverage_report.main, args)
+
     def run_recurring_tasks_report() -> None:
         args = args_report_defaults(log_level)
         print("\nProvide project GIDs to scan for recurring tasks (live Asana query):")
@@ -2446,6 +2493,11 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
             "j",
             "Export project import status report",
             run_project_import_status_report,
+        ),
+        "k": MenuItem(
+            "k",
+            "Export ATJM coverage diagnostic report",
+            run_atjm_coverage_report,
         ),
         "c": MenuItem(
             "c",
