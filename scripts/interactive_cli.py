@@ -3634,6 +3634,7 @@ def build_maintain_validate_menu(log_level: str) -> Dict[str, MenuItem]:
         "6": MenuItem("6", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
         "7": MenuItem("7", "Export recent Asana task changes (live API)", lambda: run_script(export_recent_task_changes_api.main, args_recent_task_changes_api(log_level))),
         "8": MenuItem("8", "Export project import status report", build_reports_menu(log_level)["j"].handler),
+        "9": MenuItem("9", "Export ATJM coverage diagnostic report", build_reports_menu(log_level)["k"].handler),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
