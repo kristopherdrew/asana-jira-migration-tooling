@@ -2306,19 +2306,20 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
         args = args_report_defaults(log_level)
         append_jira_env_flag(args)
 
-        # Site selection
-        print("\nSelect Jira sites to include:")
+        # Site selection (multi-select)
+        print("\nSelect Jira sites to include (enter comma-separated numbers or 'all'):")
         if _session and _session.jira_sites:
             for i, site in enumerate(_session.jira_sites, 1):
                 print(f"[{i}] {site.name}")
-        print("[a] All sites")
-        site_choice = input("Choice (default: all): ").strip().lower() or "a"
+        print("Examples: '1' (single), '1,2,3' (multiple), 'all' (all sites)")
+        site_choice = input("Choice (default: all): ").strip().lower() or "all"
 
-        if site_choice != "a" and _session and _session.jira_sites:
+        if site_choice != "all" and _session and _session.jira_sites:
             try:
-                idx = int(site_choice) - 1
-                if 0 <= idx < len(_session.jira_sites):
-                    args.extend(["--jira-site", _session.jira_sites[idx].key])
+                indices = [int(x.strip()) - 1 for x in site_choice.split(",")]
+                for idx in indices:
+                    if 0 <= idx < len(_session.jira_sites):
+                        args.extend(["--jira-site", _session.jira_sites[idx].key])
             except (ValueError, IndexError):
                 pass
 

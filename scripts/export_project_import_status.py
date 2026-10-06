@@ -260,9 +260,22 @@ def _build_unmigrated_tab(
     if not rows:
         return [["(no data)"]]
 
+    # Build summary of decision counts
+    decision_counts = {}
+    for _, _, _, _, _, decision, _ in rows:
+        key = decision if decision else "(no decision)"
+        decision_counts[key] = decision_counts.get(key, 0) + 1
+
     result = [
-        ["Asana Project GID", "Asana Project Name", "Team GID", "Team Name", "Total Tasks", "Jira Migration Decision", "Last Attempted Jira Key"]
+        ["Unmigrated Projects Summary"],
+        ["Decision", "Count"],
     ]
+    for decision, count in sorted(decision_counts.items()):
+        result.append([decision, str(count)])
+
+    result.append([None, None])  # Blank line separator
+    result.append(["Asana Project GID", "Asana Project Name", "Team GID", "Team Name", "Total Tasks", "Jira Migration Decision", "Jira Tracking Key"])
+
     for proj_gid, proj_name, team_gid, team_name, total, decision, jira_key in rows:
         result.append([
             proj_gid,
@@ -270,7 +283,7 @@ def _build_unmigrated_tab(
             team_gid or "",
             team_name or "",
             str(total),
-            decision or "",
+            decision or "(no decision)",
             jira_key or "",
         ])
 
