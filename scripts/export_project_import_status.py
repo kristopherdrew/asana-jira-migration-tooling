@@ -177,16 +177,18 @@ def _build_migrated_tab(
         SUM(CASE WHEN t.is_deleted = 0 THEN 1 ELSE 0 END) as active_tasks,
         SUM(CASE WHEN tjm.task_gid IS NOT NULL AND tjm.jira_site_key = je.jira_site_key THEN 1 ELSE 0 END) as imported_tasks
     FROM (
-        SELECT DISTINCT project_gid, jira_site_key, jira_project_key, jira_project_name
-        FROM jira_project_mappings
-        UNION
-        SELECT DISTINCT tp.project_gid, tjm.jira_site_key,
-            SUBSTR(tjm.jira_key, 1, INSTR(tjm.jira_key, '-') - 1) as jira_project_key,
-            NULL
-        FROM task_jira_mappings tjm
-        JOIN tasks t ON t.gid = tjm.task_gid
-        JOIN task_projects tp ON tp.task_gid = t.gid
-        WHERE INSTR(tjm.jira_key, '-') > 0
+        SELECT DISTINCT project_gid, jira_site_key, jira_project_key
+        FROM (
+            SELECT project_gid, jira_site_key, jira_project_key
+            FROM jira_project_mappings
+            UNION ALL
+            SELECT DISTINCT tp.project_gid, tjm.jira_site_key,
+                SUBSTR(tjm.jira_key, 1, INSTR(tjm.jira_key, '-') - 1) as jira_project_key
+            FROM task_jira_mappings tjm
+            JOIN tasks t ON t.gid = tjm.task_gid
+            JOIN task_projects tp ON tp.task_gid = t.gid
+            WHERE INSTR(tjm.jira_key, '-') > 0
+        )
     ) je
     INNER JOIN projects p ON p.gid = je.project_gid
     LEFT JOIN task_projects tp ON tp.project_gid = p.gid
