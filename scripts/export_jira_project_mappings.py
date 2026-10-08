@@ -54,16 +54,20 @@ def main(argv=None):
         jpm.jira_project_name,
         jpm.jira_project_key,
         jpm.jira_site_key,
+        tpjm.jira_key AS atjm_key,
+        pjd.decision AS asana_migration_decision,
         jpm.synced_at,
         CASE WHEN jpm.project_gid IS NOT NULL THEN 'Mapped' ELSE 'Not Mapped' END AS mapping_status,
         COALESCE(COUNT(DISTINCT tp.task_gid), 0) AS asana_task_count,
         COALESCE(COUNT(DISTINCT CASE WHEN tjm.task_gid IS NOT NULL THEN tjm.task_gid END), 0) AS mapped_task_count
     FROM projects p
     LEFT JOIN jira_project_mappings jpm ON p.gid = jpm.project_gid
+    LEFT JOIN team_project_jira_mappings tpjm ON p.gid = tpjm.asana_gid AND tpjm.kind = 'project'
+    LEFT JOIN project_jira_decisions pjd ON p.gid = pjd.project_gid
     LEFT JOIN task_projects tp ON p.gid = tp.project_gid
     LEFT JOIN task_jira_mappings tjm ON tp.task_gid = tjm.task_gid
     WHERE p.is_personal_project = 0
-    GROUP BY p.gid, p.name, p.team_gid, p.team_name, jpm.jira_project_name, jpm.jira_project_key, jpm.jira_site_key, jpm.synced_at, jpm.project_gid
+    GROUP BY p.gid, p.name, p.team_gid, p.team_name, jpm.jira_project_name, jpm.jira_project_key, jpm.jira_site_key, tpjm.jira_key, pjd.decision, jpm.synced_at, jpm.project_gid
     ORDER BY CASE WHEN jpm.project_gid IS NOT NULL THEN 0 ELSE 1 END, p.team_name, p.name
     """
 
@@ -83,6 +87,8 @@ def main(argv=None):
         "jira_project_name",
         "jira_project_key",
         "jira_site_key",
+        "atjm_key",
+        "asana_migration_decision",
         "synced_at",
         "mapping_status",
         "asana_task_count",
