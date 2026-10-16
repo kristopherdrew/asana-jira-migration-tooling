@@ -263,7 +263,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     configure_logging(resolve_log_level(args.log_level))
 
     try:
-        creds = load_credentials(args.env_path)
+        creds = load_credentials(args.env_path) if args.env_path else load_credentials()
         username, token = ensure_atlassian_credentials(creds)
         base_url = resolve_jira_base_url(creds, args.jira_site)
         db_path = args.database or resolve_default_db_path()
