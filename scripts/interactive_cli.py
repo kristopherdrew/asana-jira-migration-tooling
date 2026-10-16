@@ -69,6 +69,7 @@ from scripts.atlassian import (  # noqa: E402
     export_team_project_jira_csv,
     generate_jira_csv_import_config,
     get_jira_migration_decisions,
+    reverse_lookup_jira_to_asana,
     search_jira_external_ids,
     update_atlassian_user_map,
     import_jira_project_map,
@@ -2544,6 +2545,25 @@ def args_search_jira_external_ids(log_level: str) -> List[str]:
     return args
 
 
+def args_reverse_lookup_jira_to_asana(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    append_jira_env_flag(args)
+    jql = prompt_required(
+        "JQL query to find issues with external IDs\n"
+        "  Example: project IN (PROJ1, PROJ2) AND \"External issue ID\" is not EMPTY"
+    )
+    args.extend(["--jql", jql])
+    external_id_field = prompt(
+        "External ID field name or customfield_ID (blank = auto-resolve from import settings)",
+        default="",
+    )
+    if external_id_field:
+        args.extend(["--external-id-field", external_id_field])
+    if confirm("Dry run (report findings without upserting to DB)?", default=True):
+        args.append("--dry-run")
+    return args
+
+
 def args_import_jira_project_map(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     append_jira_env_flag(args)
@@ -3630,11 +3650,12 @@ def build_maintain_validate_menu(log_level: str) -> Dict[str, MenuItem]:
         "2": MenuItem("2", "Run incremental Asana refresh", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
         "3": MenuItem("3", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
         "4": MenuItem("4", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
-        "5": MenuItem("5", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
-        "6": MenuItem("6", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
-        "7": MenuItem("7", "Export recent Asana task changes (live API)", lambda: run_script(export_recent_task_changes_api.main, args_recent_task_changes_api(log_level))),
-        "8": MenuItem("8", "Export project import status report", build_reports_menu(log_level)["j"].handler),
-        "9": MenuItem("9", "Export ATJM coverage diagnostic report", build_reports_menu(log_level)["k"].handler),
+        "5": MenuItem("5", "Reverse lookup: map Jira external IDs to Asana tasks", lambda: run_script(reverse_lookup_jira_to_asana.main, args_reverse_lookup_jira_to_asana(log_level))),
+        "6": MenuItem("6", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "7": MenuItem("7", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
+        "8": MenuItem("8", "Export recent Asana task changes (live API)", lambda: run_script(export_recent_task_changes_api.main, args_recent_task_changes_api(log_level))),
+        "9": MenuItem("9", "Export project import status report", build_reports_menu(log_level)["j"].handler),
+        "10": MenuItem("10", "Export ATJM coverage diagnostic report", build_reports_menu(log_level)["k"].handler),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
