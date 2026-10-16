@@ -29,6 +29,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.lib.config import (
     Credentials,
     load_credentials,
+    resolve_credentials_path,
     resolve_jira_base_url,
     resolve_jira_site,
 )
@@ -281,7 +282,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         external_id_field = args.external_id_field
         if not external_id_field:
-            settings = load_archive_import_settings(creds, args.jira_site)
+            settings = load_archive_import_settings(resolve_credentials_path(), args.jira_site)
             if settings.external_id:
                 external_id_field = settings.external_id.field_id
         if not external_id_field:
