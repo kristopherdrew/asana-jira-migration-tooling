@@ -88,6 +88,32 @@ Optional flags:
 
 Issues whose `jira_key` has no project-level mapping are skipped and counted (run `create_team_project_jira_issues` first if they should map). If `--jql` is omitted and there are no project-level mappings yet, the run exits with guidance to create the issues first or pass `--jql`. One decision is stored per project (latest write wins); `UNIQUE(jira_key)` guards against a Jira issue mapping to two projects.
 
+### Reverse Lookup: Jira To Asana Task Mapping
+Discover Jira issues that have external IDs (Asana task GIDs) already set in a custom field, and map them back to the local SQLite database. Useful for backfilling mappings when collaborators have migrated data to Jira separately or using different tooling. Searches Jira via custom JQL, extracts external IDs, looks up tasks and their projects locally, and upserts `task_jira_mappings` and `jira_project_mappings`. Automatically handles conflicts: mappings that would overwrite existing assignments are logged to a conflict report for review rather than failing the run. Orphan tasks (Jira issues with external IDs not in the local database) are also reported. Requires `ATLASSIAN_USERNAME` and `ATLASSIAN_TOKEN` in the resolved credentials.
+
+```bash
+python3 -m scripts.atlassian.reverse_lookup_jira_to_asana \\
+  --jira-site production_jira \\
+  --jql 'project IN (PROJ1, PROJ2) AND "External issue ID" is not EMPTY'
+```
+
+The script writes three CSV files to `exports/` with an ISO timestamp:
+- `reverse_lookup_summary_<timestamp>.csv` — overall counts (issues processed, tasks mapped, projects mapped, orphans, conflicts)
+- `reverse_lookup_conflicts_<timestamp>.csv` (if any) — rows where an upsert would have overwritten an existing mapping. Each conflict includes the conflict type (`task_jira_mappings` or `jira_project_mappings`), the jira_key, task_gid or project_gid, existing value, and attempted value
+- `reverse_lookup_orphans_<timestamp>.csv` (if any) — Jira issues with external IDs that have no corresponding task in the local database (reason: task not found, or task has no projects)
+
+Required flags:
+- `--jira-site <key>` — which Jira site to search (e.g., `production_jira`, `sandbox_jira`).
+- `--jql <query>` — JQL query to find issues (e.g., `project IN (PROJ) AND "External issue ID" is not EMPTY`).
+
+Optional flags:
+- `--external-id-field <field-name-or-id>` — custom field name or `customfield_<id>` for the external ID (resolved automatically from prior CSV importer settings if not specified).
+- `--database <path>` — SQLite file to update (default `data/asana.sqlite`).
+- `--dry-run` — print findings and report names without upserting to SQLite.
+- `--log-level <LEVEL>` — adjust logging verbosity (default `INFO`).
+
+Project mapping: When a task is found, the script looks up all Asana projects the task belongs to and attempts to map each project to the Jira project extracted from the issue key. Project details (name, key) are fetched from Jira's REST API. If a project is already mapped to a different Jira project key, the conflict is logged and the existing mapping is retained.
+
 ### Export Project Tasks To Jira CSV
 Transforms normalized SQLite data for a project into a Jira-compatible CSV (one row per task/subtask). Includes parent IDs, assignee name/email, collaborators (Asana followers other than the task's creator or assignee), due date, completion status/timestamp, task description, user comments, and populated custom fields (multi-select values appear in sequential columns with the same name). Each collaborator is emitted as a repeated adjacent triplet—`Collaborators`, `collaborator_email`, and `collaborator_atlassian_id`—so their display name, email, and mapped Jira account ID remain aligned. Every row includes an `Asana Project Link`, and real task/subtask rows include an `Asana Task Link`; synthetic Epic rows leave the task link blank. Column layout keeps `modified_section` adjacent to the raw `Section` column(s), and places `notes` immediately before the comment columns. The companion user-association CSV includes a `collaborator_count` alongside creator, assignee, completer, and commenter counts. If a task’s assignee is not an active Atlassian user, the export substitutes the active user who created the most tasks in that project for the assignee-facing columns.
 ```bash
