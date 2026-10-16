@@ -271,7 +271,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         logger.info(f"Jira site: {args.jira_site} ({base_url})")
         logger.info(f"Database: {db_path}")
-        logger.info(f"JQL: {args.jql}")
 
         client = JiraSearchClient(
             base_url=base_url,
@@ -290,6 +289,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         logger.info(f"External ID field: {external_id_field}")
 
+        # Append the external ID field condition to the JQL if not already present
+        jql = args.jql.strip()
+        field_condition = f'"{external_id_field}" is not EMPTY'
+        if field_condition.lower() not in jql.lower():
+            jql = f"({jql}) AND {field_condition}"
+        logger.info(f"JQL: {jql}")
+
         db = Database(db_path=db_path)
         with db.connect() as connection:
             timestamp = datetime.now(timezone.utc)
@@ -305,7 +311,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             while True:
                 logger.info(f"Fetching page (token: {next_page_token or 'first'})...")
                 payload = client.search(
-                    jql=args.jql,
+                    jql=jql,
                     fields=(external_id_field,),
                     max_results=JIRA_SEARCH_PAGE_SIZE,
                     next_page_token=next_page_token,
