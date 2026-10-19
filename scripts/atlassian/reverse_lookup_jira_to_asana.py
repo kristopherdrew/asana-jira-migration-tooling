@@ -499,6 +499,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             logger.info(f"Found {len(orphan_tasks)} orphan tasks")
             logger.info(f"Found {len(conflicts)} conflicts")
 
+            if not args.dry_run:
+                connection.commit()
+
             now = datetime.now(timezone.utc)
             timestamp_str = now.strftime("%Y-%m-%dT%H-%M-%S")
             exports_dir = Path("exports")
