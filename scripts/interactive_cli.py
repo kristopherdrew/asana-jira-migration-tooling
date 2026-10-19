@@ -2547,6 +2547,7 @@ def args_search_jira_external_ids(log_level: str) -> List[str]:
 
 def args_reverse_lookup_jira_to_asana(log_level: str) -> List[str]:
     args = build_common_args(log_level)
+    args.extend(["--database", str(active_db_path())])
     append_jira_env_flag(args)
     jql = prompt_required(
         "JQL query to find issues with external IDs\n"
