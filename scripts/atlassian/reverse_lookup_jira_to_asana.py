@@ -31,7 +31,7 @@ from src.lib.config import (
     Credentials,
     load_credentials,
     resolve_credentials_path,
-    resolve_jira_base_url,
+    resolve_jira_site_url,
     resolve_jira_site,
 )
 from src.lib.database import Database, resolve_default_db_path
@@ -309,7 +309,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         creds = load_credentials(args.env_path) if args.env_path else load_credentials()
         username, token = ensure_atlassian_credentials(creds)
-        base_url = resolve_jira_base_url(creds, site_key=args.jira_site)
+        base_url = resolve_jira_site_url(creds, args.jira_site)
         db_path = args.database or resolve_default_db_path()
 
         logger.info(f"Jira site: {args.jira_site} ({base_url})")

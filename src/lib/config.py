@@ -82,6 +82,17 @@ def resolve_jira_site(credentials: "Credentials", site_key: Optional[str] = None
     raise ValueError("No default Jira site configured. Set JIRA_DEFAULT_SITE or pass --jira-site.")
 
 
+def resolve_jira_site_url(credentials: "Credentials", site_key: str) -> str:
+    """Resolve a specific Jira site URL by key (e.g., 'production_jira', 'archive_jira').
+
+    Preferred helper for scripts that accept --jira-site arguments. Always use the
+    site_key parameter; this signature makes positional-arg mistakes impossible.
+
+    Raises ValueError if the site_key is not configured.
+    """
+    return resolve_jira_base_url(credentials, site_key=site_key)
+
+
 def resolve_jira_base_url(
     credentials: "Credentials", prod: bool = False, site_key: Optional[str] = None
 ) -> str:
@@ -90,6 +101,9 @@ def resolve_jira_base_url(
     Defaults to the sandbox (``JIRA_SANDBOX_BASE_URL``); pass ``prod=True`` to
     target production (``JIRA_BASE_URL``). Raises ``ValueError`` with actionable
     guidance when the chosen environment's URL is not set in the credentials.
+
+    For scripts accepting --jira-site arguments, prefer resolve_jira_site_url()
+    to avoid accidentally passing site_key to the prod parameter.
     """
     if site_key or credentials.jira_sites:
         selected = "production_jira" if prod and not site_key else site_key
