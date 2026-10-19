@@ -85,6 +85,9 @@ The SQLite schema is documented in [docs/data-model.md](docs/data-model.md) (per
 - Team/project scope is deliberately prompted per operation rather than stored in `CliSession`, because operators commonly move between teams and projects during a migration. `show_migration_readiness` is a read-only, workspace-level advisory summary; scoped reports remain the source for project-level review.
 - To add a script to the CLI: (1) import its `main` in the `from scripts import (...)` block, (2) write an `args_<thing>(log_level)` builder (reuse the lookup helpers + `prompt`/`confirm`), (3) add a `MenuItem` to the relevant `build_*_menu`. No need to re-investigate the file each time — follow this pattern.
 
+## Jira Integration Patterns
+- **Jira site resolution**: When scripts accept `--jira-site` arguments to target different Jira environments (production, sandbox, archive), always pass the site key as a **named parameter** to `resolve_jira_base_url()`. The function signature has `prod: bool` as the second parameter, so positional arguments cause the site key to go to the wrong parameter. **Correct**: `resolve_jira_base_url(creds, site_key=args.jira_site)`. **Incorrect**: `resolve_jira_base_url(creds, args.jira_site)` (passes to `prod` parameter and ignores site_key). See `scripts/atlassian/create_team_project_jira_issues.py` for the canonical pattern.
+
 ## Coding Style & Naming Conventions
 - Follow PEP 8 with 4-space indentation and descriptive snake_case module/function names.
 - Prefer dataclasses and type hints (PEP 484 / `typing`) to keep data structures explicit.
