@@ -389,26 +389,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         })
                         continue
 
-                    if not args.dry_run:
-                        project_details = client.get_project(project_key)
-                        project_name = project_details.get("name", "") if project_details else ""
+                    project_details = client.get_project(project_key)
+                    project_name = project_details.get("name", "") if project_details else ""
 
-                        try:
-                            existing = connection.execute(
-                                "SELECT jira_key FROM task_jira_mappings WHERE jira_site_key = ? AND task_gid = ?",
-                                (args.jira_site, task_gid),
-                            ).fetchone()
+                    try:
+                        existing = connection.execute(
+                            "SELECT jira_key FROM task_jira_mappings WHERE jira_site_key = ? AND task_gid = ?",
+                            (args.jira_site, task_gid),
+                        ).fetchone()
 
-                            if existing and existing["jira_key"] != jira_key:
-                                conflicts.append({
-                                    "conflict_type": "task_jira_mappings",
-                                    "jira_key": jira_key,
-                                    "task_gid": task_gid,
-                                    "existing_value": existing["jira_key"],
-                                    "attempted_value": jira_key,
-                                })
-                            else:
-                                is_new_mapping = not existing
+                        if existing and existing["jira_key"] != jira_key:
+                            conflicts.append({
+                                "conflict_type": "task_jira_mappings",
+                                "jira_key": jira_key,
+                                "task_gid": task_gid,
+                                "existing_value": existing["jira_key"],
+                                "attempted_value": jira_key,
+                            })
+                        else:
+                            is_new_mapping = not existing
+                            if not args.dry_run:
                                 connection.execute(
                                     """
                                     INSERT INTO task_jira_mappings
@@ -420,21 +420,21 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                     """,
                                     (args.jira_site, task_gid, jira_key, timestamp.isoformat()),
                                 )
-                                enriched = enrich_task_mapping(
-                                    connection, task_gid, jira_key, project_key, project_name
-                                )
-                                if is_new_mapping:
-                                    mapped_tasks_new.append(enriched)
-                                else:
-                                    mapped_tasks_updated.append(enriched)
-                        except Exception as exc:
-                            logger.error(f"Error mapping task {task_gid}: {exc}")
-                            conflicts.append({
-                                "conflict_type": "task_mapping_error",
-                                "jira_key": jira_key,
-                                "task_gid": task_gid,
-                                "error": str(exc),
-                            })
+                            enriched = enrich_task_mapping(
+                                connection, task_gid, jira_key, project_key, project_name
+                            )
+                            if is_new_mapping:
+                                mapped_tasks_new.append(enriched)
+                            else:
+                                mapped_tasks_updated.append(enriched)
+                    except Exception as exc:
+                        logger.error(f"Error mapping task {task_gid}: {exc}")
+                        conflicts.append({
+                            "conflict_type": "task_mapping_error",
+                            "jira_key": jira_key,
+                            "task_gid": task_gid,
+                            "error": str(exc),
+                        })
 
                         for project_gid in project_gids:
                             try:
