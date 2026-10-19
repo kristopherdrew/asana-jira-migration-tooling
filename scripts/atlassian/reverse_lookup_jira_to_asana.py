@@ -289,11 +289,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         logger.info(f"External ID field: {external_id_field}")
 
-        # Append the external ID field condition to the JQL if not already present
         jql = args.jql.strip()
-        field_condition = f'"{external_id_field}" is not EMPTY'
-        if field_condition.lower() not in jql.lower():
-            jql = f"({jql}) AND {field_condition}"
         logger.info(f"JQL: {jql}")
 
         db = Database(db_path=db_path)
