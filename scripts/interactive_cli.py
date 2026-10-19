@@ -2116,11 +2116,11 @@ def run_configure_above_epic_hierarchy() -> None:
     if _session is None or not _session.jira_site_key:
         print("No active Jira site selected. Select a site first via Client & Environment.")
         return
-    from src.lib.config import load_credentials, resolve_jira_base_url
+    from src.lib.config import load_credentials, resolve_jira_site_url
     from src.lib.jira_client import JiraClient
     try:
         credentials = load_credentials()
-        jira_base_url = resolve_jira_base_url(credentials, site_key=_session.jira_site_key)
+        jira_base_url = resolve_jira_site_url(credentials, _session.jira_site_key)
         if not jira_base_url:
             print("Could not resolve Jira base URL for the active site.")
             return
