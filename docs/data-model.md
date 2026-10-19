@@ -49,12 +49,12 @@ User accounts visible in the workspace, plus their My Tasks list GID.
 
 #### `projects`
 
-Project definitions, lifecycle metadata, and task-count snapshot; includes synthetic personal projects (is_personal_project=1).
+Project definitions, lifecycle metadata, and task-count snapshot; project_classification ('personal' or 'work') identifies personal projects vs team/work projects for migration tracking.
 
 - **Source:** GET /workspaces/{workspace_gid}/projects; GET /projects/{gid}/task_counts
 - **Populated by:** `scripts/get_projects.py`, `scripts/get_personal_tasks.py`, `scripts/get_incremental_updates.py`
 - **Written by:** `upsert_project`
-- **Write semantics:** Upsert by gid (PK); also writes project_custom_fields and project_custom_field_settings.
+- **Write semantics:** Upsert by gid (PK); also writes project_custom_fields and project_custom_field_settings. project_classification is set via resource_subtype='personal_project_placeholder' → 'personal', defaults to 'work'.
 
 | Column | Type | PK |
 |---|---|---|
@@ -86,12 +86,12 @@ Project definitions, lifecycle metadata, and task-count snapshot; includes synth
 
 #### `tasks`
 
-Core task records (and subtasks); hierarchy_depth and is_personal flags support export. recurrence is a JSON-serialized copy of Asana's undocumented per-task recurrence object, stored verbatim including the literal type 'never' Asana uses for explicitly non-recurring tasks (query via is_recurring()/type != 'never' rather than a NULL check to find actual recurrences — see src/tasks/recurring_tasks.py); NULL means the field was never populated. recurrence_checked_at is the ISO timestamp of the last sync whose payload included the recurrence field, distinguishing 'checked' (recurrence_checked_at set, whatever recurrence holds) from 'never checked' (both NULL).
+Core task records (and subtasks); hierarchy_depth and is_personal flags support export; is_deleted flag marks tasks no longer found in syncs. recurrence is a JSON-serialized copy of Asana's undocumented per-task recurrence object, stored verbatim including the literal type 'never' Asana uses for explicitly non-recurring tasks (query via is_recurring()/type != 'never' rather than a NULL check to find actual recurrences — see src/tasks/recurring_tasks.py); NULL means the field was never populated. recurrence_checked_at is the ISO timestamp of the last sync whose payload included the recurrence field, distinguishing 'checked' (recurrence_checked_at set, whatever recurrence holds) from 'never checked' (both NULL). deleted_at is the ISO timestamp when the task was first marked as deleted; NULL for active tasks.
 
 - **Source:** GET /projects/{gid}/tasks; GET /tasks; GET /tasks/{gid}; GET /tasks/{gid}/subtasks
 - **Populated by:** `scripts/get_tasks.py`, `scripts/get_personal_tasks.py`, `scripts/get_incremental_updates.py`
-- **Written by:** `upsert_task`
-- **Write semantics:** Upsert by gid (PK); also writes task_projects / task_custom_fields / task_custom_field_multi_enum / task_relationships / task_followers / task_tags / tags. recurrence / recurrence_checked_at are also updatable in isolation via Database.update_task_recurrence (single-column UPDATE) for live-API gap-fill backfills that don't have a full task payload.
+- **Written by:** `upsert_task; mark_tasks_as_deleted`
+- **Write semantics:** Upsert by gid (PK); also writes task_projects / task_custom_fields / task_custom_field_multi_enum / task_relationships / task_followers / task_tags / tags. recurrence / recurrence_checked_at are also updatable in isolation via Database.update_task_recurrence (single-column UPDATE) for live-API gap-fill backfills that don't have a full task payload. is_deleted / deleted_at are set by mark_tasks_as_deleted when tasks are no longer found in sync.
 
 | Column | Type | PK |
 |---|---|---|
@@ -125,6 +125,8 @@ Core task records (and subtasks); hierarchy_depth and is_personal flags support 
 | `recurrence_checked_at` | TEXT |  |
 | `is_subtask` | INTEGER |  |
 | `is_personal` | INTEGER |  |
+| `is_deleted` | INTEGER |  |
+| `deleted_at` | TEXT |  |
 | `hierarchy_depth` | INTEGER |  |
 | `synced_at` | TEXT |  |
 
