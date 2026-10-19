@@ -13,6 +13,7 @@ import base64
 import csv
 import json
 import logging
+import os
 import sqlite3
 import ssl
 import sys
@@ -307,6 +308,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         creds = load_credentials(args.env_path) if args.env_path else load_credentials()
+        env_file_override = os.environ.get("ASANA_JIRA_ENV_FILE")
+        if env_file_override:
+            logger.debug(f"Using credentials from ASANA_JIRA_ENV_FILE: {env_file_override}")
         username, token = ensure_atlassian_credentials(creds)
         base_url = resolve_jira_base_url(creds, args.jira_site)
         db_path = args.database or resolve_default_db_path()
