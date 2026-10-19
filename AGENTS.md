@@ -108,3 +108,4 @@ The SQLite schema is documented in [docs/data-model.md](docs/data-model.md) (per
 - The user's final confirmation of the proposed commit message(s) authorizes both the commit and push; no further confirmation or verification is required before performing them, unless the user says otherwise.
 - Do not create a commit or push until that final commit-message confirmation is received.
 - Keep new script shebangs aligned with the interpreter standard (`#!/usr/bin/env python3`).
+- When implementing new features, scripts, or functionality, output the file path or reference to the feature in the final summary so the user can easily locate and test it (e.g., `scripts/path/to/script.py` for scripts, or docs references for reports/features).
