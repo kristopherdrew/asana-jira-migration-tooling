@@ -439,23 +439,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                             "error": str(exc),
                         })
 
-                        for project_gid in project_gids:
-                            try:
-                                existing_proj = connection.execute(
-                                    "SELECT jira_project_key FROM jira_project_mappings WHERE jira_site_key = ? AND project_gid = ?",
-                                    (args.jira_site, project_gid),
-                                ).fetchone()
+                    for project_gid in project_gids:
+                        try:
+                            existing_proj = connection.execute(
+                                "SELECT jira_project_key FROM jira_project_mappings WHERE jira_site_key = ? AND project_gid = ?",
+                                (args.jira_site, project_gid),
+                            ).fetchone()
 
-                                if existing_proj and existing_proj["jira_project_key"] != project_key:
-                                    conflicts.append({
-                                        "conflict_type": "jira_project_mappings",
-                                        "project_gid": project_gid,
-                                        "project_key": project_key,
-                                        "existing_value": existing_proj["jira_project_key"],
-                                        "attempted_value": project_key,
-                                    })
-                                else:
-                                    is_new_proj_mapping = not existing_proj
+                            if existing_proj and existing_proj["jira_project_key"] != project_key:
+                                conflicts.append({
+                                    "conflict_type": "jira_project_mappings",
+                                    "project_gid": project_gid,
+                                    "project_key": project_key,
+                                    "existing_value": existing_proj["jira_project_key"],
+                                    "attempted_value": project_key,
+                                })
+                            else:
+                                is_new_proj_mapping = not existing_proj
+                                if not args.dry_run:
                                     connection.execute(
                                         """
                                         INSERT INTO jira_project_mappings
@@ -468,20 +469,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                         """,
                                         (args.jira_site, project_gid, project_name, project_key, timestamp.isoformat()),
                                     )
-                                    enriched = enrich_project_mapping(
-                                        connection, project_gid, project_key, project_name
-                                    )
-                                    if is_new_proj_mapping:
-                                        mapped_projects_new.append(enriched)
-                                    else:
-                                        mapped_projects_updated.append(enriched)
-                            except Exception as exc:
-                                logger.error(f"Error mapping project {project_gid}: {exc}")
-                                conflicts.append({
-                                    "conflict_type": "project_mapping_error",
-                                    "project_gid": project_gid,
-                                    "error": str(exc),
-                                })
+                                enriched = enrich_project_mapping(
+                                    connection, project_gid, project_key, project_name
+                                )
+                                if is_new_proj_mapping:
+                                    mapped_projects_new.append(enriched)
+                                else:
+                                    mapped_projects_updated.append(enriched)
+                        except Exception as exc:
+                            logger.error(f"Error mapping project {project_gid}: {exc}")
+                            conflicts.append({
+                                "conflict_type": "project_mapping_error",
+                                "project_gid": project_gid,
+                                "error": str(exc),
+                            })
 
                 if not args.dry_run:
                     connection.commit()
