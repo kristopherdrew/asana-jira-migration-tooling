@@ -2548,7 +2548,7 @@ def args_search_jira_external_ids(log_level: str) -> List[str]:
 def args_reverse_lookup_jira_to_asana(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     if _session is not None and _session.env_path:
-        args.extend(["--env-path", str(_session.env_path)])
+        os.environ["ASANA_JIRA_ENV_FILE"] = str(_session.env_path)
     append_jira_env_flag(args)
     jql = prompt_required(
         "JQL query to find issues with external IDs\n"
