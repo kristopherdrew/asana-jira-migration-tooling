@@ -528,7 +528,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             if conflicts:
                 conflicts_path = exports_dir / f"reverse_lookup_conflicts_{timestamp_str}.csv"
                 with open(conflicts_path, "w", newline="") as f:
-                    writer = csv.DictWriter(f, fieldnames=list(conflicts[0].keys()))
+                    fieldnames = set()
+                    for c in conflicts:
+                        fieldnames.update(c.keys())
+                    fieldnames = sorted(fieldnames)
+                    writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore", restval="")
                     writer.writeheader()
                     writer.writerows(conflicts)
                 logger.info(f"Wrote conflicts to {conflicts_path}")
