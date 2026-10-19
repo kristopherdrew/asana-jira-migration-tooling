@@ -220,6 +220,48 @@ def lookup_task_projects(
     return [row["project_gid"] for row in rows]
 
 
+def enrich_task_mapping(
+    connection: sqlite3.Connection,
+    task_gid: str,
+    jira_key: str,
+    project_key: str,
+    project_name: str,
+) -> Dict[str, object]:
+    """Enrich a task mapping with context from the local DB."""
+    row = connection.execute(
+        "SELECT t.gid, t.name FROM tasks t WHERE t.gid = ? LIMIT 1",
+        (task_gid,),
+    ).fetchone()
+    task_name = row["name"] if row else None
+    return {
+        "task_gid": task_gid,
+        "task_name": task_name,
+        "jira_key": jira_key,
+        "jira_project_key": project_key,
+        "jira_project_name": project_name,
+    }
+
+
+def enrich_project_mapping(
+    connection: sqlite3.Connection,
+    project_gid: str,
+    jira_project_key: str,
+    jira_project_name: str,
+) -> Dict[str, object]:
+    """Enrich a project mapping with context from the local DB."""
+    row = connection.execute(
+        "SELECT gid, name FROM projects WHERE gid = ? LIMIT 1",
+        (project_gid,),
+    ).fetchone()
+    project_name = row["name"] if row else None
+    return {
+        "project_gid": project_gid,
+        "project_name": project_name,
+        "jira_project_key": jira_project_key,
+        "jira_project_name": jira_project_name,
+    }
+
+
 def ensure_atlassian_credentials(creds: Credentials) -> Tuple[str, str]:
     if not creds.atlassian_username or not creds.atlassian_token:
         raise ValueError(
@@ -296,8 +338,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         with db.connect() as connection:
             timestamp = datetime.now(timezone.utc)
 
-            mapped_tasks = []
-            mapped_projects = []
+            mapped_tasks_new = []
+            mapped_tasks_updated = []
+            mapped_projects_new = []
+            mapped_projects_updated = []
             orphan_tasks = []
             conflicts = []
 
@@ -345,6 +389,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         continue
 
                     if not args.dry_run:
+                        project_details = client.get_project(project_key)
+                        project_name = project_details.get("name", "") if project_details else ""
+
                         try:
                             existing = connection.execute(
                                 "SELECT jira_key FROM task_jira_mappings WHERE jira_site_key = ? AND task_gid = ?",
@@ -360,6 +407,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                     "attempted_value": jira_key,
                                 })
                             else:
+                                is_new_mapping = not existing
                                 connection.execute(
                                     """
                                     INSERT INTO task_jira_mappings
@@ -371,10 +419,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                     """,
                                     (args.jira_site, task_gid, jira_key, timestamp.isoformat()),
                                 )
-                                mapped_tasks.append({
-                                    "jira_key": jira_key,
-                                    "task_gid": task_gid,
-                                })
+                                enriched = enrich_task_mapping(
+                                    connection, task_gid, jira_key, project_key, project_name
+                                )
+                                if is_new_mapping:
+                                    mapped_tasks_new.append(enriched)
+                                else:
+                                    mapped_tasks_updated.append(enriched)
                         except Exception as exc:
                             logger.error(f"Error mapping task {task_gid}: {exc}")
                             conflicts.append({
@@ -383,9 +434,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                 "task_gid": task_gid,
                                 "error": str(exc),
                             })
-
-                        project_details = client.get_project(project_key)
-                        project_name = project_details.get("name", "") if project_details else ""
 
                         for project_gid in project_gids:
                             try:
@@ -403,6 +451,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                         "attempted_value": project_key,
                                     })
                                 else:
+                                    is_new_proj_mapping = not existing_proj
                                     connection.execute(
                                         """
                                         INSERT INTO jira_project_mappings
@@ -415,11 +464,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                         """,
                                         (args.jira_site, project_gid, project_name, project_key, timestamp.isoformat()),
                                     )
-                                    mapped_projects.append({
-                                        "project_gid": project_gid,
-                                        "project_key": project_key,
-                                        "project_name": project_name,
-                                    })
+                                    enriched = enrich_project_mapping(
+                                        connection, project_gid, project_key, project_name
+                                    )
+                                    if is_new_proj_mapping:
+                                        mapped_projects_new.append(enriched)
+                                    else:
+                                        mapped_projects_updated.append(enriched)
                             except Exception as exc:
                                 logger.error(f"Error mapping project {project_gid}: {exc}")
                                 conflicts.append({
@@ -436,8 +487,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     break
 
             logger.info(f"Processed {processed} issues total")
-            logger.info(f"Mapped {len(mapped_tasks)} tasks")
-            logger.info(f"Mapped {len(mapped_projects)} projects")
+            logger.info(f"Tasks newly mapped: {len(mapped_tasks_new)}")
+            logger.info(f"Tasks updated: {len(mapped_tasks_updated)}")
+            logger.info(f"Projects newly mapped: {len(mapped_projects_new)}")
+            logger.info(f"Projects updated: {len(mapped_projects_updated)}")
             logger.info(f"Found {len(orphan_tasks)} orphan tasks")
             logger.info(f"Found {len(conflicts)} conflicts")
 
@@ -445,6 +498,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             timestamp_str = now.strftime("%Y-%m-%dT%H-%M-%S")
             exports_dir = Path("exports")
             exports_dir.mkdir(exist_ok=True)
+
+            if mapped_tasks_new:
+                tasks_path = exports_dir / f"reverse_lookup_newly_mapped_tasks_{timestamp_str}.csv"
+                with open(tasks_path, "w", newline="") as f:
+                    fieldnames = ["task_gid", "task_name", "jira_key", "jira_project_key", "jira_project_name"]
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(mapped_tasks_new)
+                logger.info(f"Wrote newly mapped tasks to {tasks_path}")
+
+            if mapped_projects_new:
+                projects_path = exports_dir / f"reverse_lookup_newly_mapped_projects_{timestamp_str}.csv"
+                with open(projects_path, "w", newline="") as f:
+                    fieldnames = ["project_gid", "project_name", "jira_project_key", "jira_project_name"]
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    writer.writerows(mapped_projects_new)
+                logger.info(f"Wrote newly mapped projects to {projects_path}")
 
             if conflicts:
                 conflicts_path = exports_dir / f"reverse_lookup_conflicts_{timestamp_str}.csv"
@@ -468,8 +539,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 writer.writeheader()
                 writer.writerows([
                     {"metric": "Issues processed", "count": processed},
-                    {"metric": "Tasks mapped", "count": len(mapped_tasks)},
-                    {"metric": "Projects mapped", "count": len(mapped_projects)},
+                    {"metric": "Tasks newly mapped", "count": len(mapped_tasks_new)},
+                    {"metric": "Tasks updated", "count": len(mapped_tasks_updated)},
+                    {"metric": "Projects newly mapped", "count": len(mapped_projects_new)},
+                    {"metric": "Projects updated", "count": len(mapped_projects_updated)},
                     {"metric": "Orphan tasks", "count": len(orphan_tasks)},
                     {"metric": "Conflicts", "count": len(conflicts)},
                     {"metric": "Dry run", "count": "Yes" if args.dry_run else "No"},
