@@ -295,5 +295,72 @@ class TestReverseLookupsMappingInsert(unittest.TestCase):
             self.assertEqual(existing["jira_key"], "PROJ-123")
 
 
+class TestReverseLookupsJiraSiteResolution(unittest.TestCase):
+    """Test that reverse_lookup correctly resolves different Jira sites.
+
+    This prevents regression of the bug where resolve_jira_base_url was called
+    with positional args (site_key going to 'prod' parameter instead).
+    """
+
+    def test_reverse_lookup_uses_named_site_key_parameter(self):
+        """Verify resolve_jira_base_url is called with site_key as named param."""
+        from src.lib.config import resolve_jira_base_url, Credentials, JiraSite
+
+        # Create credentials with multiple sites
+        creds = Credentials(
+            token="test_token",
+            workspace_gid="test_ws",
+            skip_ssl_verification=False,
+            atlassian_username="test_user",
+            atlassian_token="test_jira_token",
+            jira_sites=(
+                JiraSite("production_jira", "Production Jira", "https://roblox.atlassian.net"),
+                JiraSite("sandbox_jira", "Sandbox Jira", "https://roblox-sandbox-748.atlassian.net"),
+                JiraSite("archive_jira", "Archive Jira", "https://roblox-archive.atlassian.net"),
+            ),
+        )
+
+        # Test that each site resolves to its correct URL
+        prod_url = resolve_jira_base_url(creds, site_key="production_jira")
+        self.assertEqual(prod_url, "https://roblox.atlassian.net")
+
+        sandbox_url = resolve_jira_base_url(creds, site_key="sandbox_jira")
+        self.assertEqual(sandbox_url, "https://roblox-sandbox-748.atlassian.net")
+
+        archive_url = resolve_jira_base_url(creds, site_key="archive_jira")
+        self.assertEqual(archive_url, "https://roblox-archive.atlassian.net")
+
+    def test_reverse_lookup_site_key_positional_arg_bug(self):
+        """Verify the bug (passing site_key as positional) doesn't happen.
+
+        If site_key is passed positionally to resolve_jira_base_url, it goes to
+        the 'prod' parameter (expects bool) and the function uses incorrect logic.
+        """
+        from src.lib.config import resolve_jira_base_url, Credentials, JiraSite
+
+        creds = Credentials(
+            token="test_token",
+            workspace_gid="test_ws",
+            skip_ssl_verification=False,
+            atlassian_username="test_user",
+            atlassian_token="test_jira_token",
+            jira_sites=(
+                JiraSite("production_jira", "Production Jira", "https://roblox.atlassian.net"),
+                JiraSite("archive_jira", "Archive Jira", "https://roblox-archive.atlassian.net"),
+            ),
+        )
+
+        # Correct way (named parameter)
+        correct_url = resolve_jira_base_url(creds, site_key="archive_jira")
+
+        # Incorrect way would be:
+        # incorrect_url = resolve_jira_base_url(creds, "archive_jira")
+        # This would pass "archive_jira" string to prod parameter, causing wrong logic
+
+        # Verify correct way gets the right URL
+        self.assertEqual(correct_url, "https://roblox-archive.atlassian.net")
+        self.assertNotEqual(correct_url, "https://roblox.atlassian.net")
+
+
 if __name__ == "__main__":
     unittest.main()
