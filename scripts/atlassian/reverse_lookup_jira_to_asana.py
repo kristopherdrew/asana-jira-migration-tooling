@@ -345,6 +345,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             mapped_projects_updated = []
             orphan_tasks = []
             conflicts = []
+            project_cache = {}
 
             next_page_token: Optional[str] = None
             processed = 0
@@ -389,8 +390,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         })
                         continue
 
-                    project_details = client.get_project(project_key)
-                    project_name = project_details.get("name", "") if project_details else ""
+                    if project_key not in project_cache:
+                        project_details = client.get_project(project_key)
+                        project_cache[project_key] = project_details.get("name", "") if project_details else ""
+                    project_name = project_cache[project_key]
 
                     try:
                         existing = connection.execute(
