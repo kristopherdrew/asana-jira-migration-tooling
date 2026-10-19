@@ -74,11 +74,11 @@ TABLE_METADATA: Dict[str, TableMeta] = {
     "projects": _m(
         "projects",
         "Core entities",
-        "Project definitions, lifecycle metadata, and task-count snapshot; includes synthetic personal projects (is_personal_project=1).",
+        "Project definitions, lifecycle metadata, and task-count snapshot; project_classification ('personal' or 'work') identifies personal projects vs team/work projects for migration tracking.",
         "GET /workspaces/{workspace_gid}/projects; GET /projects/{gid}/task_counts",
         ["scripts/get_projects.py", "scripts/get_personal_tasks.py", "scripts/get_incremental_updates.py"],
         "upsert_project",
-        "Upsert by gid (PK); also writes project_custom_fields and project_custom_field_settings.",
+        "Upsert by gid (PK); also writes project_custom_fields and project_custom_field_settings. project_classification is set via resource_subtype='personal_project_placeholder' → 'personal', defaults to 'work'.",
     ),
     "tasks": _m(
         "tasks",
