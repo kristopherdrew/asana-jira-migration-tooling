@@ -1188,3 +1188,542 @@ class ExportTeamProjectJiraCsvTest(TestCase):
         self.assertEqual(zeta_task["Owner"], "")
         self.assertEqual(zeta_task["Owner Atlassian ID"], "")
         self.assertEqual(zeta_task["Owner Atlassian Status"], "")
+
+
+class ExportScopeFilteringTest(TestCase):
+    """Test project scope filtering: --project-gids, --project-gids-file, --team-gids."""
+
+    def setUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.workspace = Path(self.temp_dir.name)
+        self.db_path = self.workspace / "asana.sqlite"
+        self.database = Database(str(self.db_path))
+        self.connection = self.database.connect()
+        self.database.initialize(self.connection)
+
+    def tearDown(self) -> None:
+        self.connection.close()
+
+    def _seed_multi_team_projects(self) -> None:
+        """Seed database with multiple teams and projects for scope testing."""
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        # Teams
+        self.database.upsert_team(self.connection, {"gid": "team_alpha", "name": "Alpha Team"}, sync_time)
+        self.database.upsert_team(self.connection, {"gid": "team_beta", "name": "Beta Team"}, sync_time)
+        self.database.upsert_team(self.connection, {"gid": "team_gamma", "name": "Gamma Team"}, sync_time)
+
+        # Projects
+        projects = [
+            ("proj_a1", "Alpha 1", "team_alpha"),
+            ("proj_a2", "Alpha 2", "team_alpha"),
+            ("proj_b1", "Beta 1", "team_beta"),
+            ("proj_b2", "Beta 2", "team_beta"),
+            ("proj_g1", "Gamma 1", "team_gamma"),
+        ]
+
+        for gid, name, team_gid in projects:
+            self.database.upsert_project(
+                self.connection,
+                {
+                    "gid": gid,
+                    "name": name,
+                    "archived": False,
+                    "team": {"gid": team_gid, "name": f"Team for {name}"},
+                    "privacy_setting": "private",
+                    "created_at": "2025-01-01T09:00:00Z",
+                    "completed": False,
+                    "is_personal_project": False,
+                    "num_tasks": 1,
+                    "num_incomplete_tasks": 1,
+                    "num_completed_tasks": 0,
+                },
+                sync_time,
+            )
+            # Add a task per project
+            self.database.upsert_task(
+                self.connection,
+                {
+                    "gid": f"task_{gid}",
+                    "name": f"Task in {name}",
+                    "created_at": "2025-02-01T09:00:00Z",
+                    "modified_at": "2025-03-01T09:00:00Z",
+                    "completed_at": None,
+                    "memberships": [{"project": {"gid": gid, "name": name}}],
+                    "workspace": {"gid": "ws_1", "name": "Workspace"},
+                },
+                sync_time,
+            )
+        self.connection.commit()
+
+    def test_exports_all_projects_by_default(self) -> None:
+        self._seed_multi_team_projects()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="all_projects.csv",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        project_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Task"}
+        self.assertEqual(project_summaries, {"Alpha 1", "Alpha 2", "Beta 1", "Beta 2", "Gamma 1"})
+
+    def test_filters_by_single_project_gid(self) -> None:
+        self._seed_multi_team_projects()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="single_project.csv",
+            project_gids="proj_a1",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        project_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Task"}
+        self.assertEqual(project_summaries, {"Alpha 1"})
+
+    def test_filters_by_multiple_project_gids(self) -> None:
+        self._seed_multi_team_projects()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="multiple_projects.csv",
+            project_gids="proj_a1,proj_b2,proj_g1",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        project_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Task"}
+        self.assertEqual(project_summaries, {"Alpha 1", "Beta 2", "Gamma 1"})
+
+    def test_filters_by_project_gids_file_plain_text(self) -> None:
+        self._seed_multi_team_projects()
+
+        # Create a plain text file with project GIDs
+        gids_file = self.workspace / "project_gids.txt"
+        gids_file.write_text("proj_a1\nproj_b1\nproj_g1", encoding="utf-8")
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="from_file.csv",
+            project_gids_file=str(gids_file),
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        project_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Task"}
+        self.assertEqual(project_summaries, {"Alpha 1", "Beta 1", "Gamma 1"})
+
+    def test_filters_by_project_gids_file_csv(self) -> None:
+        self._seed_multi_team_projects()
+
+        # Create a CSV file with project_gid column
+        gids_file = self.workspace / "projects.csv"
+        gids_file.write_text(
+            "project_gid,project_name,team_gid\nproj_a2,Alpha 2,team_alpha\nproj_b2,Beta 2,team_beta\n",
+            encoding="utf-8",
+        )
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="from_csv_file.csv",
+            project_gids_file=str(gids_file),
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        project_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Task"}
+        self.assertEqual(project_summaries, {"Alpha 2", "Beta 2"})
+
+    def test_filters_by_single_team_gid(self) -> None:
+        self._seed_multi_team_projects()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="by_team.csv",
+            team_gids="team_beta",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        # Should include the Beta Team epic + both Beta projects
+        project_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Task"}
+        self.assertEqual(project_summaries, {"Beta 1", "Beta 2"})
+        # Verify the Epic row exists for the team
+        epic_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Epic"}
+        self.assertIn("Beta Team", epic_summaries)
+
+    def test_team_gid_filter_includes_only_team_epic_and_projects(self) -> None:
+        self._seed_multi_team_projects()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="team_only.csv",
+            team_gids="team_alpha",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        # Should NOT include Beta or Gamma teams/projects
+        project_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Task"}
+        self.assertEqual(project_summaries, {"Alpha 1", "Alpha 2"})
+        epic_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Epic"}
+        self.assertIn("Alpha Team", epic_summaries)
+        self.assertNotIn("Beta Team", epic_summaries)
+        self.assertNotIn("Gamma Team", epic_summaries)
+
+    def test_project_gids_with_whitespace_in_string(self) -> None:
+        self._seed_multi_team_projects()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="whitespace.csv",
+            project_gids="  proj_a1  ,  proj_b2  , proj_g1  ",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        project_summaries = {row["Summary"] for row in rows if row["Issue Type"] == "Task"}
+        self.assertEqual(project_summaries, {"Alpha 1", "Beta 2", "Gamma 1"})
+
+    def test_nonexistent_project_gid_returns_empty_export(self) -> None:
+        self._seed_multi_team_projects()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="nonexistent.csv",
+            project_gids="proj_nonexistent",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        # Should have header row only (no epic, no tasks)
+        project_rows = [row for row in rows if row["Issue Type"] == "Task"]
+        self.assertEqual(len(project_rows), 0)
+
+
+class CustomFieldModeTest(TestCase):
+    """Test custom field export modes: 'columns' vs 'description'."""
+
+    def setUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.workspace = Path(self.temp_dir.name)
+        self.db_path = self.workspace / "asana.sqlite"
+        self.database = Database(str(self.db_path))
+        self.connection = self.database.connect()
+        self.database.initialize(self.connection)
+
+    def tearDown(self) -> None:
+        self.connection.close()
+
+    def _seed_with_custom_fields(self) -> None:
+        """Seed database with projects that have custom field values."""
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        self.database.upsert_team(self.connection, {"gid": "team_x", "name": "Team X"}, sync_time)
+
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "user_owner",
+                "name": "Project Owner",
+                "resource_type": "user",
+                "email": "owner@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [
+                {
+                    "gid": "user_owner",
+                    "atlassianAccountId": "atl-owner",
+                    "atlassianEmail": "owner.atl@example.com",
+                    "atlassianStatus": "active",
+                }
+            ],
+            sync_time,
+        )
+
+        # Pass custom_fields as part of the project dict
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_custom",
+                "name": "Custom Field Project",
+                "archived": False,
+                "owner": {"gid": "user_owner", "name": "Project Owner"},
+                "team": {"gid": "team_x", "name": "Team X"},
+                "privacy_setting": "private",
+                "created_at": "2025-01-01T09:00:00Z",
+                "completed": False,
+                "is_personal_project": False,
+                "num_tasks": 1,
+                "num_incomplete_tasks": 1,
+                "num_completed_tasks": 0,
+                "custom_fields": [
+                    {
+                        "gid": "field_1",
+                        "name": "Budget",
+                        "type": "number",
+                        "number_value": "50000",
+                    },
+                    {
+                        "gid": "field_2",
+                        "name": "Status",
+                        "type": "enum",
+                        "enum_value": {"gid": "ev_1", "name": "On Track"},
+                    },
+                    {
+                        "gid": "field_3",
+                        "name": "Notes",
+                        "type": "text",
+                        "text_value": "This is a sample project.",
+                    },
+                ],
+            },
+            sync_time,
+        )
+
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_custom",
+                "name": "Task in Custom Project",
+                "created_at": "2025-02-01T09:00:00Z",
+                "modified_at": "2025-03-01T09:00:00Z",
+                "completed_at": None,
+                "memberships": [{"project": {"gid": "proj_custom", "name": "Custom Field Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+
+        self.connection.commit()
+
+    def test_custom_fields_mode_columns_includes_field_columns(self) -> None:
+        self._seed_with_custom_fields()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="columns_mode.csv",
+            custom_fields="columns",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            header = next(reader)
+
+        # Should have "Project Field:" columns for custom fields
+        field_columns = [h for h in header if h.startswith("Project Field:")]
+        self.assertGreater(len(field_columns), 0)
+        self.assertIn("Project Field: Budget", field_columns)
+        self.assertIn("Project Field: Status", field_columns)
+        self.assertIn("Project Field: Notes", field_columns)
+
+    def test_custom_fields_mode_description_still_discovers_fields(self) -> None:
+        """Note: The custom_fields parameter currently doesn't affect column inclusion.
+        Custom fields are always discovered and added as columns."""
+        self._seed_with_custom_fields()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="description_mode.csv",
+            custom_fields="description",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            header = next(reader)
+
+        # Custom fields are always discovered and added as columns (current behavior)
+        field_columns = [h for h in header if h.startswith("Project Field:")]
+        self.assertGreater(len(field_columns), 0)
+
+    def test_custom_fields_values_in_columns_mode(self) -> None:
+        self._seed_with_custom_fields()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="columns_values.csv",
+            custom_fields="columns",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        project_row = next((row for row in rows if row["Summary"] == "Custom Field Project"), None)
+        self.assertIsNotNone(project_row)
+        # Custom field values are stored as they come from the database (50000.0 for numbers)
+        self.assertIn(project_row["Project Field: Budget"], ["50000.0", "50000"])
+        self.assertEqual(project_row["Project Field: Status"], "On Track")
+        self.assertEqual(project_row["Project Field: Notes"], "This is a sample project.")
+
+    def test_custom_fields_in_description_section(self) -> None:
+        self._seed_with_custom_fields()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="description_values.csv",
+            custom_fields="description",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        project_row = next((row for row in rows if row["Summary"] == "Custom Field Project"), None)
+        self.assertIsNotNone(project_row)
+        description = project_row["Description"]
+        # Custom fields should be embedded in the description in a "Project Custom Fields" section
+        self.assertIn("Budget", description)
+        # Number value may be formatted as 50000.0 or 50000
+        self.assertTrue("50000" in description)
+        self.assertIn("Status", description)
+        self.assertIn("On Track", description)
+
+
+class JiraProjectKeyMappingTest(TestCase):
+    """Test Jira project key parameter for tracking mappings."""
+
+    def setUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.workspace = Path(self.temp_dir.name)
+        self.db_path = self.workspace / "asana.sqlite"
+        self.database = Database(str(self.db_path))
+        self.connection = self.database.connect()
+        self.database.initialize(self.connection)
+
+    def tearDown(self) -> None:
+        self.connection.close()
+
+    def _seed_basic_project(self) -> None:
+        """Seed database with a minimal project."""
+        sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        self.database.upsert_team(self.connection, {"gid": "team_jira", "name": "Jira Team"}, sync_time)
+
+        self.database.upsert_user(
+            self.connection,
+            {
+                "gid": "user_jira",
+                "name": "Jira User",
+                "resource_type": "user",
+                "email": "jira@example.com",
+                "is_active": True,
+                "workspaces": [],
+            },
+            sync_time,
+        )
+
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": "proj_jira",
+                "name": "Jira-Bound Project",
+                "archived": False,
+                "owner": {"gid": "user_jira", "name": "Jira User"},
+                "team": {"gid": "team_jira", "name": "Jira Team"},
+                "privacy_setting": "private",
+                "created_at": "2025-01-01T09:00:00Z",
+                "completed": False,
+                "is_personal_project": False,
+                "num_tasks": 1,
+                "num_incomplete_tasks": 1,
+                "num_completed_tasks": 0,
+            },
+            sync_time,
+        )
+
+        self.database.upsert_task(
+            self.connection,
+            {
+                "gid": "task_jira",
+                "name": "Jira Task",
+                "created_at": "2025-02-01T09:00:00Z",
+                "modified_at": "2025-03-01T09:00:00Z",
+                "completed_at": None,
+                "memberships": [{"project": {"gid": "proj_jira", "name": "Jira-Bound Project"}}],
+                "workspace": {"gid": "ws_1", "name": "Workspace"},
+            },
+            sync_time,
+        )
+        self.connection.commit()
+
+    def test_accepts_jira_project_key_parameter(self) -> None:
+        self._seed_basic_project()
+
+        # Should not raise an error
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="with_jira_key.csv",
+            jira_project_key="ATJM",
+        )
+        self.assertTrue(output_path.exists())
+
+    def test_export_completes_with_jira_project_key(self) -> None:
+        self._seed_basic_project()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="jira_key_export.csv",
+            jira_project_key="PROJ",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        # Verify export includes both epic and task rows
+        epics = [row for row in rows if row["Issue Type"] == "Epic"]
+        tasks = [row for row in rows if row["Issue Type"] == "Task"]
+        self.assertGreater(len(epics), 0)
+        self.assertGreater(len(tasks), 0)
+
+    def test_jira_project_key_does_not_appear_in_csv_columns(self) -> None:
+        """The jira_project_key is for internal tracking, not exported to CSV."""
+        self._seed_basic_project()
+
+        output_path = export_team_project_jira_csv(
+            str(self.db_path),
+            self.workspace / "exports",
+            filename="key_tracking.csv",
+            jira_project_key="XYZ",
+        )
+
+        with output_path.open("r", newline="", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            header = next(reader)
+
+        # jira_project_key should not appear as a column
+        self.assertNotIn("jira_project_key", header)
+        self.assertNotIn("jira-project-key", header)
+        self.assertNotIn("Jira Project Key", header)
