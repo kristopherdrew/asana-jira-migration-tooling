@@ -2214,12 +2214,6 @@ def args_export_team_project_hierarchy(log_level: str) -> List[str]:
     if jira_project_key:
         args.extend(["--jira-project-key", jira_project_key])
 
-    # Export ID (for tracking)
-    if confirm("Assign an export ID for tracking?", default=False):
-        export_id = prompt("Export ID (alphanumeric, no spaces)", default="")
-        if export_id:
-            args.extend(["--export-id", export_id])
-
     return args
 
 
@@ -2245,8 +2239,8 @@ def run_export_team_project_hierarchy(log_level: str) -> None:
 def run_export_tasks_to_jira(log_level: str) -> None:
     """Choose between individual task export or team/project hierarchy export."""
     print("\n=== Export Project Data to Jira CSV ===")
-    print("[1] Individual project tasks (one row per task)")
-    print("[2] Team/Project hierarchy with project-level fields (recommended for migration)")
+    print("[1] Individual project tasks (one row per task) — WITH Export ID tracking and per-project files")
+    print("[2] Team/Project hierarchy with project-level fields")
     choice = input("Export type (default 1): ").strip() or "1"
 
     if choice == "2":
