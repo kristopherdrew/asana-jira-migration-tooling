@@ -245,8 +245,8 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Team GID to limit export to projects in that team.",
     )
     parser.add_argument(
-        "--jira-site",
-        help="Named Jira site for CSV configuration profile (default: first configured site).",
+        "--jira-project-key",
+        help="Jira Project Key for mapping Teams/Projects to Jira (e.g., 'ATJM').",
     )
     parser.add_argument(
         "--export-id",
@@ -950,7 +950,7 @@ def export_team_project_jira_csv(
     project_gids: Optional[str] = None,
     project_gids_file: Optional[str] = None,
     team_gids: Optional[str] = None,
-    jira_site: Optional[str] = None,
+    jira_project_key: Optional[str] = None,
     export_id: Optional[str] = None,
     custom_fields: str = "columns",
 ) -> Path:
@@ -1022,7 +1022,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         project_gids=args.project_gids,
         project_gids_file=args.project_gids_file,
         team_gids=args.team_gids,
-        jira_site=args.jira_site,
+        jira_project_key=args.jira_project_key,
         export_id=args.export_id,
         custom_fields=args.custom_fields,
     )

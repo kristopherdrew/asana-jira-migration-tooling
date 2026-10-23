@@ -2209,11 +2209,10 @@ def args_export_team_project_hierarchy(log_level: str) -> List[str]:
     if confirm("Include projects with zero tasks?", default=False):
         args.append("--include-empty-projects")
 
-    # Jira site selection (for CSV import profile)
-    if confirm("Select a Jira site for CSV import profile?", default=False):
-        site = prompt("Jira site key (e.g., 'archive_jira')", default="")
-        if site:
-            args.extend(["--jira-site", site])
+    # Jira Project Key (for mapping)
+    jira_project_key = prompt("Jira Project Key for mapping (e.g., 'ATJM')", default="")
+    if jira_project_key:
+        args.extend(["--jira-project-key", jira_project_key])
 
     # Export ID (for tracking)
     if confirm("Assign an export ID for tracking?", default=False):
