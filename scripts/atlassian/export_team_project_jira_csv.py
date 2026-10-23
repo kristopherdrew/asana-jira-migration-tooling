@@ -34,6 +34,7 @@ from src.lib.atlassian_status import is_active_atlassian_status
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.date_formatting import format_report_date, parse_iso_datetime
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.project_scope import parse_gid_list, read_project_gids_file
 from src.lib.team_analysis import build_team_analysis
 
 
@@ -230,6 +231,18 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
+    )
+    parser.add_argument(
+        "--project-gids",
+        help="Comma-separated project GIDs to export (default: all projects).",
+    )
+    parser.add_argument(
+        "--project-gids-file",
+        help="UTF-8 file containing comma- or newline-separated project GIDs.",
+    )
+    parser.add_argument(
+        "--team-gids",
+        help="Team GID to limit export to projects in that team.",
     )
     return parser.parse_args(argv)
 
@@ -488,6 +501,8 @@ def build_team_project_rows(
     connection,
     workspace_gid: Optional[str] = None,
     include_empty_projects: bool = False,
+    project_gids_filter: Optional[list[str]] = None,
+    team_gid_filter: Optional[str] = None,
 ) -> tuple[list[dict], list[dict]]:
     """Build the Team→Epic and Project→Task rows shared by the CSV exporter and
     the direct Jira issue creator.
@@ -504,8 +519,19 @@ def build_team_project_rows(
     count of ``0``)."""
     resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
 
+    # Build WHERE clause for project filtering
+    where_clause = ""
+    query_params = []
+    if project_gids_filter:
+        placeholders = ",".join(["?"] * len(project_gids_filter))
+        where_clause = f"WHERE p.gid IN ({placeholders})"
+        query_params = project_gids_filter
+    elif team_gid_filter:
+        where_clause = "WHERE p.team_gid = ?"
+        query_params = [team_gid_filter]
+
     project_rows = connection.execute(
-        """
+        f"""
             WITH actual_task_counts AS (
                 SELECT
                     tp.project_gid,
@@ -632,10 +658,12 @@ def build_team_project_rows(
                 ON u.gid = p.owner_gid
             LEFT JOIN user_atlassian_accounts ua
                 ON ua.user_gid = p.owner_gid
+            {where_clause}
             ORDER BY COALESCE(t.name, p.team_name, p.team_gid, '') COLLATE NOCASE,
                 p.name COLLATE NOCASE,
                 p.gid
             """
+        , query_params
     ).fetchall()
 
     project_rows = [dict(row) for row in project_rows]
@@ -905,6 +933,9 @@ def export_team_project_jira_csv(
     filename: Optional[str] = None,
     workspace_gid: Optional[str] = None,
     include_empty_projects: bool = False,
+    project_gids: Optional[str] = None,
+    project_gids_file: Optional[str] = None,
+    team_gids: Optional[str] = None,
 ) -> Path:
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
@@ -917,10 +948,24 @@ def export_team_project_jira_csv(
     output_path = output_dir / filename
     logger.debug("Writing Jira team/project import export to %s", output_path)
 
+    # Parse project scope arguments
+    project_gids_filter = None
+    team_gid_filter = None
+    if project_gids_file:
+        project_gids_filter = read_project_gids_file(project_gids_file)
+    elif project_gids:
+        project_gids_filter = parse_gid_list(project_gids)
+    elif team_gids:
+        team_gid_filter = team_gids
+
     with database.connect() as connection:
         database.initialize(connection)
         epic_rows, task_rows = build_team_project_rows(
-            connection, workspace_gid, include_empty_projects=include_empty_projects
+            connection,
+            workspace_gid,
+            include_empty_projects=include_empty_projects,
+            project_gids_filter=project_gids_filter,
+            team_gid_filter=team_gid_filter,
         )
 
         # Discover custom field names to build dynamic columns
@@ -956,6 +1001,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         filename=args.filename,
         workspace_gid=args.workspace_gid,
         include_empty_projects=args.include_empty_projects,
+        project_gids=args.project_gids,
+        project_gids_file=args.project_gids_file,
+        team_gids=args.team_gids,
     )
     logger.info("Jira team/project import export completed: %s", output_path)
 
