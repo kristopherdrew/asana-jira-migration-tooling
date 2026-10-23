@@ -71,6 +71,7 @@ profiles/
 # Data directory
 
 data/
+altdata/
 exports/
 attachment_archives/
 
