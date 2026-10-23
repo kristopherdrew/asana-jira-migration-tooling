@@ -80,9 +80,13 @@ def _resolve_project_scope(
     if project_gids_file:
         return read_project_gids_file(project_gids_file)
 
-    requested_gids = parse_gid_list(project_gids or [])
-    if requested_gids:
-        return requested_gids
+    if project_gids:
+        # project_gids is a list from action="append", flatten and parse each item
+        flat_gids = []
+        for item in project_gids:
+            flat_gids.extend(parse_gid_list(item))
+        if flat_gids:
+            return flat_gids
 
     if team_gid:
         rows = connection.execute(

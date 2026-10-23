@@ -46,6 +46,41 @@ DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
 JIRA_TASK_ID_FIELD_NAME = "External issue ID"
 logger = logging.getLogger(__name__)
+
+
+def _fetch_project_custom_fields_for_task_export(connection, project_gid: str) -> dict[str, str]:
+    """Fetch all project-level custom field values keyed by field name."""
+    rows = connection.execute(
+        """
+        SELECT name, COALESCE(enum_value_name, CAST(number_value AS TEXT), text_value, '') as value
+        FROM project_custom_fields
+        WHERE project_gid = ?
+        ORDER BY name
+        """,
+        (project_gid,),
+    ).fetchall()
+
+    fields: dict[str, list[str]] = {}
+    for row in rows:
+        field_name = str(row[0]).strip() if row[0] else ""
+        field_value = str(row[1]).strip() if row[1] else ""
+        if field_name:
+            if field_name not in fields:
+                fields[field_name] = []
+            if field_value:
+                fields[field_name].append(field_value)
+
+    return {name: "; ".join(values) for name, values in fields.items()}
+
+
+def _discover_project_custom_fields_for_projects(connection, project_gids: list[str]) -> list[str]:
+    """Discover all unique project-level custom field names across given projects."""
+    placeholders = ",".join(["?"] * len(project_gids))
+    rows = connection.execute(
+        f"SELECT DISTINCT name FROM project_custom_fields WHERE project_gid IN ({placeholders}) AND name IS NOT NULL ORDER BY name",
+        project_gids,
+    ).fetchall()
+    return [row[0] for row in rows]
 FILENAME_SAFE_PATTERN = re.compile(r"[^A-Za-z0-9._-]+")
 ASANA_URL_PATTERN = re.compile(r"https://app\.asana\.com/[^\s>\])}]+")
 TASK_ID_PATTERN = re.compile(r"(?:/task/|/0/\d+/)(\d+)(?:/f)?(?:$|[/?#])")
@@ -1434,6 +1469,15 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
             "'description': fold all populated custom fields into the task's Description."
         ),
     )
+    parser.add_argument(
+        "--include-project-fields",
+        choices=("prompt", "yes", "no"),
+        default="prompt",
+        help=(
+            "Include project-level custom fields as additional columns in task export. "
+            "'prompt' (default): ask interactively, 'yes': always include, 'no': skip."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -2128,6 +2172,7 @@ def export_project(
     task_gids: Optional[Set[str]] = None,
     seen_task_gids: Optional[Set[str]] = None,
     jira_site_key: Optional[str] = None,
+    include_project_fields: bool = False,
 ) -> Optional[Path]:
     database = Database(db_path=database_path)
     with database.connect() as refresh_connection:
