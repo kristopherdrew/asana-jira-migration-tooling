@@ -952,7 +952,8 @@ def export_team_project_jira_csv(
     project_gids_filter = None
     team_gid_filter = None
     if project_gids_file:
-        project_gids_filter = read_project_gids_file(project_gids_file)
+        gids_string = read_project_gids_file(project_gids_file)
+        project_gids_filter = parse_gid_list(gids_string)
     elif project_gids:
         project_gids_filter = parse_gid_list(project_gids)
     elif team_gids:
