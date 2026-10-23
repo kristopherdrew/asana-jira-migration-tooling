@@ -269,6 +269,43 @@ def _label_for_last_active(last_task_updated_at: Optional[str]) -> str:
     return f"last_active_{parsed.year}"
 
 
+def _fetch_project_custom_fields(connection, project_gid: str) -> dict[str, str]:
+    """Fetch all custom field values for a project, keyed by field name."""
+    rows = connection.execute(
+        """
+        SELECT
+            name,
+            COALESCE(enum_value_name, CAST(number_value AS TEXT), text_value, '') as value
+        FROM project_custom_fields
+        WHERE project_gid = ?
+        ORDER BY name
+        """,
+        (project_gid,),
+    ).fetchall()
+
+    # Group multi-value fields (like people fields) with semicolon delimiter
+    fields: dict[str, list[str]] = {}
+    for row in rows:
+        field_name = _clean_text(row[0])
+        field_value = _clean_text(row[1])
+        if field_name:
+            if field_name not in fields:
+                fields[field_name] = []
+            if field_value:
+                fields[field_name].append(field_value)
+
+    # Join multi-value fields with semicolon
+    return {name: "; ".join(values) for name, values in fields.items()}
+
+
+def _discover_all_project_custom_fields(connection) -> list[str]:
+    """Discover all unique custom field names across all projects, sorted."""
+    rows = connection.execute(
+        "SELECT DISTINCT name FROM project_custom_fields WHERE name IS NOT NULL ORDER BY name"
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
 def _build_team_description_blocks(row: dict, analysis) -> list:
     """Build the Team->Epic description as structured ADF blocks: two sections
     (Primary / Implied Details), each a level-3 heading followed by a bold-keyed
@@ -364,8 +401,8 @@ def _effective_owner_from_project(row: dict) -> _EffectiveOwner:
     return _EffectiveOwner("", "", "", "", "")
 
 
-def _build_project_description_blocks(row: dict) -> list:
-    """Build the Project->Task description as structured ADF blocks: three sections,
+def _build_project_description_blocks(row: dict, custom_fields: Optional[dict[str, str]] = None) -> list:
+    """Build the Project->Task description as structured ADF blocks: multiple sections,
     each a level-3 heading followed by a bullet list whose item keys are bold."""
     effective = _effective_owner_from_project(row)
     sections = [
@@ -391,6 +428,15 @@ def _build_project_description_blocks(row: dict) -> list:
                 ("last_task_updated_at", format_report_date(row["last_task_updated_at"])),
             ],
         ),
+    ]
+
+    # Add custom fields section if any exist
+    if custom_fields:
+        custom_field_pairs = [(name, _clean_text(value)) for name, value in custom_fields.items() if value]
+        if custom_field_pairs:
+            sections.append(("Project Custom Fields", custom_field_pairs))
+
+    sections.append(
         (
             "Implied Details",
             [
@@ -406,8 +452,9 @@ def _build_project_description_blocks(row: dict) -> list:
                 ("top_member_email", _clean_text(row["top_member_email"])),
                 ("top_member_atlassian_status", _clean_text(row["top_member_atlassian_status"])),
             ],
-        ),
-    ]
+        )
+    )
+
     return _sectioned_description_blocks(sections)
 
 
@@ -438,6 +485,10 @@ def build_team_project_rows(
     for every project regardless of task count (empty projects render a task
     count of ``0``)."""
     resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
+
+    # Discover all unique custom fields for dynamic CSV columns
+    all_custom_field_names = _discover_all_project_custom_fields(connection)
+
     project_rows = connection.execute(
         """
             WITH actual_task_counts AS (
@@ -747,7 +798,10 @@ def build_team_project_rows(
         instructions_adf = (
             PERSONAL_TASK_INSTRUCTIONS_ADF if is_personal else TASK_INSTRUCTIONS_ADF
         )
-        description_blocks = _build_project_description_blocks(row)
+        # Fetch project-level custom fields
+        project_custom_fields = _fetch_project_custom_fields(connection, row["gid"])
+
+        description_blocks = _build_project_description_blocks(row, project_custom_fields)
         # Mirror the Epic behavior: the Task owner/assignee is the effective owner
         # (project owner if their Atlassian account is active, else the top active
         # task creator). The raw project owner is still recorded in the description.
@@ -757,40 +811,44 @@ def build_team_project_rows(
             if effective_owner.source == "project_owner"
             else effective_owner.email
         )
-        task_rows.append(
-            {
-                "Issue Type": "Task",
-                "Task ID": task_id,
-                "Parent Id": parent_id or "",
-                "Summary": row["name"] or "",
-                "Team URL": build_team_url(team_gid),
-                "Project URL": project_url,
-                "Owner": effective_owner.name,
-                "Owner Email": owner_email,
-                "Owner Atlassian ID": effective_owner.atlassian_id,
-                "Owner Atlassian Status": effective_owner.atlassian_status,
-                "Owner Source": effective_owner.source,
-                "Project Type": "personal_project" if is_personal else "team_project",
-                "Project Status": "Archived" if bool(row["archived"]) else "Active",
-                "Project Count (Asana)": "",
-                "Task Count (Asana)": str(int(row["actual_task_count"] or 0)),
-                # The project's most recent task update (MAX task modified_at),
-                # formatted YYYY-MM-DD for the Jira "Last working day" date field.
-                # Kept in sync with scripts.atlassian.set_project_last_updated_jira_field.
-                "Last Working Day": format_report_date(row["last_task_updated_at"]),
-                "Labels": _label_for_last_active(row["last_task_updated_at"]),
-                "Instructions": instructions,
-                "Description": render_blocks_text(description_blocks),
-                "_kind": "project",
-                "_asana_gid": _clean_text(row["gid"]),
-                "_parent_kind": "team" if team_gid else "no_team",
-                "_parent_asana_gid": team_gid,
-                "_adf_overrides": {
-                    "Instructions": instructions_adf,
-                    "Description": render_blocks_adf(description_blocks),
-                },
-            }
-        )
+        task_row = {
+            "Issue Type": "Task",
+            "Task ID": task_id,
+            "Parent Id": parent_id or "",
+            "Summary": row["name"] or "",
+            "Team URL": build_team_url(team_gid),
+            "Project URL": project_url,
+            "Owner": effective_owner.name,
+            "Owner Email": owner_email,
+            "Owner Atlassian ID": effective_owner.atlassian_id,
+            "Owner Atlassian Status": effective_owner.atlassian_status,
+            "Owner Source": effective_owner.source,
+            "Project Type": "personal_project" if is_personal else "team_project",
+            "Project Status": "Archived" if bool(row["archived"]) else "Active",
+            "Project Count (Asana)": "",
+            "Task Count (Asana)": str(int(row["actual_task_count"] or 0)),
+            # The project's most recent task update (MAX task modified_at),
+            # formatted YYYY-MM-DD for the Jira "Last working day" date field.
+            # Kept in sync with scripts.atlassian.set_project_last_updated_jira_field.
+            "Last Working Day": format_report_date(row["last_task_updated_at"]),
+            "Labels": _label_for_last_active(row["last_task_updated_at"]),
+            "Instructions": instructions,
+            "Description": render_blocks_text(description_blocks),
+            "_kind": "project",
+            "_asana_gid": _clean_text(row["gid"]),
+            "_parent_kind": "team" if team_gid else "no_team",
+            "_parent_asana_gid": team_gid,
+            "_adf_overrides": {
+                "Instructions": instructions_adf,
+                "Description": render_blocks_adf(description_blocks),
+            },
+        }
+
+        # Add custom field values as columns
+        for field_name in all_custom_field_names:
+            task_row[f"Project Field: {field_name}"] = project_custom_fields.get(field_name, "")
+
+        task_rows.append(task_row)
 
     return epic_rows, task_rows
 
@@ -846,11 +904,20 @@ def export_team_project_jira_csv(
             connection, workspace_gid, include_empty_projects=include_empty_projects
         )
 
+        # Discover custom field names to build dynamic columns
+        all_custom_field_names = _discover_all_project_custom_fields(connection)
+
+    # Build dynamic CSV columns with custom fields
+    csv_columns = list(CSV_COLUMNS)
+    for field_name in all_custom_field_names:
+        csv_column_name = f"Project Field: {field_name}"
+        csv_columns.append((csv_column_name, csv_column_name))
+
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow([header for header, _ in CSV_COLUMNS])
+        writer.writerow([header for header, _ in csv_columns])
         for row in epic_rows + task_rows:
-            writer.writerow([row.get(key, "") for _, key in CSV_COLUMNS])
+            writer.writerow([row.get(key, "") for _, key in csv_columns])
 
     logger.info("Exported %s epic row(s) and %s task row(s) to %s.", len(epic_rows), len(task_rows), output_path)
     return output_path
