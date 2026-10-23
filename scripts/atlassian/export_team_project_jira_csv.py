@@ -306,6 +306,24 @@ def _discover_all_project_custom_fields(connection) -> list[str]:
     return [row[0] for row in rows]
 
 
+def _discover_project_custom_fields_for_projects(connection, project_gids: list[str]) -> list[str]:
+    """Discover unique custom field names that have values in the specified projects."""
+    if not project_gids:
+        return []
+    placeholders = ",".join(["?"] * len(project_gids))
+    rows = connection.execute(
+        f"""
+        SELECT DISTINCT name
+        FROM project_custom_fields
+        WHERE project_gid IN ({placeholders})
+        AND name IS NOT NULL
+        ORDER BY name
+        """,
+        project_gids,
+    ).fetchall()
+    return [row[0] for row in rows]
+
+
 def _build_team_description_blocks(row: dict, analysis) -> list:
     """Build the Team->Epic description as structured ADF blocks: two sections
     (Primary / Implied Details), each a level-3 heading followed by a bold-keyed
@@ -486,9 +504,6 @@ def build_team_project_rows(
     count of ``0``)."""
     resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
 
-    # Discover all unique custom fields for dynamic CSV columns
-    all_custom_field_names = _discover_all_project_custom_fields(connection)
-
     project_rows = connection.execute(
         """
             WITH actual_task_counts AS (
@@ -625,6 +640,10 @@ def build_team_project_rows(
 
     project_rows = [dict(row) for row in project_rows]
     team_analysis = build_team_analysis(connection)
+
+    # Discover custom fields only for projects being exported (not all 67 fields)
+    project_gids_to_export = [row["gid"] for row in project_rows]
+    all_custom_field_names = _discover_project_custom_fields_for_projects(connection, project_gids_to_export)
 
     team_groups: dict[str, list[dict]] = defaultdict(list)
     no_team_projects: list[dict] = []
