@@ -2187,13 +2187,17 @@ def run_export_team_project_hierarchy(log_level: str) -> None:
     print("Select scope:")
     print("[1] All projects (entire workspace)")
     print("[2] Specific projects (comma-separated GIDs)")
-    print("[3] All projects in a team")
+    print("[3] Specific projects (from file)")
+    print("[4] All projects in a team")
     choice = input("Choice (default 1): ").strip() or "1"
 
     if choice == "2":
         project_gids = prompt_required("Project GIDs (comma-separated)")
         args.extend(["--project-gids", project_gids])
     elif choice == "3":
+        project_gids_file = _prompt_project_gids_file("export")
+        args.extend(["--project-gids-file", project_gids_file])
+    elif choice == "4":
         team_gid = _prompt_team_gid_from_lookup("export", "Team to export")
         if team_gid:
             args.extend(["--team-gids", team_gid])

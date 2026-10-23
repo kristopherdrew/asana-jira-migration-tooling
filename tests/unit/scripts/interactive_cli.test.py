@@ -549,15 +549,17 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIn("/repo/projects.csv", archival_args)
         self.assertNotIn("--workspace-gid", archival_args)
 
+    @patch("builtins.input", return_value="1")
     @patch("scripts.interactive_cli.run_export_project_to_jira")
-    def test_unified_task_export_uses_column_mode_by_default(self, mock_regular) -> None:
+    def test_unified_task_export_uses_column_mode_by_default(self, mock_regular, mock_input) -> None:
         interactive_cli.run_export_tasks_to_jira("INFO")
         mock_regular.assert_called_once_with("INFO")
 
-    @patch("scripts.interactive_cli.run_export_project_to_jira")
-    def test_unified_task_export_delegates_to_project_exporter(self, mock_regular) -> None:
+    @patch("builtins.input", return_value="2")
+    @patch("scripts.interactive_cli.run_export_team_project_hierarchy")
+    def test_unified_task_export_delegates_to_project_exporter(self, mock_hierarchy, mock_input) -> None:
         interactive_cli.run_export_tasks_to_jira("INFO")
-        mock_regular.assert_called_once_with("INFO")
+        mock_hierarchy.assert_called_once_with("INFO")
 
     def test_archival_export_accepts_inline_task_gids(self) -> None:
         with patch(
