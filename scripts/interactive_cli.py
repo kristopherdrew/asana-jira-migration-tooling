@@ -2170,9 +2170,55 @@ def run_export_archival_project(log_level: str) -> None:
     print_rerun_command("scripts.atlassian.export_archival_project_jira_csv", args)
 
 
+def run_export_team_project_hierarchy(log_level: str) -> None:
+    """Export Team→Epic and Project→Task hierarchy with project-level custom fields."""
+    print("\n=== Export Team/Project Hierarchy ===")
+    print("This exports:")
+    print("  • Teams as Epics")
+    print("  • Projects as Tasks/Deliverables with project-level custom fields")
+    print("  • All project custom fields as separate CSV columns")
+    print()
+
+    args = build_common_args(log_level)
+    args.append("--database")
+    args.append(str(active_db_path()))
+
+    # Scope selection
+    print("Select scope:")
+    print("[1] All projects (entire workspace)")
+    print("[2] Specific projects (comma-separated GIDs)")
+    print("[3] All projects in a team")
+    choice = input("Choice (default 1): ").strip() or "1"
+
+    if choice == "2":
+        project_gids = prompt_required("Project GIDs (comma-separated)")
+        args.extend(["--project-gids", project_gids])
+    elif choice == "3":
+        team_gid = _prompt_team_gid_from_lookup("export", "Team to export")
+        if team_gid:
+            args.extend(["--team-gids", team_gid])
+
+    # Output directory
+    export_dir = next_export_dir(PROJECT_ROOT / "exports", export_id=None)
+    print(f"\nExporting to {export_dir}")
+    args.extend(["--output-dir", str(export_dir)])
+
+    run_script(export_team_project_jira_csv.main, args)
+    print_rerun_command("scripts.atlassian.export_team_project_jira_csv", args)
+
+
 def run_export_tasks_to_jira(log_level: str) -> None:
-    """Export project tasks to a Jira CSV using the unified exporter."""
-    run_export_project_to_jira(log_level)
+    """Choose between individual task export or team/project hierarchy export."""
+    print("\n=== Export Project Data to Jira CSV ===")
+    print("[1] Individual project tasks (one row per task)")
+    print("[2] Team/Project hierarchy with project-level fields (recommended for migration)")
+    choice = input("Export type (default 1): ").strip() or "1"
+
+    if choice == "2":
+        run_export_team_project_hierarchy(log_level)
+    else:
+        print("\nExporting individual project tasks...")
+        run_export_project_to_jira(log_level)
 
 
 def run_sync_attachments(log_level: str) -> None:
