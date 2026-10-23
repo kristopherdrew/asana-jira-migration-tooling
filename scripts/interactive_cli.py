@@ -2170,21 +2170,14 @@ def run_export_archival_project(log_level: str) -> None:
     print_rerun_command("scripts.atlassian.export_archival_project_jira_csv", args)
 
 
-def run_export_team_project_hierarchy(log_level: str) -> None:
-    """Export Team→Epic and Project→Task hierarchy with project-level custom fields."""
-    print("\n=== Export Team/Project Hierarchy ===")
-    print("This exports:")
-    print("  • Teams as Epics")
-    print("  • Projects as Tasks/Deliverables with project-level custom fields")
-    print("  • All project custom fields as separate CSV columns")
-    print()
-
+def args_export_team_project_hierarchy(log_level: str) -> List[str]:
+    """Build interactive arguments for team/project hierarchy export."""
     args = build_common_args(log_level)
     args.append("--database")
     args.append(str(active_db_path()))
 
     # Scope selection
-    print("Select scope:")
+    print("\nSelect scope:")
     print("[1] All projects (entire workspace)")
     print("[2] Specific projects (comma-separated GIDs)")
     print("[3] Specific projects (from file)")
@@ -2201,6 +2194,45 @@ def run_export_team_project_hierarchy(log_level: str) -> None:
         team_gid = _prompt_team_gid_from_lookup("export", "Team to export")
         if team_gid:
             args.extend(["--team-gids", team_gid])
+
+    # Custom field mode
+    print("\nCustom field export mode:")
+    print("[1] Separate CSV columns (recommended)")
+    print("[2] Consolidated into task description")
+    field_choice = input("Choice (default 1): ").strip() or "1"
+    if field_choice == "2":
+        args.extend(["--custom-fields", "description"])
+    else:
+        args.extend(["--custom-fields", "columns"])
+
+    # Include empty projects
+    if confirm("Include projects with zero tasks?", default=False):
+        args.append("--include-empty-projects")
+
+    # Jira site selection (for CSV import profile)
+    if confirm("Select a Jira site for CSV import profile?", default=False):
+        site = prompt("Jira site key (e.g., 'archive_jira')", default="")
+        if site:
+            args.extend(["--jira-site", site])
+
+    # Export ID (for tracking)
+    if confirm("Assign an export ID for tracking?", default=False):
+        export_id = prompt("Export ID (alphanumeric, no spaces)", default="")
+        if export_id:
+            args.extend(["--export-id", export_id])
+
+    return args
+
+
+def run_export_team_project_hierarchy(log_level: str) -> None:
+    """Export Team→Epic and Project→Task hierarchy with project-level custom fields."""
+    print("\n=== Export Team/Project Hierarchy ===")
+    print("This exports:")
+    print("  • Teams as Epics")
+    print("  • Projects as Tasks/Deliverables with project-level custom fields")
+    print("  • All project custom fields as separate CSV columns")
+
+    args = args_export_team_project_hierarchy(log_level)
 
     # Output directory
     export_dir = next_export_dir(PROJECT_ROOT / "exports", export_id=None)

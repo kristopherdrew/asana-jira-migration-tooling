@@ -244,6 +244,20 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         "--team-gids",
         help="Team GID to limit export to projects in that team.",
     )
+    parser.add_argument(
+        "--jira-site",
+        help="Named Jira site for CSV configuration profile (default: first configured site).",
+    )
+    parser.add_argument(
+        "--export-id",
+        help="Export ID for tracking which projects have been exported.",
+    )
+    parser.add_argument(
+        "--custom-fields",
+        choices=["columns", "description"],
+        default="columns",
+        help="How to render project custom fields: 'columns' (separate CSV columns) or 'description' (embedded in task description). Default: columns.",
+    )
     return parser.parse_args(argv)
 
 
@@ -936,6 +950,9 @@ def export_team_project_jira_csv(
     project_gids: Optional[str] = None,
     project_gids_file: Optional[str] = None,
     team_gids: Optional[str] = None,
+    jira_site: Optional[str] = None,
+    export_id: Optional[str] = None,
+    custom_fields: str = "columns",
 ) -> Path:
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
@@ -1005,6 +1022,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         project_gids=args.project_gids,
         project_gids_file=args.project_gids_file,
         team_gids=args.team_gids,
+        jira_site=args.jira_site,
+        export_id=args.export_id,
+        custom_fields=args.custom_fields,
     )
     logger.info("Jira team/project import export completed: %s", output_path)
 
