@@ -101,6 +101,85 @@ The SQLite schema is documented in [docs/data-model.md](docs/data-model.md) (per
 - Target ≥90% statement coverage; include asynchronous and pagination edge cases in every suite.
 - Use `python3 -m unittest --failfast` during development for faster feedback and add regression tests for every bug fix.
 
+## Test Governance & Quality Standards
+
+### Definition of Done: Tests Are Mandatory
+A feature is **not complete** until:
+- ✅ Code implementation finished
+- ✅ Tests written (unit + regression tests if critical functions modified)
+- ✅ All tests passing (`python3 -m unittest discover tests` shows `OK`)
+- ✅ Test coverage ≥90% for modified code
+- ✅ Code review approves tests AND implementation
+- ✅ No test coverage drops from baseline
+
+### Critical Functions Require Regression Tests
+Mark critical or high-churn functions with a regression-test comment:
+```python
+def critical_export_function():
+    """
+    REGRESSION_TEST_REQUIRED: This function affects core export pipeline.
+    Changes require regression test validation.
+    Existing regression tests: tests/regression/export_project_orchestration.test.py
+    """
+```
+
+Regression-test-required functions (as of 2025-10-25):
+- `export_project()` — core export orchestration
+- `build_project_export_data()` — task data collection
+- `build_team_project_rows()` — team/project hierarchy
+- `transform_asana_links()` — link transformation
+- `build_asana_link_addition()` — link building
+- `resolve_custom_field_value()` — custom field resolution
+- `format_comment_row()` — comment formatting
+
+### Test-First for Bug Fixes
+When fixing a bug:
+1. Write a regression test that reproduces the bug (test should fail)
+2. Implement the fix
+3. Verify the test now passes
+4. Keep the test to prevent regression
+
+Example:
+```python
+def test_export_id_deduplication_fixes_issue_123(self):
+    """Regression test for GitHub issue #123: export IDs not deduplicated."""
+    # Test that validates the bug is fixed
+    # This test stays in the suite permanently
+```
+
+### Code Review Checklist for Tests
+Pull requests must have:
+- [ ] New tests written for new functionality
+- [ ] Existing tests still passing
+- [ ] Edge cases covered (empty, null, special chars, boundary conditions)
+- [ ] Regression tests added (if critical function modified)
+- [ ] Test coverage ≥90% for changed code
+- [ ] No hardcoded values or brittle assertions
+- [ ] Test names clearly describe what they test
+- [ ] Setup/teardown logic shared (no duplicated `setUp()` code)
+
+### Test Naming Conventions
+- Test files: `<module_name>.test.py` (e.g., `export_project_orchestration.test.py`)
+- Test classes: `<Feature>Test` (e.g., `ExportProjectOrchestrationTest`)
+- Test methods: `test_<scenario>` (e.g., `test_export_id_deduplication_across_runs`)
+- Regression tests: Grouped in `tests/regression/` by feature area
+- Descriptive names: `test_owner_resolution_fallback_to_creator` (NOT `test_case_1`)
+
+### Running Tests
+- **Full suite:** `python3 -m unittest discover tests -v`
+- **Check coverage:** `python3 -m trace --count -m unittest discover tests`
+- **Quick feedback:** `python3 -m unittest --failfast`
+- **Single test:** `python3 -m unittest tests.regression.export_id_lifecycle -v`
+- **Before commit:** Full suite must pass (`python3 -m unittest discover tests`)
+
+### Test Quality Standards
+- **No magic numbers:** Use named constants (`EXPECTED_COUNT = 42`, not just `42`)
+- **Clear assertions:** `self.assertEqual(actual, expected, "Describe what went wrong")`
+- **One scenario per test:** If testing multiple scenarios, split into multiple tests
+- **Isolated tests:** Each test should pass/fail independently
+- **Fast tests:** Target <100ms per test; <15s total regression suite
+- **Realistic data:** Use representative test data (don't test with empty/trivial cases only)
+
 ## Commit Guidelines
 - Follow Conventional Commits (e.g., `feat(tasks): add recurring scheduling`). Scope names should align with the `src/` folder touched.
 - Link the relevant Asana task in the commit when there is one.
