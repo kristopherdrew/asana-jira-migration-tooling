@@ -92,3 +92,13 @@ __pycache__/
 *.pyo
 
 *.pyd
+
+# Temporary analysis and planning documentation (generated during development sessions)
+
+REGRESSION_TESTS_*.md
+TEST_AUDIT_*.md
+HANDOVER_*.md
+
+# Local data backups and alternative data directories (large SQLite files)
+
+altdata/
