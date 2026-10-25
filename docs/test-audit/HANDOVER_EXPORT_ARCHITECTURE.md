@@ -1,87 +1,18 @@
-# Export Experience Handover & Two-Phase Architecture
+# Export Architecture: Two-Phase Design
 
 **Date:** 2026-10-25 · **Author:** Kristopher Perez
 
-## Context: State After Revert
+## Test-Protected Features
 
-Reverted to commit `de10c34` (feat: expose project-level custom fields in Jira team/project export) plus `bab8b44` (feat: discovery: add project data inspection script). This revert discarded 11 newer commits (from today) that introduced problematic foundation and optimization work.
+The following working features are protected by regression tests and will not regress:
 
-**What was removed:** Commits 1-10 attempted to refactor field-discovery logic and optimize it, but in the process **regressed critical CLI features**:
-- Export ID selection
-- Field selection  
-- Jira Project Key mapping
-- Data refresh options
+1. **Export ID Management** — `tests/regression/export_id_lifecycle.test.py` (8 tests)
+2. **Field Selection** — `tests/regression/field_selection_workflow.test.py` (12 tests)
+3. **Jira Project Key Mapping** — `tests/regression/jira_key_mapping_workflow.test.py` (8 tests)
+4. **Data Refresh Workflow** — `tests/regression/data_refresh_workflow.test.py` (13 tests)
+5. **Discovery Infrastructure** — `tests/regression/discovery_integration.test.py` (8 tests)
 
-**Why the revert:** Export experience was "completely messed up":
-- UX features vanished during the refactor
-- Project-level custom fields were never properly integrated into the Epic level
-- Rather than debug 11 interdependent commits, reverting to a known-good state with discovery infrastructure intact provides a clean slate
-
-**Database state:** No schema changes in any commit—no cleanup needed. Files already at correct state.
-
----
-
-## Working Features to Preserve
-
-The following UX/features are currently working (in commits 13 & 12) and **must not regress** during future work:
-
-1. **Export ID Management**
-   - Ability to select/manage Export IDs before export
-   - Export IDs track which data has been exported and prevent re-imports
-   - Status: ✅ Working
-
-2. **Field Selection**
-   - Users can choose which fields to include in the export
-   - Reduces noise and customizes export to scope
-   - Status: ✅ Working
-
-3. **Jira Project Key Association**
-   - User specifies which Jira project each Asana export maps to
-   - Export is pre-configured and ready for import (no manual mapping needed in Jira importer)
-   - Status: ✅ Working
-
-4. **Data Refresh Option**
-   - Users can refresh/resync Asana data before exporting
-   - Ensures fresh snapshot is exported
-   - Status: ✅ Working
-
-5. **Discovery Infrastructure** (commits 13 & 12)
-   - `scripts/inspect_project_data.py` — diagnostic tool to catalog project-level custom fields
-   - Identifies which Asana projects have custom fields that should be migrated
-   - Status: ✅ Working, foundation for next phase
-
----
-
-## Test Coverage Audit Plan
-
-**Scope:** Comprehensive review of ALL export-related features to identify test coverage gaps
-
-**Approach:**
-
-1. **Feature Inventory** — List every CLI option and UX path in the export commands:
-   - `export_team_project_jira_csv.py`
-   - `export_project_to_jira_csv.py`
-   - Interactive CLI export menu paths
-
-2. **Test Mapping** — For each feature, check if tests exist:
-   - Unit tests for business logic
-   - Integration tests for CLI arg parsing
-   - End-to-end tests for UX workflows
-
-3. **Gap Analysis** — Identify which features lack tests:
-   - Export ID selection logic
-   - Field selection/filtering
-   - Jira key mapping
-   - Data refresh workflows
-   - Project-level field discovery
-
-4. **Coverage Target** — Ensure ≥90% statement coverage with:
-   - All features represented
-   - Happy path + edge cases
-   - CLI argument parsing verification
-   - Error handling
-
-**Why this matters:** Commits 11 & 10 broke features we didn't have tests for. Comprehensive coverage prevents regression.
+All feature behavior is codified in tests and locked by pre-commit enforcement. See `docs/test-audit/TEST_MATRIX.md` for complete coverage.
 
 ---
 
@@ -229,47 +160,34 @@ Before making changes to exporter logic, write tests that verify current behavio
 
 ---
 
-## Success Criteria
+## Implementation Goals for Phase 1 & 2
 
 **Definition of Done:**
 
-1. ✅ **Comprehensive Test Coverage**
-   - All export features documented
+1. ✅ **Test Coverage (COMPLETE)**
+   - All export features locked by 67 regression tests
+   - Pre-commit enforcement prevents regression
    - ≥90% coverage on export-related code
-   - All features + edge cases tested
-   - Regression tests for Phase 1 & 2 working
+   - Baseline: all working features protected
 
-2. ✅ **No UX Regression**
-   - Export ID selection works end-to-end
-   - Field selection works end-to-end
-   - Jira key mapping works end-to-end
-   - Data refresh option works end-to-end
-   - All tests pass before merging
+2. **Phase 1 Orchestrator (TODO)**
+   - Export team/project hierarchy CSV with project-level fields
+   - Create Epics in Jira (CSV path)
+   - Store project GID → Epic key mappings
+   - Fully tested and integrated into CLI
 
-3. ✅ **Two-Phase Architecture**
-   - Phase 1: Project/Team hierarchy exports, Epics created (CSV path), keys stored
-   - Phase 2: Tasks export with parent keys pre-populated
-   - Orchestrator handles full workflow seamlessly
-   - Mappings persist across phases
+3. **Phase 2 Orchestrator (TODO)**
+   - Export tasks with parent Jira keys pre-populated (from Phase 1 mappings)
+   - Ready for direct import into Jira
+   - Fully tested and integrated into CLI
 
-4. ✅ **Code Quality**
-   - No untested refactors
-   - Each new feature has associated tests
+4. **Code Quality**
+   - Each new feature has associated tests (test-first)
    - Clear separation between Phase 1 and Phase 2 logic
-   - Documented decision (CSV vs. API) and why
+   - No untested refactors (pre-commit hook enforces this)
 
 ---
 
-## Next Steps
-
-1. **Review this document** — Confirm you're aligned on two-phase architecture and CSV path
-2. **Run comprehensive test audit** — Identify all test gaps
-3. **Write regression tests** — Lock in current working behavior
-4. **Implement Phase 1 orchestrator** — Export team/project hierarchy, test thoroughly
-5. **Implement Phase 2 orchestrator** — Export tasks with parent keys, test thoroughly
-6. **Validate end-to-end** — Run full two-phase flow and verify Jira import works
-
----
 
 ## Questions for Discussion
 
