@@ -93,13 +93,6 @@ __pycache__/
 
 *.pyd
 
-# Temporary analysis and planning documentation (generated during development sessions)
-
-*REGRESSION_TESTS*.md
-*TEST_AUDIT*.md
-*HANDOVER*.md
-EXPORT_FEATURE_*.md
-
 # Local data backups and alternative data directories (large SQLite files)
 
 altdata/
