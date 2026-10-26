@@ -512,6 +512,16 @@ Views are included because they are queryable SQL objects, but the anonymizer on
 | `synced_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
 | `jira_site_key` | TEXT | ✓ | yes | key | `key_<hash>` | Deterministic fake key. |
 
+#### `team_project_epic_keys`
+
+| Column | Type | PK | Anonymized | Method | Replacement shape | Notes |
+|---|---|---|---|---|---|---|
+| `project_gid` | TEXT | ✓ | yes | identifier | `gid_<hash>` | Deterministic fake identifier; join relationships remain consistent. |
+| `jira_key` | TEXT |  | yes | Jira key | `JIRA-<number>` | Deterministic fake Jira key. |
+| `created_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
+| `synced_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
+| `jira_site_key` | TEXT | ✓ | yes | key | `key_<hash>` | Deterministic fake key. |
+
 #### `project_jira_decisions`
 
 | Column | Type | PK | Anonymized | Method | Replacement shape | Notes |

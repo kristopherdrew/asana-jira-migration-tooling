@@ -746,6 +746,18 @@ CREATE TABLE IF NOT EXISTS team_project_jira_mappings (
 );
 """
 
+TEAM_PROJECT_EPIC_KEYS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS team_project_epic_keys (
+    project_gid TEXT NOT NULL,
+    jira_key TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    synced_at TEXT NOT NULL,
+    jira_site_key TEXT NOT NULL DEFAULT 'legacy_unknown',
+    PRIMARY KEY (jira_site_key, project_gid),
+    UNIQUE (jira_site_key, jira_key),
+    FOREIGN KEY (project_gid) REFERENCES projects(gid)
+);
+"""
 
 PROJECT_JIRA_DECISIONS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS project_jira_decisions (
@@ -812,6 +824,7 @@ class Database:
         connection.executescript(PERSONAL_TASK_CURSORS_SCHEMA)
         connection.executescript(EXPORTED_TASKS_SCHEMA)
         connection.executescript(TEAM_PROJECT_JIRA_MAPPINGS_SCHEMA)
+        connection.executescript(TEAM_PROJECT_EPIC_KEYS_SCHEMA)
         connection.executescript(PROJECT_JIRA_DECISIONS_SCHEMA)
         connection.commit()
         self._ensure_column(connection, "tasks", "hierarchy_depth", "INTEGER")
@@ -2437,6 +2450,18 @@ class Database:
             "exported_tasks",
             "project_gid",
         )
+        self._ensure_index(
+            connection,
+            "idx_team_project_epic_keys_project_gid",
+            "team_project_epic_keys",
+            "project_gid",
+        )
+        self._ensure_index(
+            connection,
+            "idx_team_project_epic_keys_jira_key",
+            "team_project_epic_keys",
+            "jira_key",
+        )
 
     @staticmethod
     def _ensure_index(connection: sqlite3.Connection, name: str, table: str, columns: str) -> None:
@@ -2772,6 +2797,96 @@ class Database:
             deleted += cursor.rowcount
         connection.commit()
         return deleted
+
+    def upsert_epic_key(
+        self,
+        connection: sqlite3.Connection,
+        project_gid: str,
+        jira_key: str,
+        created_at: datetime,
+        jira_site_key: Optional[str] = None,
+    ) -> None:
+        """Store a single Asana project GID -> Jira Epic key mapping."""
+        jira_site_key = _site_key(jira_site_key)
+        stamp = created_at.isoformat()
+        connection.execute(
+            """
+            INSERT INTO team_project_epic_keys (project_gid, jira_key, created_at, synced_at, jira_site_key)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(jira_site_key, project_gid) DO UPDATE SET
+                jira_key=excluded.jira_key,
+                created_at=excluded.created_at,
+                synced_at=excluded.synced_at
+            """,
+            (project_gid, jira_key, stamp, stamp, jira_site_key),
+        )
+        connection.commit()
+
+    def upsert_epic_keys(
+        self,
+        connection: sqlite3.Connection,
+        mappings: Dict[str, str],
+        jira_site_key: Optional[str] = None,
+    ) -> int:
+        """Persist multiple Asana project GID -> Jira Epic key mappings.
+
+        ``mappings`` is a dict of {project_gid: jira_key}. Returns the number
+        of rows inserted/updated.
+        """
+        jira_site_key = _site_key(jira_site_key)
+        stamp = synced_at_timestamp()
+        rows = [(project_gid, jira_key, stamp, stamp, jira_site_key)
+                for project_gid, jira_key in mappings.items()]
+
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO team_project_epic_keys (project_gid, jira_key, created_at, synced_at, jira_site_key)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(jira_site_key, project_gid) DO UPDATE SET
+                    jira_key=excluded.jira_key,
+                    synced_at=excluded.synced_at
+                """,
+                rows,
+            )
+        connection.commit()
+        return len(rows)
+
+    def get_project_epic_key(
+        self,
+        connection: sqlite3.Connection,
+        project_gid: str,
+        jira_site_key: Optional[str] = None,
+    ) -> Optional[str]:
+        """Return the Jira Epic key for a project_gid, or None if not mapped."""
+        jira_site_key = jira_site_key or os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+        sql = "SELECT jira_key FROM team_project_epic_keys WHERE project_gid = ?"
+        params = [project_gid]
+        if jira_site_key:
+            sql += " AND jira_site_key = ?"
+            params.append(jira_site_key)
+        row = connection.execute(sql, params).fetchone()
+        return row["jira_key"] if row else None
+
+    def get_epic_keys_by_project_gids(
+        self,
+        connection: sqlite3.Connection,
+        project_gids: Iterable[str],
+        jira_site_key: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Return a dict of {project_gid: jira_key} for the given project_gids."""
+        jira_site_key = jira_site_key or os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+        gid_list = list(project_gids)
+        if not gid_list:
+            return {}
+        placeholders = ",".join("?" * len(gid_list))
+        sql = f"SELECT project_gid, jira_key FROM team_project_epic_keys WHERE project_gid IN ({placeholders})"
+        params = gid_list
+        if jira_site_key:
+            sql += " AND jira_site_key = ?"
+            params.append(jira_site_key)
+        rows = connection.execute(sql, params).fetchall()
+        return {row["project_gid"]: row["jira_key"] for row in rows}
 
     def replace_task_comments(
         self,

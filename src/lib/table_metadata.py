@@ -385,6 +385,15 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "upsert_team_project_jira_mappings (delete_team_project_jira_mappings for --reset)",
         "Upsert by (jira_site_key, asana_gid, kind); UNIQUE(jira_site_key, jira_key).",
     ),
+    "team_project_epic_keys": _m(
+        "team_project_epic_keys",
+        "Jira / Atlassian mapping",
+        "Maps Asana project GID → Jira Epic key created during Phase 1 export, enabling Phase 2 tasks to resolve parent keys.",
+        "Populated via Jira API query post-import: External Issue ID → Jira issue key lookup.",
+        ["scripts/capture_project_epic_jira_keys.py"],
+        "upsert_epic_key / upsert_epic_keys",
+        "Upsert by (jira_site_key, project_gid); UNIQUE(jira_site_key, jira_key). FK→projects(gid).",
+    ),
     "project_jira_decisions": _m(
         "project_jira_decisions",
         "Jira / Atlassian mapping",
