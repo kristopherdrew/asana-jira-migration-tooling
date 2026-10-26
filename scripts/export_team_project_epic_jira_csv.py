@@ -342,11 +342,20 @@ def export_team_project_epic_jira_csv(
             connection, epic_rows, path, existing_mappings, project_gids
         )
 
-    # Determine CSV columns (filter out internal fields)
-    if output_rows:
-        csv_columns = [k for k in output_rows[0].keys() if not k.startswith("_")]
-    else:
-        csv_columns = []
+    # Determine CSV columns (filter out internal fields, preserve order)
+    # Collect all possible columns from all rows to ensure Comment column is included
+    all_keys = set()
+    for row in output_rows:
+        all_keys.update(k for k in row.keys() if not k.startswith("_"))
+
+    # Preserve standard column order: Issue Type, Summary, Description, then custom fields, then Comment, then task_gid, External issue ID
+    standard_cols = ["Issue Type", "Summary", "Description"]
+    custom_cols = sorted([k for k in all_keys if k not in standard_cols + ["Comment", "task_gid", "External issue ID"]])
+    special_cols = ["Comment", "task_gid", "External issue ID"]
+
+    csv_columns = standard_cols + custom_cols + special_cols
+    # Only include columns that actually exist in all_keys
+    csv_columns = [c for c in csv_columns if c in all_keys]
 
     logger.debug("CSV columns: %s", csv_columns)
 
