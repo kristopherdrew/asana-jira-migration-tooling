@@ -26,12 +26,35 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
-from scripts.atlassian.export_team_project_jira_csv import build_team_project_rows
 from scripts.atlassian.export_project_to_jira_csv import fetch_project_update_comment_rows
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
 logger = logging.getLogger(__name__)
+
+
+def _build_phase1_epic_rows(connection: sqlite3.Connection) -> List[Dict]:
+    """Build basic epic rows from projects table for Phase 1 export.
+
+    Returns minimal project data as Epic rows without complex owner resolution.
+    """
+    projects = connection.execute(
+        "SELECT gid, name, notes, archived FROM projects ORDER BY name"
+    ).fetchall()
+
+    rows = []
+    for project in projects:
+        row = {
+            "Issue Type": "Deliverable",  # Phase 1 creates Deliverables (parent-level issues)
+            "Summary": project["name"],
+            "Description": project["notes"] or "",
+            "_kind": "project",
+            "_asana_gid": project["gid"],
+        }
+        rows.append(row)
+
+    logger.info("Built %d epic rows from projects table", len(rows))
+    return rows
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -217,10 +240,8 @@ def export_team_project_epic_jira_csv(
         existing_mappings = _get_existing_mappings(connection, jira_site_key, project_gids)
         logger.info("Found %d existing project→Jira mappings", len(existing_mappings))
 
-        # Build rows (reuse existing export logic)
-        epic_rows, _ = build_team_project_rows(
-            connection, workspace_gid, include_empty_projects=True
-        )
+        # Build epic rows directly from projects table (Phase 1 only needs basic project data)
+        epic_rows = _build_phase1_epic_rows(connection)
 
         # Prepare output rows with proper External IDs and Jira keys
         output_rows, comment_count = _build_export_rows(
