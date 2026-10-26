@@ -2965,7 +2965,7 @@ def args_get_jira_migration_decisions(log_level: str) -> List[str]:
 
 
 def args_export_project_epic_jira_csv(log_level: str) -> List[str]:
-    """Arguments for Phase 1 project/epic export with path selection."""
+    """Arguments for Phase 1 project/epic export with path and scope selection."""
     args = build_common_args(log_level)
     append_jira_env_flag(args)
 
@@ -2976,10 +2976,24 @@ def args_export_project_epic_jira_csv(log_level: str) -> List[str]:
     path = "simple" if path_choice == "1" else "hierarchical"
     args.extend(["--path", path])
 
-    jira_project_key = prompt("Jira project key (where to create Epics)", default="")
+    print("\nProject scope:")
+    print("[1] All projects in database")
+    print("[2] Specific project GIDs (comma-separated)")
+    print("[3] Project GIDs from file")
+    scope_choice = input("Choice (default 1): ").strip() or "1"
+
+    if scope_choice == "2":
+        gids = prompt("Project GIDs (comma-separated)", default="")
+        if gids:
+            args.extend(["--project-gids", gids])
+    elif scope_choice == "3":
+        gid_file = prompt("Path to file with project GIDs (one per line)", default="")
+        if gid_file:
+            args.extend(["--project-gids-file", gid_file])
+
+    jira_project_key = prompt("Jira project key (where to create Epics)", default="EST")
     if jira_project_key:
-        # Note: User will import CSV into this Jira project manually
-        print(f"→ Path: {path} | Project: {jira_project_key}")
+        print(f"→ Path: {path} | Scope: {scope_choice} | Project: {jira_project_key}")
 
     return args
 
