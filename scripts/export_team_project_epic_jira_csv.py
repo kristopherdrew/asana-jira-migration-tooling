@@ -64,19 +64,32 @@ def _discover_custom_field_names(
     return [f["name"] for f in fields]
 
 
-def _format_comment_for_jira(comment: Dict, project_gid: str) -> Dict:
-    """Format a project status update comment into Jira CSV comment row format.
+def _format_comments_for_issue(comments: List[Dict]) -> str:
+    """Format project status update comments into Jira CSV comment column format.
 
-    Jira CSV import expects comment rows with Issue Type, Task ID, Description.
+    Combines all comments for an issue with timestamps and authors in readable format:
+    [YYYY-MM-DD HH:MM:SS] author@email.com: Comment text
     """
-    return {
-        "Issue Type": "Comment",
-        "Task ID": project_gid,  # Links comment to the parent Epic (by project GID/task_gid)
-        "Summary": "",
-        "Description": comment.get("text", ""),
-        "Created": comment.get("created_at", ""),
-        "Creator": comment.get("author_email", ""),
-    }
+    if not comments:
+        return ""
+
+    formatted = []
+    for comment in comments:
+        created_at = comment.get("created_at", "")
+        author_email = comment.get("author_email", "")
+        text = comment.get("text", "").strip()
+
+        # Parse ISO timestamp to readable format: [2026-01-28 21:11:41]
+        if created_at:
+            # Convert from ISO format (2026-01-28T21:11:41.008Z) to [YYYY-MM-DD HH:MM:SS]
+            timestamp = created_at.replace("T", " ").split(".")[0]
+            line = f"[{timestamp}] {author_email}: {text}"
+        else:
+            line = f"{author_email}: {text}"
+
+        formatted.append(line)
+
+    return "\n".join(formatted)
 
 
 def _build_phase1_epic_rows(
@@ -275,15 +288,13 @@ def _build_export_rows(
             # Clear Issue Key for new items
             epic_row.pop("Issue Key", None)
 
-        output_rows.append(epic_row)
-
-        # Fetch and add comments (project status updates) in Jira CSV format
+        # Fetch comments and add to epic row (Jira CSV format: comments in column on same row)
         comments = fetch_project_update_comment_rows(connection, project_gid)
         if comments:
-            for comment in comments:
-                formatted_comment = _format_comment_for_jira(comment, project_gid)
-                output_rows.append(formatted_comment)
+            epic_row["Comment"] = _format_comments_for_issue(comments)
             comment_count += len(comments)
+
+        output_rows.append(epic_row)
 
     return output_rows, comment_count
 
