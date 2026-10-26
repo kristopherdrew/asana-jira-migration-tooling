@@ -64,6 +64,24 @@ def _discover_custom_field_names(
     return [f["name"] for f in fields]
 
 
+def _format_comment_for_jira(comment: Dict) -> str:
+    """Format a single project status update comment for Jira CSV import.
+
+    Format: [YYYY-MM-DD HH:MM:SS] author@email.com: Comment text
+    """
+    created_at = comment.get("created_at", "")
+    author_email = comment.get("author_email", "")
+    text = comment.get("text", "").strip()
+
+    # Parse ISO timestamp to readable format: [2026-01-28 21:11:41]
+    if created_at:
+        # Convert from ISO format (2026-01-28T21:11:41.008Z) to [YYYY-MM-DD HH:MM:SS]
+        timestamp = created_at.replace("T", " ").split(".")[0]
+        return f"[{timestamp}] {author_email}: {text}"
+    else:
+        return f"{author_email}: {text}"
+
+
 def _format_comments_for_issue(comments: List[Dict]) -> str:
     """Format project status update comments into Jira CSV comment column format.
 
@@ -73,23 +91,7 @@ def _format_comments_for_issue(comments: List[Dict]) -> str:
     if not comments:
         return ""
 
-    formatted = []
-    for comment in comments:
-        created_at = comment.get("created_at", "")
-        author_email = comment.get("author_email", "")
-        text = comment.get("text", "").strip()
-
-        # Parse ISO timestamp to readable format: [2026-01-28 21:11:41]
-        if created_at:
-            # Convert from ISO format (2026-01-28T21:11:41.008Z) to [YYYY-MM-DD HH:MM:SS]
-            timestamp = created_at.replace("T", " ").split(".")[0]
-            line = f"[{timestamp}] {author_email}: {text}"
-        else:
-            line = f"{author_email}: {text}"
-
-        formatted.append(line)
-
-    return "\n".join(formatted)
+    return "\n".join(_format_comment_for_jira(c) for c in comments)
 
 
 def _build_phase1_epic_rows(
@@ -288,10 +290,11 @@ def _build_export_rows(
             # Clear Issue Key for new items
             epic_row.pop("Issue Key", None)
 
-        # Fetch comments and add to epic row (Jira CSV format: comments in column on same row)
+        # Fetch comments (track for multi-comment support)
         comments = fetch_project_update_comment_rows(connection, project_gid)
         if comments:
-            epic_row["Comment"] = _format_comments_for_issue(comments)
+            # Store comments as a list on the row (will be expanded to multiple columns later)
+            epic_row["_comments"] = comments
             comment_count += len(comments)
 
         output_rows.append(epic_row)
@@ -342,30 +345,60 @@ def export_team_project_epic_jira_csv(
             connection, epic_rows, path, existing_mappings, project_gids
         )
 
+    # Expand multi-comment rows into separate Comment columns
+    # Find maximum number of comments for any row
+    max_comments = max(
+        (len(row.get("_comments", [])) for row in output_rows),
+        default=0
+    )
+
+    # Expand _comments into separate Comment_1, Comment_2, etc. columns for CSV writing
+    # Then remove the _comments field
+    for row in output_rows:
+        comments = row.pop("_comments", [])
+        for i, comment in enumerate(comments):
+            formatted = _format_comment_for_jira(comment)
+            # Store as Comment_1, Comment_2, etc. for now (will be renamed in CSV header)
+            row[f"Comment_{i + 1}"] = formatted
+
     # Determine CSV columns (filter out internal fields, preserve order)
-    # Collect all possible columns from all rows to ensure Comment column is included
+    # Collect all possible columns from all rows to ensure Comment columns are included
     all_keys = set()
     for row in output_rows:
         all_keys.update(k for k in row.keys() if not k.startswith("_"))
 
-    # Preserve standard column order: Issue Type, Summary, Description, then custom fields, then Comment, then task_gid, External issue ID
+    # Preserve standard column order: Issue Type, Summary, Description, then custom fields, then Comments, then task_gid, External issue ID
     standard_cols = ["Issue Type", "Summary", "Description"]
-    custom_cols = sorted([k for k in all_keys if k not in standard_cols + ["Comment", "task_gid", "External issue ID"]])
-    special_cols = ["Comment", "task_gid", "External issue ID"]
+    custom_cols = sorted([k for k in all_keys if k not in standard_cols + ["task_gid", "External issue ID"] and not k.startswith("Comment_")])
+    comment_cols = [f"Comment_{i + 1}" for i in range(max_comments)] if max_comments > 0 else []
+    special_cols = ["task_gid", "External issue ID"]
 
-    csv_columns = standard_cols + custom_cols + special_cols
+    csv_columns = standard_cols + custom_cols + comment_cols + special_cols
     # Only include columns that actually exist in all_keys
     csv_columns = [c for c in csv_columns if c in all_keys]
 
     logger.debug("CSV columns: %s", csv_columns)
 
-    # Write CSV
+    # Write CSV with support for duplicate "Comment" column names
+    # Rename Comment_1, Comment_2, etc. back to "Comment" for Jira's importer
+    csv_header = []
+    column_mapping = {}  # Maps Comment_N to its position in the actual header
+    for col in csv_columns:
+        if col.startswith("Comment_"):
+            csv_header.append("Comment")
+        else:
+            csv_header.append(col)
+
     with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=csv_columns, restval="")
-        writer.writeheader()
+        writer = csv.writer(handle)
+        writer.writerow(csv_header)
+
         for row in output_rows:
-            filtered_row = {k: row.get(k, "") for k in csv_columns}
-            writer.writerow(filtered_row)
+            row_values = []
+            for col in csv_columns:
+                value = row.get(col, "")
+                row_values.append(value if value else "")
+            writer.writerow(row_values)
 
     project_count = len([r for r in output_rows if r.get("Issue Type") in ("Epic", "Deliverable")])
     logger.info(
