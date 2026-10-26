@@ -67,6 +67,14 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Jira site key for querying existing mappings (for upsert).",
     )
     parser.add_argument(
+        "--project-gids",
+        help="Comma-separated list of project GIDs to export. If omitted, exports all projects.",
+    )
+    parser.add_argument(
+        "--project-gids-file",
+        help="Path to file with newline-separated project GIDs.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (default: INFO).",
@@ -77,15 +85,27 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
 def _get_existing_mappings(
     connection: sqlite3.Connection,
     jira_site_key: Optional[str] = None,
+    scope_gids: Optional[list[str]] = None,
 ) -> Dict[str, tuple[str, str]]:
     """Query existing project → Jira key mappings.
+
+    Args:
+        scope_gids: Optional list of project GIDs to filter. If None, queries all.
 
     Returns: {project_gid: (jira_key, summary)}
     """
     from src.teams.epic_mappings import resolve_parent_epic_keys_batch
 
-    # Get all project GIDs from the database
-    projects = connection.execute("SELECT gid, name FROM projects").fetchall()
+    # Get project GIDs from the database (all or filtered by scope)
+    if scope_gids:
+        placeholders = ",".join("?" * len(scope_gids))
+        projects = connection.execute(
+            f"SELECT gid, name FROM projects WHERE gid IN ({placeholders})",
+            scope_gids
+        ).fetchall()
+    else:
+        projects = connection.execute("SELECT gid, name FROM projects").fetchall()
+
     project_gids = [p["gid"] for p in projects]
 
     # Query stored mappings
@@ -105,8 +125,12 @@ def _build_export_rows(
     epic_rows: List[Dict],
     path: str,
     existing_mappings: Dict[str, tuple[str, str]],
+    scope_gids: Optional[list[str]] = None,
 ) -> tuple[List[Dict], int]:
     """Build export rows with existing issue keys and External IDs as appropriate.
+
+    Args:
+        scope_gids: Optional list of project GIDs to include. If None, includes all.
 
     Returns: (output_rows, comment_count)
     """
@@ -116,6 +140,10 @@ def _build_export_rows(
     for epic_row in epic_rows:
         project_gid = epic_row.get("_asana_gid")
         if not project_gid:
+            continue
+
+        # Filter by scope if provided
+        if scope_gids and project_gid not in scope_gids:
             continue
 
         # Check if this project already has a Jira mapping
@@ -161,11 +189,13 @@ def export_team_project_epic_jira_csv(
     filename: Optional[str] = None,
     workspace_gid: Optional[str] = None,
     jira_site_key: Optional[str] = None,
+    project_gids: Optional[list[str]] = None,
 ) -> tuple[Path, int, int]:
     """Export Asana projects as Epics/Issues with comments, ready for Jira import.
 
     Args:
         path: "simple" (Project→Epic) or "hierarchical" (Project→Issue, Section→Epic)
+        project_gids: Optional list of project GIDs to export. If None, exports all.
 
     Returns: (output_path, project_count, comment_count)
     """
@@ -184,7 +214,7 @@ def export_team_project_epic_jira_csv(
         database.initialize(connection)
 
         # Get existing mappings for upsert capability
-        existing_mappings = _get_existing_mappings(connection, jira_site_key)
+        existing_mappings = _get_existing_mappings(connection, jira_site_key, project_gids)
         logger.info("Found %d existing project→Jira mappings", len(existing_mappings))
 
         # Build rows (reuse existing export logic)
@@ -194,7 +224,7 @@ def export_team_project_epic_jira_csv(
 
         # Prepare output rows with proper External IDs and Jira keys
         output_rows, comment_count = _build_export_rows(
-            connection, epic_rows, path, existing_mappings
+            connection, epic_rows, path, existing_mappings, project_gids
         )
 
     # Determine CSV columns (filter out internal fields)
@@ -232,6 +262,14 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         raise SystemExit(str(exc)) from exc
     configure_logging(log_level)
 
+    # Load project GIDs from argument or file
+    project_gids = None
+    if args.project_gids:
+        project_gids = [g.strip() for g in args.project_gids.split(",") if g.strip()]
+    elif args.project_gids_file:
+        with open(args.project_gids_file) as f:
+            project_gids = [line.strip() for line in f if line.strip()]
+
     output_path, project_count, comment_count = export_team_project_epic_jira_csv(
         database_path=args.database,
         output_dir=Path(args.output_dir),
@@ -239,6 +277,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         filename=args.filename,
         workspace_gid=args.workspace_gid,
         jira_site_key=args.jira_site,
+        project_gids=project_gids,
     )
     logger.info("Export completed: %s", output_path)
 
