@@ -57,6 +57,9 @@ from scripts import (  # noqa: E402
     export_all_reports_xlsx,
     export_recurring_tasks_report,
     export_atjm_coverage_report,
+    export_team_project_epic_jira_csv,
+    capture_project_epic_jira_keys,
+    export_tasks_with_parent_keys_jira_csv,
 )
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
@@ -2961,6 +2964,70 @@ def args_get_jira_migration_decisions(log_level: str) -> List[str]:
     return args
 
 
+def args_export_project_epic_jira_csv(log_level: str) -> List[str]:
+    """Arguments for Phase 1 project/epic export with path selection."""
+    args = build_common_args(log_level)
+    append_jira_env_flag(args)
+
+    print("\nSelect hierarchy path:")
+    print("[1] Simple (Project → Epic)")
+    print("[2] Hierarchical (Project → Issue, Section → Epic)")
+    path_choice = input("Choice (default 2): ").strip() or "2"
+    path = "simple" if path_choice == "1" else "hierarchical"
+    args.extend(["--path", path])
+
+    jira_project_key = prompt("Jira project key (where to create Epics)", default="")
+    if jira_project_key:
+        # Note: User runs Jira import separately after this export
+        logger.info("Export to CSV, then import into Jira project: %s", jira_project_key)
+
+    return args
+
+
+def args_capture_project_epic_jira_keys(log_level: str) -> List[str]:
+    """Arguments for Phase 1 key capture from Jira."""
+    args = build_common_args(log_level)
+    append_jira_env_flag(args)
+
+    jira_project_key = prompt("Jira project key where projects were imported", default="EST")
+    args.extend(["--jira-project-key", jira_project_key])
+
+    print("\nProject scope:")
+    print("[1] All projects in database")
+    print("[2] Specific project GIDs (comma-separated)")
+    scope_choice = input("Choice (default 1): ").strip() or "1"
+    if scope_choice == "2":
+        gids = prompt("Project GIDs (comma-separated)", default="")
+        if gids:
+            args.extend(["--project-gids", gids])
+
+    return args
+
+
+def args_export_tasks_with_parent_keys_jira_csv(log_level: str) -> List[str]:
+    """Arguments for Phase 2 task/section export with parent keys."""
+    args = build_common_args(log_level)
+    append_jira_env_flag(args)
+
+    print("\nSelect hierarchy path (must match Phase 1):")
+    print("[1] Simple (Task-only export)")
+    print("[2] Hierarchical (Sections + Tasks)")
+    path_choice = input("Choice (default 2): ").strip() or "2"
+    path = "simple" if path_choice == "1" else "hierarchical"
+    args.extend(["--path", path])
+
+    print("\nProject scope:")
+    print("[1] All projects with Phase 1 mappings")
+    print("[2] Specific project GIDs (comma-separated)")
+    scope_choice = input("Choice (default 1): ").strip() or "1"
+    if scope_choice == "2":
+        gids = prompt("Project GIDs (comma-separated)", default="")
+        if gids:
+            args.extend(["--project-gids", gids])
+
+    return args
+
+
 def run_group(title: str, menu: Dict[str, MenuItem]) -> None:
     global _menu_depth
     _menu_depth += 1
@@ -3641,6 +3708,10 @@ def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
         "6": MenuItem("6", "Manage export IDs", lambda: run_manage_export_ids(log_level)),
         "7": MenuItem("7", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
         "8": MenuItem("8", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
+        "---": MenuItem("---", "--- NEW TWO-PHASE EXPORT (Phase 1 & 2) ---", lambda: None),
+        "p1": MenuItem("p1", "[Phase 1] Export projects/sections for Jira", lambda: run_script(export_team_project_epic_jira_csv.main, args_export_project_epic_jira_csv(log_level))),
+        "p1c": MenuItem("p1c", "[Phase 1] Capture Jira keys after import", lambda: run_script(capture_project_epic_jira_keys.main, args_capture_project_epic_jira_keys(log_level))),
+        "p2": MenuItem("p2", "[Phase 2] Export tasks/sections with parent keys", lambda: run_script(export_tasks_with_parent_keys_jira_csv.main, args_export_tasks_with_parent_keys_jira_csv(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 

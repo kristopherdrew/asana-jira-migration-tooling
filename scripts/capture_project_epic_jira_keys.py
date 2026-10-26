@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.config import load_credentials
 from src.lib.database import resolve_default_db_path
-from src.lib.http_client import JiraHttpClient
+from src.lib.jira_client import JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.teams.export_orchestrator import run_phase_1_capture_keys
 
@@ -108,10 +108,10 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     # Resolve Jira client
     try:
-        jira_client = JiraHttpClient(
+        jira_client = JiraClient(
             base_url=creds.get("jira_base_url"),
             token=creds.get("atlassian_token"),
-            skip_ssl=creds.get("skip_ssl_verification"),
+            skip_ssl_verification=creds.get("skip_ssl_verification", False),
         )
     except Exception as exc:
         logger.error("Failed to initialize Jira client: %s", exc)
