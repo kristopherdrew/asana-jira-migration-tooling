@@ -1553,13 +1553,17 @@ class LifecycleMenuTest(TestCase):
     def test_migrate_projects_menu_uses_the_durable_attachment_workflow(self) -> None:
         menu = interactive_cli.build_migrate_projects_menu("INFO")
 
-        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "7", "8", "b"])
+        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "7", "8", "---", "p1", "p1c", "p2", "b"])
         self.assertEqual(
             menu["3"].label,
             "Associate Jira Task Keys with Asana Task Keys",
         )
         self.assertNotIn("Sync Jira attachments immediately", [item.label for item in menu.values()])
         self.assertEqual(menu["4"].label, "Import/update Jira project associations")
+        # Verify new Phase 1/2 menu items exist
+        self.assertEqual(menu["p1"].label, "[Phase 1] Export projects/sections for Jira")
+        self.assertEqual(menu["p1c"].label, "[Phase 1] Capture Jira keys after import")
+        self.assertEqual(menu["p2"].label, "[Phase 2] Export tasks/sections with parent keys")
         self.assertEqual(menu["5"].label, "Validate Jira task migration coverage")
         self.assertEqual(menu["6"].label, "Manage export IDs")
 

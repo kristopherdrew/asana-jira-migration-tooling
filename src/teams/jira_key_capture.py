@@ -55,7 +55,8 @@ def capture_epic_keys_from_jira(
     logger.debug("JQL query: %s", jql)
 
     try:
-        issues = jira_client.jql_search(jql, max_results=len(project_gids) + 100)
+        response = jira_client.search_issues(jql, max_results=len(project_gids) + 100)
+        issues = response.get("issues", [])
     except Exception as e:
         raise ValueError(f"Failed to query Jira for project keys: {e}") from e
 
@@ -104,7 +105,8 @@ def query_jira_project_keys(
         # Query for all Deliverable and Epic issues in the project
         # (Deliverable for Phase 2 hierarchical, Epic for simple path or sections)
         jql = f'project = "{jira_project_key}" AND type IN (Deliverable, Epic)'
-        issues = jira_client.jql_search(jql, max_results=1000)
+        response = jira_client.search_issues(jql, max_results=1000)
+        issues = response.get("issues", [])
     except Exception as e:
         raise ValueError(f"Failed to query Jira for issues: {e}") from e
 
