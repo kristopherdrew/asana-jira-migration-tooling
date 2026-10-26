@@ -64,34 +64,62 @@ def _discover_custom_field_names(
     return [f["name"] for f in fields]
 
 
-def _format_comment_for_jira(comment: Dict) -> str:
+def _format_comment_for_jira(comment: Dict, connection: sqlite3.Connection) -> str:
     """Format a single project status update comment for Jira CSV import.
 
-    Format: [YYYY-MM-DD HH:MM:SS] author@email.com: Comment text
+    Format: DD/MMM/YY HH:MM AM/PM;ATLASSIAN_ACCOUNT_ID; Comment text
+    Example: 12/Mar/26 9:33 PM;712020:a1b2c3d4; Status Update text
     """
+    from datetime import datetime, timezone
+
     created_at = comment.get("created_at", "")
-    author_email = comment.get("author_email", "")
+    created_by_gid = comment.get("created_by_gid", "")
     text = comment.get("text", "").strip()
 
-    # Parse ISO timestamp to readable format: [2026-01-28 21:11:41]
+    # Format timestamp: DD/MMM/YY HH:MM AM/PM
+    timestamp = ""
     if created_at:
-        # Convert from ISO format (2026-01-28T21:11:41.008Z) to [YYYY-MM-DD HH:MM:SS]
-        timestamp = created_at.replace("T", " ").split(".")[0]
-        return f"[{timestamp}] {author_email}: {text}"
+        try:
+            # Parse ISO format (2026-01-28T21:11:41.008Z)
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            # Convert to UTC
+            utc_time = dt.astimezone(timezone.utc)
+            # Format: 12/Mar/26 9:33 PM
+            date_part = utc_time.strftime("%d/%b/%y")
+            time_part = utc_time.strftime("%I:%M %p").lstrip("0")
+            timestamp = f"{date_part} {time_part}"
+        except Exception:
+            timestamp = ""
+
+    # Get Atlassian account ID from database
+    account_id = ""
+    if created_by_gid:
+        row = connection.execute(
+            "SELECT atlassian_account_id FROM user_atlassian_accounts WHERE user_gid = ?",
+            [created_by_gid],
+        ).fetchone()
+        if row and row["atlassian_account_id"]:
+            account_id = row["atlassian_account_id"]
+
+    # Format: timestamp;account_id; text
+    if timestamp and account_id:
+        return f"{timestamp};{account_id}; {text}"
+    elif timestamp:
+        return f"{timestamp}; {text}"
     else:
-        return f"{author_email}: {text}"
+        return text
 
 
-def _format_comments_for_issue(comments: List[Dict]) -> str:
+def _format_comments_for_issue(comments: List[Dict], connection: sqlite3.Connection) -> str:
     """Format project status update comments into Jira CSV comment column format.
 
-    Combines all comments for an issue with timestamps and authors in readable format:
-    [YYYY-MM-DD HH:MM:SS] author@email.com: Comment text
+    Combines all comments for an issue with timestamps and Atlassian account IDs.
+    Format: DD/MMM/YY HH:MM AM/PM;ATLASSIAN_ID; Comment text
     """
     if not comments:
         return ""
 
-    return "\n".join(_format_comment_for_jira(c) for c in comments)
+    return "\n".join(_format_comment_for_jira(c, connection) for c in comments)
 
 
 def _build_phase1_epic_rows(
@@ -357,7 +385,7 @@ def export_team_project_epic_jira_csv(
     for row in output_rows:
         comments = row.pop("_comments", [])
         for i, comment in enumerate(comments):
-            formatted = _format_comment_for_jira(comment)
+            formatted = _format_comment_for_jira(comment, connection)
             # Store as Comment_1, Comment_2, etc. for now (will be renamed in CSV header)
             row[f"Comment_{i + 1}"] = formatted
 
