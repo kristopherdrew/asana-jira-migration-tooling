@@ -33,14 +33,40 @@ DEFAULT_OUTPUT_DIR = "exports"
 logger = logging.getLogger(__name__)
 
 
-def _build_phase1_epic_rows(connection: sqlite3.Connection) -> List[Dict]:
-    """Build basic epic rows from projects table for Phase 1 export.
+def _discover_custom_field_names(connection: sqlite3.Connection) -> List[str]:
+    """Discover all custom field names used by projects."""
+    fields = connection.execute(
+        "SELECT DISTINCT name FROM project_custom_fields ORDER BY name"
+    ).fetchall()
+    return [f["name"] for f in fields]
 
-    Returns minimal project data as Epic rows without complex owner resolution.
+
+def _format_comment_for_jira(comment: Dict, project_gid: str) -> Dict:
+    """Format a project status update comment into Jira CSV comment row format.
+
+    Jira CSV import expects comment rows with Issue Type, Task ID, Description.
+    """
+    return {
+        "Issue Type": "Comment",
+        "Task ID": project_gid,  # Links comment to the parent Epic (by project GID/task_gid)
+        "Summary": "",
+        "Description": comment.get("text", ""),
+        "Created": comment.get("created_at", ""),
+        "Creator": comment.get("author_email", ""),
+    }
+
+
+def _build_phase1_epic_rows(connection: sqlite3.Connection) -> List[Dict]:
+    """Build epic rows from projects table with custom fields for Phase 1 export.
+
+    Returns project data as Epic rows with custom field columns.
     """
     projects = connection.execute(
         "SELECT gid, name, notes, archived FROM projects ORDER BY name"
     ).fetchall()
+
+    # Discover all custom field names upfront
+    custom_field_names = _discover_custom_field_names(connection)
 
     rows = []
     for project in projects:
@@ -51,9 +77,31 @@ def _build_phase1_epic_rows(connection: sqlite3.Connection) -> List[Dict]:
             "_kind": "project",
             "_asana_gid": project["gid"],
         }
+
+        # Add custom field columns (fetch values for this project)
+        for field_name in custom_field_names:
+            field_row = connection.execute(
+                """SELECT type, enum_value_name, number_value, text_value
+                   FROM project_custom_fields
+                   WHERE project_gid = ? AND name = ?""",
+                [project["gid"], field_name],
+            ).fetchone()
+
+            field_value = ""
+            if field_row:
+                # Extract value based on field type
+                if field_row["type"] == "enum":
+                    field_value = field_row["enum_value_name"] or ""
+                elif field_row["type"] == "number":
+                    field_value = field_row["number_value"] or ""
+                elif field_row["type"] == "text":
+                    field_value = field_row["text_value"] or ""
+
+            row[field_name] = field_value
+
         rows.append(row)
 
-    logger.info("Built %d epic rows from projects table", len(rows))
+    logger.info("Built %d epic rows from projects table with %d custom fields", len(rows), len(custom_field_names))
     return rows
 
 
@@ -196,10 +244,12 @@ def _build_export_rows(
 
         output_rows.append(epic_row)
 
-        # Fetch and add comments (project status updates)
+        # Fetch and add comments (project status updates) in Jira CSV format
         comments = fetch_project_update_comment_rows(connection, project_gid)
         if comments:
-            output_rows.extend(comments)
+            for comment in comments:
+                formatted_comment = _format_comment_for_jira(comment, project_gid)
+                output_rows.append(formatted_comment)
             comment_count += len(comments)
 
     return output_rows, comment_count
