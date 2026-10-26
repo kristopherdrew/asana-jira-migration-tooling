@@ -33,11 +33,34 @@ DEFAULT_OUTPUT_DIR = "exports"
 logger = logging.getLogger(__name__)
 
 
-def _discover_custom_field_names(connection: sqlite3.Connection) -> List[str]:
-    """Discover all custom field names used by projects."""
-    fields = connection.execute(
-        "SELECT DISTINCT name FROM project_custom_fields ORDER BY name"
-    ).fetchall()
+def _discover_custom_field_names(
+    connection: sqlite3.Connection,
+    scope_gids: Optional[list[str]] = None,
+) -> List[str]:
+    """Discover custom field names that have at least one non-empty value.
+
+    Only returns fields with actual populated values, filtering out empty fields.
+    """
+    if scope_gids:
+        placeholders = ",".join("?" * len(scope_gids))
+        fields = connection.execute(
+            f"""SELECT DISTINCT name FROM project_custom_fields
+               WHERE project_gid IN ({placeholders})
+               AND (enum_value_name IS NOT NULL
+                    OR number_value IS NOT NULL
+                    OR text_value IS NOT NULL)
+               ORDER BY name""",
+            scope_gids,
+        ).fetchall()
+    else:
+        fields = connection.execute(
+            """SELECT DISTINCT name FROM project_custom_fields
+               WHERE enum_value_name IS NOT NULL
+                  OR number_value IS NOT NULL
+                  OR text_value IS NOT NULL
+               ORDER BY name"""
+        ).fetchall()
+
     return [f["name"] for f in fields]
 
 
@@ -56,17 +79,27 @@ def _format_comment_for_jira(comment: Dict, project_gid: str) -> Dict:
     }
 
 
-def _build_phase1_epic_rows(connection: sqlite3.Connection) -> List[Dict]:
+def _build_phase1_epic_rows(
+    connection: sqlite3.Connection,
+    scope_gids: Optional[list[str]] = None,
+) -> List[Dict]:
     """Build epic rows from projects table with custom fields for Phase 1 export.
 
-    Returns project data as Epic rows with custom field columns.
+    Returns project data as Epic rows with custom field columns (only those with values).
     """
-    projects = connection.execute(
-        "SELECT gid, name, notes, archived FROM projects ORDER BY name"
-    ).fetchall()
+    if scope_gids:
+        placeholders = ",".join("?" * len(scope_gids))
+        projects = connection.execute(
+            f"SELECT gid, name, notes, archived FROM projects WHERE gid IN ({placeholders}) ORDER BY name",
+            scope_gids,
+        ).fetchall()
+    else:
+        projects = connection.execute(
+            "SELECT gid, name, notes, archived FROM projects ORDER BY name"
+        ).fetchall()
 
-    # Discover all custom field names upfront
-    custom_field_names = _discover_custom_field_names(connection)
+    # Discover custom field names with populated values for this scope
+    custom_field_names = _discover_custom_field_names(connection, scope_gids)
 
     rows = []
     for project in projects:
@@ -291,7 +324,7 @@ def export_team_project_epic_jira_csv(
         logger.info("Found %d existing project→Jira mappings", len(existing_mappings))
 
         # Build epic rows directly from projects table (Phase 1 only needs basic project data)
-        epic_rows = _build_phase1_epic_rows(connection)
+        epic_rows = _build_phase1_epic_rows(connection, project_gids)
 
         # Prepare output rows with proper External IDs and Jira keys
         output_rows, comment_count = _build_export_rows(
