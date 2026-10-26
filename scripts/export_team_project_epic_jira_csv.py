@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
-"""Export Asana projects as Jira Epics with project status updates as comments."""
+"""Export Asana projects/sections as Jira Epics/Issues with status updates as comments.
+
+Supports two hierarchical paths:
+  PATH 1: Project → Epic (simple)
+  PATH 2: Project → Issue (parent), Section → Epic (hierarchical)
+
+For new projects/sections, includes External Issue ID for Jira mapping.
+For existing projects/sections (already in Jira), includes Issue Key and Summary.
+"""
 
 from __future__ import annotations
 
 import argparse
 import csv
 import logging
+import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -27,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Export Asana projects as Jira Epics with status updates as comments."
+        description="Export Asana projects/sections for Jira import (two hierarchy paths)."
     )
     parser.add_argument(
         "--database",
@@ -48,6 +57,16 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Override the workspace GID from the resolved credentials (for logging only).",
     )
     parser.add_argument(
+        "--path",
+        choices=["simple", "hierarchical"],
+        default="hierarchical",
+        help="Hierarchy path: 'simple' (Project→Epic) or 'hierarchical' (Project→Issue, Section→Epic). Default: hierarchical.",
+    )
+    parser.add_argument(
+        "--jira-site",
+        help="Jira site key for querying existing mappings (for upsert).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (default: INFO).",
@@ -55,15 +74,100 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _get_existing_mappings(
+    connection: sqlite3.Connection,
+    jira_site_key: Optional[str] = None,
+) -> Dict[str, tuple[str, str]]:
+    """Query existing project → Jira key mappings.
+
+    Returns: {project_gid: (jira_key, summary)}
+    """
+    from src.teams.epic_mappings import resolve_parent_epic_keys_batch
+
+    # Get all project GIDs from the database
+    projects = connection.execute("SELECT gid, name FROM projects").fetchall()
+    project_gids = [p["gid"] for p in projects]
+
+    # Query stored mappings
+    mapped_keys = resolve_parent_epic_keys_batch(connection, project_gids, jira_site_key)
+
+    # Build result dict: {project_gid: (jira_key, project_name)}
+    result = {}
+    for project_gid, jira_key in mapped_keys.items():
+        project_name = next((p["name"] for p in projects if p["gid"] == project_gid), "")
+        result[project_gid] = (jira_key, project_name)
+
+    return result
+
+
+def _build_export_rows(
+    connection: sqlite3.Connection,
+    epic_rows: List[Dict],
+    path: str,
+    existing_mappings: Dict[str, tuple[str, str]],
+) -> tuple[List[Dict], int]:
+    """Build export rows with existing issue keys and External IDs as appropriate.
+
+    Returns: (output_rows, comment_count)
+    """
+    output_rows = []
+    comment_count = 0
+
+    for epic_row in epic_rows:
+        project_gid = epic_row.get("_asana_gid")
+        if not project_gid:
+            continue
+
+        # Check if this project already has a Jira mapping
+        if project_gid in existing_mappings:
+            jira_key, summary = existing_mappings[project_gid]
+            # Existing issue: include key and summary, skip External ID
+            epic_row["Issue Key"] = jira_key
+            epic_row["Summary"] = summary
+            # Keep task_gid for reference
+            epic_row["task_gid"] = project_gid
+            # Remove External Issue ID (already mapped)
+            epic_row.pop("External issue ID", None)
+        else:
+            # New issue: include External ID for Jira mapping
+            if path == "hierarchical":
+                # Use synthetic GID for above-epic level
+                external_id = f"{project_gid}::above_epic"
+                epic_row["task_gid"] = external_id
+            else:
+                # PATH 1: simple, just use project GID
+                external_id = project_gid
+                epic_row["task_gid"] = project_gid
+
+            epic_row["External issue ID"] = external_id
+            # Clear Issue Key for new items
+            epic_row.pop("Issue Key", None)
+
+        output_rows.append(epic_row)
+
+        # Fetch and add comments (project status updates)
+        comments = fetch_project_update_comment_rows(connection, project_gid)
+        if comments:
+            output_rows.extend(comments)
+            comment_count += len(comments)
+
+    return output_rows, comment_count
+
+
 def export_team_project_epic_jira_csv(
     database_path: str,
     output_dir: Path,
+    path: str = "hierarchical",
     filename: Optional[str] = None,
     workspace_gid: Optional[str] = None,
+    jira_site_key: Optional[str] = None,
 ) -> tuple[Path, int, int]:
-    """Export Asana projects as Epics with comments, ready for Jira import.
+    """Export Asana projects as Epics/Issues with comments, ready for Jira import.
 
-    Returns: (output_path, epic_count, comment_count)
+    Args:
+        path: "simple" (Project→Epic) or "hierarchical" (Project→Issue, Section→Epic)
+
+    Returns: (output_path, project_count, comment_count)
     """
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
@@ -71,40 +175,31 @@ def export_team_project_epic_jira_csv(
 
     if not filename:
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        filename = f"epic_import_{timestamp}.csv"
+        filename = f"project_epic_import_{timestamp}.csv"
 
     output_path = output_dir / filename
-    logger.debug("Writing Jira epic import export to %s", output_path)
+    logger.debug("Writing Jira project/epic import export to %s (path=%s)", output_path, path)
 
     with database.connect() as connection:
         database.initialize(connection)
+
+        # Get existing mappings for upsert capability
+        existing_mappings = _get_existing_mappings(connection, jira_site_key)
+        logger.info("Found %d existing project→Jira mappings", len(existing_mappings))
+
+        # Build rows (reuse existing export logic)
         epic_rows, _ = build_team_project_rows(
             connection, workspace_gid, include_empty_projects=True
         )
 
-        # Fetch comments (project status updates) for each epic
-        epic_comments = {}
-        for epic_row in epic_rows:
-            project_gid = epic_row.get("_asana_gid")
-            if project_gid:
-                comments = fetch_project_update_comment_rows(connection, project_gid)
-                if comments:
-                    epic_comments[project_gid] = comments
+        # Prepare output rows with proper External IDs and Jira keys
+        output_rows, comment_count = _build_export_rows(
+            connection, epic_rows, path, existing_mappings
+        )
 
-    # Prepare output rows: epics + comments
-    output_rows = []
-    comment_count = 0
-
-    for epic_row in epic_rows:
-        output_rows.append(epic_row)
-        project_gid = epic_row.get("_asana_gid")
-        if project_gid and project_gid in epic_comments:
-            output_rows.extend(epic_comments[project_gid])
-            comment_count += len(epic_comments[project_gid])
-
-    # Determine CSV columns from first epic row
-    if epic_rows:
-        csv_columns = [k for k in epic_rows[0].keys() if not k.startswith("_")]
+    # Determine CSV columns (filter out internal fields)
+    if output_rows:
+        csv_columns = [k for k in output_rows[0].keys() if not k.startswith("_")]
     else:
         csv_columns = []
 
@@ -118,13 +213,15 @@ def export_team_project_epic_jira_csv(
             filtered_row = {k: row.get(k, "") for k in csv_columns}
             writer.writerow(filtered_row)
 
+    project_count = len([r for r in output_rows if r.get("Issue Type") in ("Epic", "Deliverable")])
     logger.info(
-        "Exported %s epic row(s) and %s comment row(s) to %s.",
-        len(epic_rows),
+        "Exported %s project row(s) and %s comment row(s) to %s (path=%s).",
+        project_count,
         comment_count,
         output_path,
+        path,
     )
-    return output_path, len(epic_rows), comment_count
+    return output_path, project_count, comment_count
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
@@ -135,13 +232,15 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         raise SystemExit(str(exc)) from exc
     configure_logging(log_level)
 
-    output_path, epic_count, comment_count = export_team_project_epic_jira_csv(
+    output_path, project_count, comment_count = export_team_project_epic_jira_csv(
         database_path=args.database,
         output_dir=Path(args.output_dir),
+        path=args.path,
         filename=args.filename,
         workspace_gid=args.workspace_gid,
+        jira_site_key=args.jira_site,
     )
-    logger.info("Epic export completed: %s", output_path)
+    logger.info("Export completed: %s", output_path)
 
 
 if __name__ == "__main__":
