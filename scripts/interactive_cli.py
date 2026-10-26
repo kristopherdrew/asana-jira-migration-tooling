@@ -2967,6 +2967,7 @@ def args_get_jira_migration_decisions(log_level: str) -> List[str]:
 def args_export_project_epic_jira_csv(log_level: str) -> List[str]:
     """Arguments for Phase 1 project/epic export with path and scope selection."""
     args = build_common_args(log_level)
+    args.extend(["--database", str(active_db_path())])
     append_jira_env_flag(args)
 
     print("\nSelect hierarchy path:")
@@ -3001,6 +3002,7 @@ def args_export_project_epic_jira_csv(log_level: str) -> List[str]:
 def args_capture_project_epic_jira_keys(log_level: str) -> List[str]:
     """Arguments for Phase 1 key capture from Jira."""
     args = build_common_args(log_level)
+    args.extend(["--database", str(active_db_path())])
     append_jira_env_flag(args)
 
     jira_project_key = prompt("Jira project key where projects were imported", default="EST")
@@ -3021,6 +3023,7 @@ def args_capture_project_epic_jira_keys(log_level: str) -> List[str]:
 def args_export_tasks_with_parent_keys_jira_csv(log_level: str) -> List[str]:
     """Arguments for Phase 2 task/section export with parent keys."""
     args = build_common_args(log_level)
+    args.extend(["--database", str(active_db_path())])
     append_jira_env_flag(args)
 
     print("\nSelect hierarchy path (must match Phase 1):")
