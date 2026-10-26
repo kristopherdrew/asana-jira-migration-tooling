@@ -781,6 +781,24 @@ Maps Asana team/project → created Jira Epic/Task key so re-runs skip existing 
 | `synced_at` | TEXT |  |
 | `jira_site_key` | TEXT | ✓ |
 
+#### `team_project_epic_keys`
+
+Maps Asana project GID → Jira Epic key created during Phase 1 export, enabling Phase 2 tasks to resolve parent keys.
+
+- **Source:** Populated via Jira API query post-import: External Issue ID → Jira issue key lookup.
+- **Populated by:** `scripts/capture_project_epic_jira_keys.py`
+- **Written by:** `upsert_epic_key / upsert_epic_keys`
+- **Write semantics:** Upsert by (jira_site_key, project_gid); UNIQUE(jira_site_key, jira_key). FK→projects(gid).
+- **Foreign keys:** project_gid → projects(gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `project_gid` | TEXT | ✓ |
+| `jira_key` | TEXT |  |
+| `created_at` | TEXT |  |
+| `synced_at` | TEXT |  |
+| `jira_site_key` | TEXT | ✓ |
+
 #### `project_jira_decisions`
 
 Stores the 'Asana Migration Decision' custom-field value read back from each project's Jira Task issue, keyed by Asana project GID.
