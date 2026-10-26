@@ -2978,8 +2978,8 @@ def args_export_project_epic_jira_csv(log_level: str) -> List[str]:
 
     jira_project_key = prompt("Jira project key (where to create Epics)", default="")
     if jira_project_key:
-        # Note: User runs Jira import separately after this export
-        logger.info("Export to CSV, then import into Jira project: %s", jira_project_key)
+        # Note: User will import CSV into this Jira project manually
+        print(f"→ Path: {path} | Project: {jira_project_key}")
 
     return args
 
