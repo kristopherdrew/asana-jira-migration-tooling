@@ -221,8 +221,9 @@ class JiraClient:
 
         Returns the parsed response with 'issues' key containing the results."""
         url_params = parse.urlencode({
-            "where": jql,
+            "jql": jql,
             "maxResults": max_results,
+            "fields": "*all",
         })
         path = f"/rest/api/3/search/jql?{url_params}"
         return self._request_json("GET", path)
