@@ -65,6 +65,15 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Jira site key (passed for consistency, not used in wrapper)",
     )
     parser.add_argument(
+        "--export-id",
+        help="Export ID for tracking (passed to export_project_to_jira_csv.py)",
+    )
+    parser.add_argument(
+        "--no-custom-fields",
+        action="store_true",
+        help="Skip all custom fields (passed to export_project_to_jira_csv.py)",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (default: INFO)",
@@ -306,6 +315,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         "--database", args.database,
         "--output-dir", args.output_dir,
         "--log-level", args.log_level,
+        "--no-custom-field-prompt",  # Skip interactive prompt (required for non-interactive CLI)
     ]
 
     # Add scope args
@@ -320,6 +330,13 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     else:
         logger.error("No project scope specified (use --project-gid, --project-gids, --project-gids-file, or --team-gid)")
         raise SystemExit(1)
+
+    # Add optional flags
+    if args.export_id:
+        export_argv.extend(["--export-id", args.export_id])
+
+    if args.no_custom_fields:
+        export_argv.append("--no-custom-fields")
 
     # Call existing export script
     logger.info("Calling export_project_to_jira_csv.py with scope...")

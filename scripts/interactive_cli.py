@@ -3042,6 +3042,14 @@ def args_export_tasks_with_parent_keys_jira_csv(log_level: str) -> List[str]:
         if gids:
             args.extend(["--project-gids", gids])
 
+    print("\nExport options:")
+    export_id = prompt("Export ID (optional, for tracking)", default="")
+    if export_id:
+        args.extend(["--export-id", export_id])
+
+    if confirm("Skip custom fields (export tasks only)?", default=False):
+        args.append("--no-custom-fields")
+
     return args
 
 
