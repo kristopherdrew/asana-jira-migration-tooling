@@ -18,7 +18,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.tasks.export_with_parent_keys import build_phase_2_rows
-from scripts.atlassian.export_project_to_jira_csv import build_project_export_data
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
@@ -85,6 +84,38 @@ def _load_project_gids(
     return None  # Export all
 
 
+def _query_task_rows(connection, project_gids: Optional[list[str]], logger) -> list[dict]:
+    """Query task rows from database for the given project scope."""
+    if project_gids:
+        placeholders = ",".join("?" * len(project_gids))
+        query = f"""
+            SELECT
+                t.gid as task_gid, t.name as task_name, t.completed, t.completed_at,
+                t.created_at, t.modified_at, t.assignee_gid, t.created_by_gid,
+                t.parent_gid, t.is_subtask, p.gid as _project_gid, p.name as project_name
+            FROM tasks t
+            LEFT JOIN task_projects tp ON t.gid = tp.task_gid
+            LEFT JOIN projects p ON tp.project_gid = p.gid
+            WHERE p.gid IN ({placeholders})
+            ORDER BY p.gid, t.gid
+        """
+        cursor = connection.execute(query, project_gids)
+    else:
+        query = """
+            SELECT
+                t.gid as task_gid, t.name as task_name, t.completed, t.completed_at,
+                t.created_at, t.modified_at, t.assignee_gid, t.created_by_gid,
+                t.parent_gid, t.is_subtask, p.gid as _project_gid, p.name as project_name
+            FROM tasks t
+            LEFT JOIN task_projects tp ON t.gid = tp.task_gid
+            LEFT JOIN projects p ON tp.project_gid = p.gid
+            ORDER BY p.gid, t.gid
+        """
+        cursor = connection.execute(query)
+
+    return [dict(row) for row in cursor.fetchall()]
+
+
 def export_tasks_with_parent_keys(
     database_path: str,
     output_dir: Path,
@@ -111,13 +142,8 @@ def export_tasks_with_parent_keys(
     with database.connect() as connection:
         database.initialize(connection)
 
-        # Use existing export builder to get task rows
-        task_rows, _ = build_project_export_data(
-            connection=connection,
-            project_gids=project_gids,
-            add_epics=False,  # No synthetic epics for Phase 2
-        )
-
+        # Query task rows directly from database
+        task_rows = _query_task_rows(connection, project_gids, logger)
         logger.info("Exporting %d task row(s)", len(task_rows))
 
         # Build Phase 2 rows with sections (if hierarchical) and parent keys
