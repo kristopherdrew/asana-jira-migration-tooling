@@ -58,7 +58,7 @@ def capture_epic_keys_from_jira(
 
     # Extract keys and map back to project GIDs
     for issue in issues:
-        external_id = issue.get("fields", {}).get("customfield_10025")  # External Issue ID field
+        external_id = issue.get("fields", {}).get("customfield_10699")  # External Issue ID field
         if not external_id:
             logger.warning("Issue %s has no External Issue ID", issue.get("key"))
             continue
@@ -106,7 +106,7 @@ def query_jira_project_keys(
 
     result = {}
     for issue in issues:
-        external_id = issue.get("fields", {}).get("customfield_10025")  # External Issue ID field
+        external_id = issue.get("fields", {}).get("customfield_10699")  # External Issue ID field
         if external_id:
             # Remove suffix if present (::above_epic, etc.)
             project_gid = external_id.split("::")[0]
