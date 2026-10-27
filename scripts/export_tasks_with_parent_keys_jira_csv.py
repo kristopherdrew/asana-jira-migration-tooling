@@ -169,11 +169,14 @@ def export_tasks_with_parent_keys(
 
     logger.info("Phase 2 export: %d section(s), %d task(s)", section_count, task_count)
 
-    # Determine CSV columns (filter internal fields)
-    if all_rows:
-        csv_columns = [k for k in all_rows[0].keys() if not k.startswith("_")]
-    else:
-        csv_columns = []
+    # Determine CSV columns (collect from all rows, filter internal fields)
+    # This ensures we get all columns even if first row is synthetic (e.g., section Epic)
+    column_set = set()
+    for row in all_rows:
+        for key in row.keys():
+            if not key.startswith("_"):
+                column_set.add(key)
+    csv_columns = sorted(column_set)
 
     logger.debug("CSV columns: %s", csv_columns)
 
