@@ -2361,8 +2361,15 @@ def export_project(
                     task["jira_parent_gid"] = project_gid
 
         # Inject Phase 1 parent Jira keys if available
+        # For above-epic mode (Mode 3), parent keys go to section epics; for simple epics mode (Mode 2), they go to tasks
         if phase1_parent_mappings:
-            inject_phase1_parent_keys(tasks, phase1_parent_mappings, connection, [project_gid])
+            inject_phase1_parent_keys(
+                tasks,
+                phase1_parent_mappings,
+                connection,
+                [project_gid],
+                use_above_epic=bool(above_epic_issue_type),
+            )
 
         active_creator_fallback = _build_active_creator_fallback(
             tasks,
@@ -3830,32 +3837,42 @@ def inject_phase1_parent_keys(
     parent_mappings: Dict[str, str],
     connection: sqlite3.Connection,
     project_gids: List[str],
+    use_above_epic: bool = False,
 ) -> None:
-    """Inject Jira parent issue keys into task rows where available.
+    """Inject Jira parent issue keys into task/section rows where available.
 
     Mutates tasks_data in-place to add/update the parent key column.
-    For each task, looks up its project GID and finds the corresponding Jira key.
+    Behavior depends on hierarchy mode:
+    - If use_above_epic=False (Mode 2: Project→Epic): Tasks link directly to Phase 1 project keys
+    - If use_above_epic=True (Mode 3: Project→Deliverable/Section→Epic): Section epics link to Phase 1 project keys
     """
     if not parent_mappings:
         return
 
-    project_gid_map = {project_gid: project_gid for project_gid in project_gids}
-
     for task in tasks_data:
-        project_gid = task.get("_project_gid")
-        if not project_gid and "gid" in task:
-            cursor = connection.execute(
-                "SELECT project_gid FROM task_projects WHERE task_gid = ? LIMIT 1",
-                (task["gid"],),
-            )
-            row = cursor.fetchone()
-            if row:
-                project_gid = row["project_gid"]
+        # For above-epic (two-level hierarchy) mode, only inject into section epics
+        if use_above_epic:
+            gid = task.get("gid", "")
+            # Section epics have GIDs like "project_gid::above_epic_section::section_name"
+            if "::above_epic_section::" in gid:
+                # Extract project_gid from the section epic GID
+                project_gid = gid.split("::above_epic_section::")[0]
+                if project_gid in parent_mappings:
+                    task["jira_parent_gid"] = parent_mappings[project_gid]
+        else:
+            # For simple epic mode (Mode 2), inject into all tasks
+            project_gid = task.get("_project_gid")
+            if not project_gid and "gid" in task:
+                cursor = connection.execute(
+                    "SELECT project_gid FROM task_projects WHERE task_gid = ? LIMIT 1",
+                    (task["gid"],),
+                )
+                row = cursor.fetchone()
+                if row:
+                    project_gid = row["project_gid"]
 
-        if project_gid and project_gid in parent_mappings:
-            task["jira_parent_gid"] = parent_mappings[project_gid]
-        elif not task.get("jira_parent_gid"):
-            task["jira_parent_gid"] = ""
+            if project_gid and project_gid in parent_mappings:
+                task["jira_parent_gid"] = parent_mappings[project_gid]
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
