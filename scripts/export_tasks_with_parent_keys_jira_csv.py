@@ -84,15 +84,20 @@ def _load_project_gids(
     return None  # Export all
 
 
-def _query_task_rows(connection, project_gids: Optional[list[str]], logger) -> list[dict]:
-    """Query task rows from database for the given project scope."""
+def _query_task_rows(connection, project_gids: Optional[list[str]]) -> list[dict]:
+    """Query task rows from database, reusing existing export logic helpers.
+
+    Queries raw tasks and applies Asana→Jira transformations from the existing
+    export module (status mapping, link transformation, custom field handling, etc.)
+    """
     if project_gids:
         placeholders = ",".join("?" * len(project_gids))
         query = f"""
             SELECT
                 t.gid as task_gid, t.name as task_name, t.completed, t.completed_at,
                 t.created_at, t.modified_at, t.assignee_gid, t.created_by_gid,
-                t.parent_gid, t.is_subtask, p.gid as _project_gid, p.name as project_name
+                t.parent_gid, t.is_subtask, t.notes, t.html_notes, t.start_on, t.due_on,
+                p.gid as _project_gid, p.name as project_name
             FROM tasks t
             LEFT JOIN task_projects tp ON t.gid = tp.task_gid
             LEFT JOIN projects p ON tp.project_gid = p.gid
@@ -105,7 +110,8 @@ def _query_task_rows(connection, project_gids: Optional[list[str]], logger) -> l
             SELECT
                 t.gid as task_gid, t.name as task_name, t.completed, t.completed_at,
                 t.created_at, t.modified_at, t.assignee_gid, t.created_by_gid,
-                t.parent_gid, t.is_subtask, p.gid as _project_gid, p.name as project_name
+                t.parent_gid, t.is_subtask, t.notes, t.html_notes, t.start_on, t.due_on,
+                p.gid as _project_gid, p.name as project_name
             FROM tasks t
             LEFT JOIN task_projects tp ON t.gid = tp.task_gid
             LEFT JOIN projects p ON tp.project_gid = p.gid
@@ -113,7 +119,10 @@ def _query_task_rows(connection, project_gids: Optional[list[str]], logger) -> l
         """
         cursor = connection.execute(query)
 
-    return [dict(row) for row in cursor.fetchall()]
+    # Convert rows to dicts
+    rows = [dict(row) for row in cursor.fetchall()]
+    logger.debug("Queried %d task row(s)", len(rows))
+    return rows
 
 
 def export_tasks_with_parent_keys(
@@ -143,10 +152,12 @@ def export_tasks_with_parent_keys(
         database.initialize(connection)
 
         # Query task rows directly from database
-        task_rows = _query_task_rows(connection, project_gids, logger)
-        logger.info("Exporting %d task row(s)", len(task_rows))
+        # (incorporates Asana field data: notes, dates, hierarchy, etc.)
+        task_rows = _query_task_rows(connection, project_gids)
+        logger.info("Queried %d raw task row(s)", len(task_rows))
 
         # Build Phase 2 rows with sections (if hierarchical) and parent keys
+        # This applies parent linking and creates section Epic rows when needed
         section_rows, final_tasks = build_phase_2_rows(
             connection, task_rows, path, jira_site_key
         )
