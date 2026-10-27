@@ -1798,6 +1798,10 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     if uses_synthetic_epics:
         append_synthetic_epic_limit(args)
 
+    # Phase 1 parent linking
+    if confirm("Link tasks to existing Jira projects created in Phase 1?", default=False):
+        args.append("--link-to-phase1-parents")
+
     return args, allow_merge
 
 

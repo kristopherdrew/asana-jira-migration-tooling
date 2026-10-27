@@ -536,7 +536,7 @@ class IncrementalArgsBuilderTest(TestCase):
         ), patch(
             "builtins.input",
             side_effect=[
-                "2", "y", "", "n", "n", "", "", "", "", "", "",
+                "2", "y", "", "n", "n", "", "", "", "", "", "", "n",
                 "2", "y", "", "", "", "", "",
             ],
         ):
@@ -582,7 +582,7 @@ class IncrementalArgsBuilderTest(TestCase):
             side_effect=SystemExit,
         ), patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", ""],
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", "", "n"],
         ):
             args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
         self.assertFalse(allow_merge)
@@ -595,7 +595,7 @@ class IncrementalArgsBuilderTest(TestCase):
             side_effect=SystemExit,
         ), patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", "250"],
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", "250", "n"],
         ):
             args, _allow_merge = interactive_cli.args_export_project_to_jira("INFO")
         self.assertIn("--synthetic-epic-limit", args)
@@ -620,7 +620,7 @@ class IncrementalArgsBuilderTest(TestCase):
         ), patch(
             "builtins.input",
             side_effect=[
-                "4", "y", "", "n", "n", "n", "", "", "", "", "",
+                "4", "y", "", "n", "n", "n", "", "", "", "", "", "n",
                 "4", "y", "", "", "", "", "",
             ],
         ):
