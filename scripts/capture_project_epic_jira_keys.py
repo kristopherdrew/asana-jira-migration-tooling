@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.config import load_credentials
+from src.lib.config import load_credentials, resolve_jira_base_url
 from src.lib.database import resolve_default_db_path
 from src.lib.jira_client import JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
@@ -106,10 +106,12 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         logger.error("Failed to load credentials: %s", exc)
         raise SystemExit(1) from exc
 
-    # Resolve Jira client
+    # Resolve Jira base URL and initialize client
     try:
+        jira_base_url = resolve_jira_base_url(creds, site_key=args.jira_site)
         jira_client = JiraClient(
-            base_url=creds.jira_base_url,
+            base_url=jira_base_url,
+            username=creds.atlassian_username,
             token=creds.atlassian_token,
             skip_ssl_verification=creds.skip_ssl_verification,
         )

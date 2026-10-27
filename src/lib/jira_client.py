@@ -216,6 +216,17 @@ class JiraClient:
         values = data.get("values", []) if isinstance(data, dict) else []
         return [resolution for resolution in values if isinstance(resolution, dict)]
 
+    def search_issues(self, jql: str, max_results: int = 50) -> Dict[str, object]:
+        """Search for issues using JQL via GET with query parameters.
+
+        Returns the parsed response with 'issues' key containing the results."""
+        url_params = parse.urlencode({
+            "where": jql,
+            "maxResults": max_results,
+        })
+        path = f"/rest/api/3/search/jql?{url_params}"
+        return self._request_json("GET", path)
+
     # ------------------------------------------------------------------
     # Issue creation + create metadata
     # ------------------------------------------------------------------
