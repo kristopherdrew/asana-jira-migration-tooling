@@ -1620,6 +1620,7 @@ def args_incremental_updates(log_level: str) -> List[str]:
 def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     args = build_common_args(log_level)
     db_path = active_db_path()
+    args.extend(["--database", str(db_path)])
     conn: Optional[sqlite3.Connection] = None
     try:
         conn = _open_sqlite(db_path)
