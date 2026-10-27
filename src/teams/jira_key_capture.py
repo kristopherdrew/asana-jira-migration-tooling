@@ -42,9 +42,9 @@ def capture_epic_keys_from_jira(
     logger.info("Querying Jira for %d project(s) in project %s", len(project_gids), jira_project_key)
 
     # Query Jira for issues with matching External IDs
-    # JQL: project=EST AND "External issue ID[Short text]" IN (gid1, gid2, ...)
+    # JQL: project=EST and "External issue ID" in (gid1, gid2, ...)
     external_id_values = ", ".join(external_ids)
-    jql = f'project = {jira_project_key} and "External issue ID[Short text]" in ({external_id_values})'
+    jql = f'project = {jira_project_key} and "External issue ID" in ({external_id_values})'
 
     logger.debug("JQL query: %s", jql)
 
