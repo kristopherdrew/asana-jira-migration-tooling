@@ -101,7 +101,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     # Load credentials
     try:
-        creds = load_credentials(env_path=args.env)
+        creds = load_credentials(path=args.env) if args.env else load_credentials()
     except Exception as exc:
         logger.error("Failed to load credentials: %s", exc)
         raise SystemExit(1) from exc
