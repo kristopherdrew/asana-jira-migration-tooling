@@ -109,9 +109,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     # Resolve Jira client
     try:
         jira_client = JiraClient(
-            base_url=creds.get("jira_base_url"),
-            token=creds.get("atlassian_token"),
-            skip_ssl_verification=creds.get("skip_ssl_verification", False),
+            base_url=creds.jira_base_url,
+            token=creds.atlassian_token,
+            skip_ssl_verification=creds.skip_ssl_verification,
         )
     except Exception as exc:
         logger.error("Failed to initialize Jira client: %s", exc)
