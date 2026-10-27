@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 
 from scripts.merge_project_exports import merge_csv_files, merge_field_counts, merge_link_mods
@@ -1434,6 +1434,14 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
             "'description': fold all populated custom fields into the task's Description."
         ),
     )
+    parser.add_argument(
+        "--link-to-phase1-parents",
+        action="store_true",
+        help=(
+            "When set, populate the parent issue key column with Jira keys from Phase 1 project exports. "
+            "Requires team_project_epic_keys table to be populated (from Phase 1 Jira creates/captures)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -2128,6 +2136,7 @@ def export_project(
     task_gids: Optional[Set[str]] = None,
     seen_task_gids: Optional[Set[str]] = None,
     jira_site_key: Optional[str] = None,
+    phase1_parent_mappings: Optional[Dict[str, str]] = None,
 ) -> Optional[Path]:
     database = Database(db_path=database_path)
     with database.connect() as refresh_connection:
@@ -2350,6 +2359,10 @@ def export_project(
             for task in tasks:
                 if not task.get("jira_parent_gid") and task.get("jira_hierarchy_depth") == 0:
                     task["jira_parent_gid"] = project_gid
+
+        # Inject Phase 1 parent Jira keys if available
+        if phase1_parent_mappings:
+            inject_phase1_parent_keys(tasks, phase1_parent_mappings, connection, [project_gid])
 
         active_creator_fallback = _build_active_creator_fallback(
             tasks,
@@ -3796,6 +3809,55 @@ def print_project_stats(
             print(f"  {name}: {field_usage_counts[gid]} task(s)")
 
 
+def load_phase1_parent_mappings(connection: sqlite3.Connection, jira_site_key: str) -> Dict[str, str]:
+    """Load project_gid → jira_key mappings from team_project_epic_keys table.
+
+    Returns a dict mapping project GID to Jira issue key, or empty dict if table doesn't exist/is empty.
+    """
+    try:
+        cursor = connection.execute(
+            "SELECT project_gid, jira_key FROM team_project_epic_keys WHERE jira_site_key = ?",
+            (jira_site_key,),
+        )
+        return {row["project_gid"]: row["jira_key"] for row in cursor.fetchall()}
+    except sqlite3.OperationalError:
+        logger.warning("team_project_epic_keys table not found; Phase 1 parent mappings unavailable.")
+        return {}
+
+
+def inject_phase1_parent_keys(
+    tasks_data: List[Dict[str, Any]],
+    parent_mappings: Dict[str, str],
+    connection: sqlite3.Connection,
+    project_gids: List[str],
+) -> None:
+    """Inject Jira parent issue keys into task rows where available.
+
+    Mutates tasks_data in-place to add/update the parent key column.
+    For each task, looks up its project GID and finds the corresponding Jira key.
+    """
+    if not parent_mappings:
+        return
+
+    project_gid_map = {project_gid: project_gid for project_gid in project_gids}
+
+    for task in tasks_data:
+        project_gid = task.get("_project_gid")
+        if not project_gid and "gid" in task:
+            cursor = connection.execute(
+                "SELECT project_gid FROM task_projects WHERE task_gid = ? LIMIT 1",
+                (task["gid"],),
+            )
+            row = cursor.fetchone()
+            if row:
+                project_gid = row["project_gid"]
+
+        if project_gid and project_gid in parent_mappings:
+            task["jira_parent_gid"] = parent_mappings[project_gid]
+        elif not task.get("jira_parent_gid"):
+            task["jira_parent_gid"] = ""
+
+
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
     unmapped_jira_project_key = (args.map_unmapped_to_jira_project_key or "").strip()
@@ -3884,6 +3946,25 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                 archived_scope=args.archived_scope,
             )
             task_filters = {}
+
+    # Load Phase 1 parent mappings if linking to existing Jira projects
+    phase1_parent_mappings: Optional[Dict[str, str]] = None
+    if args.link_to_phase1_parents:
+        with database.connect() as connection:
+            database.initialize(connection)
+            jira_site_key = args.jira_site or "legacy_unknown"
+            phase1_parent_mappings = load_phase1_parent_mappings(connection, jira_site_key)
+            if phase1_parent_mappings:
+                logger.info(
+                    "Loaded %s Phase 1 parent project mappings for Jira site '%s'.",
+                    len(phase1_parent_mappings),
+                    jira_site_key,
+                )
+            else:
+                logger.warning(
+                    "No Phase 1 parent project mappings found for Jira site '%s'; parent linking disabled.",
+                    jira_site_key,
+                )
 
     if unmapped_jira_project_key:
         added_mappings = assign_unmapped_jira_project(
@@ -4023,6 +4104,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             task_gids=task_filters.get(project_gid),
             seen_task_gids=seen_task_gids,
             jira_site_key=args.jira_site,
+            phase1_parent_mappings=phase1_parent_mappings,
         )
         if args.stats_only and output_path:
             logger.info("Generated statistics for project %s (%s).", project_name, project_gid)
