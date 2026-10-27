@@ -315,7 +315,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         "--database", args.database,
         "--output-dir", args.output_dir,
         "--log-level", args.log_level,
-        "--no-custom-field-prompt",  # Skip interactive prompt (required for non-interactive CLI)
+        "--no-custom-field-prompt",  # Skip custom field selection prompt
+        "--no-refresh-prompt",  # Skip per-project incremental refresh prompts
     ]
 
     # Add scope args
