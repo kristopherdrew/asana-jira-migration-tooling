@@ -3005,7 +3005,7 @@ def args_capture_project_epic_jira_keys(log_level: str) -> List[str]:
     args.extend(["--database", str(active_db_path())])
     append_jira_env_flag(args)
 
-    jira_project_key = prompt("Jira project key where projects were imported", default="EST")
+    jira_project_key = prompt_required("Jira project key where projects were imported")
     args.extend(["--jira-project-key", jira_project_key])
 
     print("\nProject scope:")
