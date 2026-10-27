@@ -267,6 +267,7 @@ def augment_csv_with_parents(
                 "parent_gid": "",  # Empty for top-level parents
                 "summary": project_names.get(project_gid, project_gid),
                 "Parent Issue Key": parent_mappings.get(project_gid) or "",
+                "jira_hierarchy_depth": "Epic",  # Parent rows are Epics
             }
             # Fill other columns with empty values
             for col in all_columns:
@@ -275,7 +276,7 @@ def augment_csv_with_parents(
 
             parent_rows.append(parent_row)
 
-        logger.info("Built %d parent row(s)", len(parent_rows))
+        logger.info("Built %d parent row(s) with Issue Type=Epic", len(parent_rows))
 
     # Write final CSV: parent rows first (if hierarchical), then task rows
     final_rows = parent_rows + task_rows
