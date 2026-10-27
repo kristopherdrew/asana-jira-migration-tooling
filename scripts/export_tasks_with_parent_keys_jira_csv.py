@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Export Asana tasks/sections for Phase 2 Jira import with parent keys resolved.
+"""Phase 2: Export tasks with parent keys injected from Phase 1 captures.
 
-Reuses the full export_project_to_jira_csv logic (custom fields, status, comments, etc.)
-for each project, then combines results with parent key injection.
+This is a THIN wrapper around export_project_to_jira_csv.py that:
+1. Calls the existing export script to get full task CSV
+2. Injects Parent Issue Key column (lookup from team_project_epic_keys)
+3. For hierarchical path: prepends parent rows at top
+4. Writes final CSV with parent hierarchy established
 """
 
 from __future__ import annotations
@@ -12,10 +15,8 @@ import csv
 import logging
 import subprocess
 import sys
-import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Dict, List
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -23,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.teams.epic_mappings import resolve_parent_epic_keys_batch
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
@@ -31,252 +33,261 @@ logger = logging.getLogger(__name__)
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Export Asana tasks/sections for Phase 2 import with parent keys resolved."
+        description="Export tasks with parent keys (Phase 2 - wraps export_project_to_jira_csv.py)"
     )
-    parser.add_argument(
-        "--database",
-        default=resolve_default_db_path(DEFAULT_DB_PATH),
-        help=f"Path to the SQLite database (default: {DEFAULT_DB_PATH}).",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=DEFAULT_OUTPUT_DIR,
-        help=f"Directory for CSV export (default: {DEFAULT_OUTPUT_DIR}).",
-    )
-    parser.add_argument(
-        "--filename",
-        help="Custom CSV filename (default: auto-generated with timestamp).",
-    )
+    # Pass through scope args to export_project_to_jira_csv
+    parser.add_argument("--project-gid", help="Single project GID to export")
+    parser.add_argument("--project-gids", help="Comma-separated project GIDs")
+    parser.add_argument("--project-gids-file", help="File with newline-separated project GIDs")
+    parser.add_argument("--team-gid", help="Team GID to export all projects")
+
+    # Path selection: determines if parent rows are prepended
     parser.add_argument(
         "--path",
         choices=["simple", "hierarchical"],
         default="hierarchical",
-        help="Hierarchy path from Phase 1 (default: hierarchical).",
+        help="Hierarchy path (must match Phase 1): simple or hierarchical",
+    )
+
+    # Standard args
+    parser.add_argument(
+        "--database",
+        default=resolve_default_db_path(DEFAULT_DB_PATH),
+        help=f"SQLite database path (default: {DEFAULT_DB_PATH})",
     )
     parser.add_argument(
-        "--project-gids",
-        help="Comma-separated project GIDs. If omitted, exports all projects.",
-    )
-    parser.add_argument(
-        "--project-gids-file",
-        help="File with newline-separated project GIDs.",
+        "--output-dir",
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
     )
     parser.add_argument(
         "--jira-site",
-        help="Jira site key for parent key lookups.",
+        help="Jira site key (passed for consistency, not used in wrapper)",
     )
     parser.add_argument(
         "--log-level",
         default="INFO",
-        help="Logging level (default: INFO).",
+        help="Logging level (default: INFO)",
     )
+
     return parser.parse_args(argv)
 
 
-def _load_project_gids(
-    gids_str: Optional[str],
-    gids_file: Optional[str],
-    database_path: str,
-) -> Optional[list[str]]:
-    """Load project GIDs from arg or file, or None to export all."""
-    if gids_str:
-        return [g.strip() for g in gids_str.split(",") if g.strip()]
-
-    if gids_file:
-        with open(gids_file) as f:
-            return [line.strip() for line in f if line.strip()]
-
-    return None  # Export all
-
-
-def _call_existing_export_for_project(
-    database_path: str,
-    project_gid: str,
-    jira_site_key: Optional[str],
-    temp_dir: Path,
-) -> Optional[Path]:
-    """Call export_project_to_jira_csv for a single project and return CSV path."""
-    from scripts.atlassian import export_project_to_jira_csv
-
-    # Build argv for the existing export script
-    argv = [
-        "--database", database_path,
-        "--project-gid", project_gid,
-        "--output-dir", str(temp_dir),
-    ]
-    if jira_site_key:
-        argv.extend(["--jira-site", jira_site_key])
-
+def call_existing_export(argv: List[str]) -> Optional[Path]:
+    """Call export_project_to_jira_csv.main() and return path to generated CSV."""
     try:
-        # Call the existing export script
+        from scripts.atlassian import export_project_to_jira_csv
         export_project_to_jira_csv.main(argv)
-
-        # Find the generated CSV (must be the actual tasks CSV, not stats/field_counts/link_mods/etc.)
-        csv_files = list(temp_dir.glob("**/*.csv"))
-        # Filter to task data files: exclude consolidated files and special reports
-        task_csvs = [
-            f for f in csv_files
-            if ("_field_counts" not in f.name and
-                "_stats" not in f.name and
-                "_link_modifications" not in f.name and
-                "_user_associations" not in f.name and
-                "_section_counts" not in f.name and
-                "_jira_config" not in f.name and
-                "_Consolidated" not in f.name)
-        ]
-        if task_csvs:
-            # Return the CSV that has "Issue Type" column (actual tasks CSV)
-            for csv_path in task_csvs:
-                with csv_path.open("r", encoding="utf-8") as f:
-                    reader = csv.reader(f)
-                    header = next(reader, None)
-                    if header and "Issue Type" in header:
-                        return csv_path
-            # If no Issue Type column found, return the first non-filtered CSV
-            return task_csvs[0]
+        return True
+    except SystemExit:
+        # export_project_to_jira_csv.main() calls sys.exit() on success
+        return True
     except Exception as exc:
-        logger.warning("Export failed for project %s: %s", project_gid, exc)
+        logger.error("Failed to call export_project_to_jira_csv: %s", exc)
+        return None
 
+
+def find_generated_csv(output_dir: Path) -> Optional[Path]:
+    """Find the main task CSV generated by export_project_to_jira_csv (not stats/field_counts)."""
+    output_dir = output_dir.resolve()
+
+    # export_project_to_jira_csv creates subdirectories like export-01, export-02, etc.
+    # Look for the most recent export subdirectory with a tasks/ folder
+    export_dirs = sorted(
+        [d for d in output_dir.iterdir() if d.is_dir() and d.name.startswith("export-")],
+        key=lambda d: d.stat().st_mtime,
+        reverse=True,
+    )
+
+    csv_files = []
+    for export_dir in export_dirs:
+        tasks_dir = export_dir / "tasks"
+        if tasks_dir.exists():
+            found = list(tasks_dir.glob("*.csv"))
+            if found:
+                logger.debug("Found %d CSVs in %s/tasks/", len(found), export_dir.name)
+                csv_files = found
+                break
+
+    # If no export-XX subdirectory, try root
+    if not csv_files:
+        csv_files = list(output_dir.glob("*.csv"))
+        logger.debug("Found %d CSVs in root output directory", len(csv_files))
+
+    if not csv_files:
+        logger.debug("No CSV files found in %s", output_dir)
+        return None
+
+    # Sort by modification time (most recent first)
+    csv_files = sorted(csv_files, key=lambda p: p.stat().st_mtime, reverse=True)
+
+    for csv_path in csv_files:
+        # Skip metadata/report files
+        name = csv_path.name
+        if any(x in name for x in ["_field_counts", "_stats", "_link_modifications",
+                                     "_user_associations", "_section_counts", "_jira_config",
+                                     "_manifest"]):
+            continue
+
+        # Find the main tasks CSV (has task_gid or similar task columns)
+        try:
+            with csv_path.open("r", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                if header and any(col in header for col in ["task_gid", "Issue Key", "External issue ID"]):
+                    logger.info("Selected CSV: %s", csv_path)
+                    return csv_path
+        except Exception as exc:
+            logger.debug("Could not read %s: %s", csv_path, exc)
+            continue
+
+    logger.warning("Could not find a suitable CSV with 'Issue Type' header in %s", output_dir)
     return None
 
 
-def _merge_csvs_and_inject_parents(
-    project_csvs: dict[str, Path],
+def load_parent_mappings(database_path: str) -> Dict[str, str]:
+    """Load Phase 1 project → jira_key mappings from team_project_epic_keys table."""
+    database = Database(db_path=database_path)
+    mappings = {}
+
+    try:
+        with database.connect() as connection:
+            database.initialize(connection)
+            cursor = connection.execute(
+                "SELECT project_gid, jira_key FROM team_project_epic_keys"
+            )
+            for row in cursor.fetchall():
+                mappings[row["project_gid"]] = row["jira_key"]
+    except Exception as exc:
+        logger.warning("Failed to load parent mappings: %s", exc)
+
+    return mappings
+
+
+def get_project_names(database_path: str, project_gids: List[str]) -> Dict[str, str]:
+    """Get project names for parent rows."""
+    database = Database(db_path=database_path)
+    names = {}
+
+    try:
+        with database.connect() as connection:
+            database.initialize(connection)
+            placeholders = ",".join("?" * len(project_gids))
+            cursor = connection.execute(
+                f"SELECT gid, name FROM projects WHERE gid IN ({placeholders})",
+                project_gids,
+            )
+            for row in cursor.fetchall():
+                names[row["gid"]] = row["name"]
+    except Exception as exc:
+        logger.warning("Failed to load project names: %s", exc)
+
+    return names
+
+
+def augment_csv_with_parents(
+    csv_path: Path,
     database_path: str,
     path: str,
-) -> list[dict]:
-    """Merge CSVs from all projects and inject parent keys.
+) -> None:
+    """Augment CSV: inject Parent Issue Key column and prepend parent rows (hierarchical only)."""
 
-    Args:
-        project_csvs: Dict mapping project_gid → CSV path
-        database_path: SQLite database path
-        path: "simple" or "hierarchical"
+    # Load mappings
+    parent_mappings = load_parent_mappings(database_path)
+    if not parent_mappings:
+        logger.warning("No Phase 1 parent mappings found; Parent Issue Key will be empty")
 
-    Returns:
-        Combined list of dicts ready for CSV output
-    """
-    from src.teams.epic_mappings import resolve_parent_epic_keys_batch
+    # Read existing CSV
+    with csv_path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        task_rows = list(reader)
 
-    database = Database(db_path=database_path)
-    all_rows = []
+    if not task_rows:
+        logger.info("No task rows to augment")
+        return
 
-    with database.connect() as connection:
-        database.initialize(connection)
+    # Collect all columns from existing CSV + Parent Issue Key
+    all_columns = set(task_rows[0].keys()) if task_rows else set()
+    all_columns.add("Parent Issue Key")
 
-        # Load parent keys from Phase 1 captures
-        project_gids = list(project_csvs.keys())
-        parent_keys = resolve_parent_epic_keys_batch(connection, project_gids)
+    # Inject Parent Issue Key into all task rows
+    for row in task_rows:
+        # Extract project_gid from row (should be in _project_gid or similar, but check existing columns)
+        project_gid = row.get("_project_gid") or row.get("project_gid")
 
-        # Read and combine all CSVs
-        for project_gid, csv_path in project_csvs.items():
-            parent_key = parent_keys.get(project_gid)
-            if not parent_key:
-                logger.warning("No Phase 1 parent key for project %s, skipping", project_gid)
-                continue
+        # If not found, try to look it up from task_projects table
+        if not project_gid and "task_gid" in row:
+            # Query database to find project_gid for this task
+            database = Database(db_path=database_path)
+            try:
+                with database.connect() as connection:
+                    cursor = connection.execute(
+                        "SELECT project_gid FROM task_projects WHERE task_gid = ? LIMIT 1",
+                        (row["task_gid"],),
+                    )
+                    result = cursor.fetchone()
+                    project_gid = result["project_gid"] if result else None
+            except Exception:
+                project_gid = None
 
-            with csv_path.open("r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    # Skip Epic rows (synthetic, created in Phase 1)
-                    issue_type = row.get("Issue Type", "").strip()
-                    if issue_type == "Epic":
-                        continue
+        # Set Parent Issue Key
+        parent_key = parent_mappings.get(project_gid) if project_gid else None
+        row["Parent Issue Key"] = parent_key or ""
 
-                    # Inject parent key
-                    row["Parent Issue Key"] = parent_key
-                    row["_project_gid"] = project_gid
-                    all_rows.append(row)
+    # Build parent rows for hierarchical path
+    parent_rows = []
+    if path == "hierarchical":
+        # Collect unique project_gids from task rows
+        project_gids = set()
+        for row in task_rows:
+            project_gid = row.get("_project_gid") or row.get("project_gid")
+            if not project_gid and "task_gid" in row:
+                database = Database(db_path=database_path)
+                try:
+                    with database.connect() as connection:
+                        cursor = connection.execute(
+                            "SELECT project_gid FROM task_projects WHERE task_gid = ? LIMIT 1",
+                            (row["task_gid"],),
+                        )
+                        result = cursor.fetchone()
+                        if result:
+                            project_gid = result["project_gid"]
+                except Exception:
+                    pass
+            if project_gid:
+                project_gids.add(project_gid)
 
-    logger.info("Merged %d task row(s) from %d project CSV(s)", len(all_rows), len(project_csvs))
-    return all_rows
+        # Get project names
+        project_names = get_project_names(database_path, list(project_gids))
 
+        # Create parent rows
+        for project_gid in sorted(project_gids):
+            parent_row = {
+                "task_gid": project_gid,
+                "parent_gid": "",  # Empty for top-level parents
+                "summary": project_names.get(project_gid, project_gid),
+                "Parent Issue Key": parent_mappings.get(project_gid) or "",
+            }
+            # Fill other columns with empty values
+            for col in all_columns:
+                if col not in parent_row:
+                    parent_row[col] = ""
 
-def export_tasks_with_parent_keys(
-    database_path: str,
-    output_dir: Path,
-    path: str = "hierarchical",
-    project_gids: Optional[list[str]] = None,
-    filename: Optional[str] = None,
-    jira_site_key: Optional[str] = None,
-) -> tuple[Path, int]:
-    """Export Asana tasks/sections with parent keys resolved.
+            parent_rows.append(parent_row)
 
-    Reuses the full export_project_to_jira_csv logic for each project, then
-    merges results and injects parent keys from Phase 1.
+        logger.info("Built %d parent row(s)", len(parent_rows))
 
-    Returns: (output_path, task_count)
-    """
-    output_dir = output_dir.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Write final CSV: parent rows first (if hierarchical), then task rows
+    final_rows = parent_rows + task_rows
+    csv_columns = sorted(all_columns)
 
-    if not filename:
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        filename = f"phase2_import_{timestamp}.csv"
+    with csv_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=csv_columns, restval="")
+        writer.writeheader()
+        for row in final_rows:
+            writer.writerow({col: row.get(col, "") for col in csv_columns})
 
-    output_path = output_dir / filename
-    logger.debug("Writing Phase 2 export to %s (path=%s)", output_path, path)
-
-    # Determine which projects to export
-    db = Database(db_path=database_path)
-    with db.connect() as connection:
-        db.initialize(connection)
-
-        if project_gids:
-            gids_to_export = project_gids
-        else:
-            # Get all projects with Phase 1 mappings
-            cursor = connection.execute("""
-                SELECT DISTINCT project_gid FROM team_project_epic_keys
-                ORDER BY project_gid
-            """)
-            gids_to_export = [row["project_gid"] for row in cursor.fetchall()]
-
-    logger.info("Exporting %d project(s) using full export logic", len(gids_to_export))
-
-    # Use temp dir to collect per-project CSVs
-    with tempfile.TemporaryDirectory() as temp_dir_str:
-        temp_dir = Path(temp_dir_str)
-
-        # Call existing export for each project
-        project_csvs = {}
-        for project_gid in gids_to_export:
-            logger.debug("Exporting project %s via full export logic", project_gid)
-            csv_path = _call_existing_export_for_project(
-                database_path=database_path,
-                project_gid=project_gid,
-                jira_site_key=jira_site_key,
-                temp_dir=temp_dir,
-            )
-            if csv_path:
-                project_csvs[project_gid] = csv_path
-
-        # Merge CSVs and inject parent keys
-        all_rows = _merge_csvs_and_inject_parents(
-            project_csvs=project_csvs,
-            database_path=database_path,
-            path=path,
-        )
-
-    # Write combined CSV with all columns from all rows
-    if all_rows:
-        column_set = set()
-        for row in all_rows:
-            for key in row.keys():
-                if not key.startswith("_"):
-                    column_set.add(key)
-        csv_columns = sorted(column_set)
-
-        logger.debug("CSV columns: %s", csv_columns)
-
-        with output_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=csv_columns, restval="")
-            writer.writeheader()
-            for row in all_rows:
-                filtered_row = {k: row.get(k, "") for k in csv_columns}
-                writer.writerow(filtered_row)
-
-    logger.info("✓ Phase 2 export complete: %s (%d task rows)", output_path, len(all_rows))
-    return output_path, len(all_rows)
+    logger.info("Augmented CSV: %d parent rows + %d task rows", len(parent_rows), len(task_rows))
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
@@ -289,22 +300,48 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
     configure_logging(log_level)
 
-    # Load project GIDs
-    project_gids = _load_project_gids(args.project_gids, args.project_gids_file, args.database)
+    # Build argv for export_project_to_jira_csv
+    export_argv = [
+        "--database", args.database,
+        "--output-dir", args.output_dir,
+        "--log-level", args.log_level,
+    ]
 
+    # Add scope args
+    if args.project_gid:
+        export_argv.extend(["--project-gid", args.project_gid])
+    elif args.project_gids:
+        export_argv.extend(["--project-gids", args.project_gids])
+    elif args.project_gids_file:
+        export_argv.extend(["--project-gids-file", args.project_gids_file])
+    elif args.team_gid:
+        export_argv.extend(["--team-gid", args.team_gid])
+    else:
+        logger.error("No project scope specified (use --project-gid, --project-gids, --project-gids-file, or --team-gid)")
+        raise SystemExit(1)
+
+    # Call existing export script
+    logger.info("Calling export_project_to_jira_csv.py with scope...")
+    result = call_existing_export(export_argv)
+    if not result:
+        logger.error("export_project_to_jira_csv.py failed")
+        raise SystemExit(1)
+
+    # Find generated CSV
+    output_dir = Path(args.output_dir).resolve()
+    csv_path = find_generated_csv(output_dir)
+    if not csv_path:
+        logger.error("Could not find generated CSV in %s", output_dir)
+        raise SystemExit(1)
+
+    logger.info("Found generated CSV: %s", csv_path)
+
+    # Augment CSV with parent keys and parent rows
     try:
-        output_path, task_count = export_tasks_with_parent_keys(
-            database_path=args.database,
-            output_dir=Path(args.output_dir),
-            path=args.path,
-            project_gids=project_gids,
-            filename=args.filename,
-            jira_site_key=args.jira_site,
-        )
-        logger.info("Export to: %s (%d rows)", output_path, task_count)
-
+        augment_csv_with_parents(csv_path, args.database, args.path)
+        logger.info("✓ Phase 2 export complete: %s", csv_path)
     except Exception as exc:
-        logger.error("Export failed: %s", exc)
+        logger.error("Failed to augment CSV: %s", exc)
         raise SystemExit(1) from exc
 
 
