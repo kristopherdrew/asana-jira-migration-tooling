@@ -35,22 +35,16 @@ def capture_epic_keys_from_jira(
 
     result = {}
 
-    # Build External ID list based on path
-    external_ids = []
-    for gid in project_gids:
-        if path == "hierarchical":
-            # Hierarchical path uses synthetic GID: project_gid::above_epic
-            external_ids.append(f"{gid}::above_epic")
-        else:
-            # Simple path uses plain project GID
-            external_ids.append(gid)
+    # Build External ID list - use plain project GID for query
+    # (Jira may store with or without suffix, but query uses base GID)
+    external_ids = list(project_gids)
 
     logger.info("Querying Jira for %d project(s) in project %s", len(project_gids), jira_project_key)
 
     # Query Jira for issues with matching External IDs
-    # JQL: project=EST AND "External issue ID" IN ("gid1", "gid2", ...)
-    external_id_values = ", ".join(f'"{eid}"' for eid in external_ids)
-    jql = f'project = "{jira_project_key}" AND "External issue ID" IN ({external_id_values})'
+    # JQL: project=EST AND "External issue ID[Short text]" IN (gid1, gid2, ...)
+    external_id_values = ", ".join(external_ids)
+    jql = f'project = {jira_project_key} and "External issue ID[Short text]" in ({external_id_values})'
 
     logger.debug("JQL query: %s", jql)
 
