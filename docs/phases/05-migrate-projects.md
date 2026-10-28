@@ -29,12 +29,6 @@ Runs `scripts.atlassian.export_project_to_jira_csv`. It exports task hierarchy,
 comments, custom fields, users, and migration identifiers. Multi-project CLI runs
 also merge the per-project outputs into a consolidated import file.
 
-### Export archival project tasks for Jira CSV import
-
-Runs `scripts.atlassian.export_archival_project_jira_csv`. This simplified format
-folds populated custom fields into the description while retaining native migration
-columns and Asana links.
-
 ### Manage export IDs
 
 Runs `scripts.manage_export_ids` against the active profile database. Use it to
