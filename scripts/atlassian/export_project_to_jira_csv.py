@@ -2360,17 +2360,6 @@ def export_project(
                 if not task.get("jira_parent_gid") and task.get("jira_hierarchy_depth") == 0:
                     task["jira_parent_gid"] = project_gid
 
-        # Inject Phase 1 parent Jira keys if available
-        # For above-epic mode (Mode 3), parent keys go to section epics; for simple epics mode (Mode 2), they go to tasks
-        if phase1_parent_mappings:
-            inject_phase1_parent_keys(
-                tasks,
-                phase1_parent_mappings,
-                connection,
-                [project_gid],
-                use_above_epic=bool(above_epic_issue_type),
-            )
-
         active_creator_fallback = _build_active_creator_fallback(
             tasks,
             user_map,
@@ -2756,6 +2745,17 @@ def export_project(
 
             # Insert deliverable first, then section epics, then the existing tasks.
             tasks[0:0] = [deliverable_row] + section_epics_above
+
+        # Inject Phase 1 parent Jira keys after all synthetic rows are created
+        # For above-epic mode (Mode 3), parent keys go to deliverable rows; for simple epics mode (Mode 2), they go to tasks
+        if phase1_parent_mappings:
+            inject_phase1_parent_keys(
+                tasks,
+                phase1_parent_mappings,
+                connection,
+                [project_gid],
+                use_above_epic=bool(above_epic_issue_type),
+            )
 
         max_sections = max((len(names) for names in section_map.values()), default=0)
         max_tags = max((len(tags) for tags in tags_map.values()), default=0)
@@ -3847,10 +3847,19 @@ def inject_phase1_parent_keys(
     - If use_above_epic=True (Mode 3: Project→Deliverable/Section→Epic): Above-epic deliverable rows link to Phase 1 project keys
     """
     if not parent_mappings:
+        logger.warning("Phase 1 parent mappings are empty; parent key injection skipped.")
         return
 
+    logger.info(
+        "Injecting Phase 1 parent keys into %d task(s) using %d parent mapping(s), use_above_epic=%s",
+        len(tasks_data),
+        len(parent_mappings),
+        use_above_epic,
+    )
+
+    injected_count = 0
     for task in tasks_data:
-        task_gid = task.get("task_gid", "")
+        task_gid = task.get("gid", "")
 
         # For above-epic (two-level hierarchy) mode, inject into above-epic deliverable rows (Phase 1 projects)
         if use_above_epic:
@@ -3860,6 +3869,9 @@ def inject_phase1_parent_keys(
                 project_gid = task_gid.split("::above_epic")[0]
                 if project_gid in parent_mappings:
                     task["jira_parent_gid"] = parent_mappings[project_gid]
+                    injected_count += 1
+                else:
+                    logger.debug("No Phase 1 mapping found for project_gid %s", project_gid)
         else:
             # For simple epic mode (Mode 2), inject into regular task rows
             # Regular tasks don't have :: in their GID
@@ -3877,6 +3889,9 @@ def inject_phase1_parent_keys(
 
                 if project_gid and project_gid in parent_mappings:
                     task["jira_parent_gid"] = parent_mappings[project_gid]
+                    injected_count += 1
+
+    logger.info("Injected Phase 1 parent keys into %d task(s)", injected_count)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
