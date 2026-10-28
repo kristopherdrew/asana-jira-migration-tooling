@@ -3007,8 +3007,10 @@ def export_project(
             "hierarchy_depth",
             "jira_parent_gid",
             "jira_hierarchy_depth",
-            "Issue Key",
-            "Parent Issue Key",
+        ]
+        if phase1_parent_mappings:
+            header.append("Issue Key")
+        header.extend([
             "task_name",
             "assignee",
             "assignee_email",
@@ -3018,7 +3020,7 @@ def export_project(
             "creator_atlassian_id",
             "projects",
             "modified_section",
-        ]
+        ])
         # Keep the raw Section column(s) adjacent to modified_section.
         if max_sections:
             for idx in range(1, max_sections + 1):
@@ -3261,8 +3263,10 @@ def export_project(
                 hierarchy_value,
                 jira_parent_gid,
                 jira_depth_value,
-                task.get("Issue Key", ""),
-                task.get("Parent Issue Key", ""),
+            ]
+            if phase1_parent_mappings:
+                row.append(task.get("Issue Key", ""))
+            row.extend([
                 export_task_name(task["name"], task["created_at"]),
                 assignee_display_name,
                 assignee_email,
@@ -3273,7 +3277,7 @@ def export_project(
                 *collaborator_values,
                 projects_value,
                 modified_section,
-            ]
+            ])
             if max_sections:
                 row.extend(sections)
                 if len(sections) < max_sections:
@@ -3843,21 +3847,17 @@ def inject_phase1_parent_keys(
     project_gids: List[str],
     use_above_epic: bool = False,
 ) -> None:
-    """Inject Jira parent issue keys into appropriate rows based on hierarchy mode.
+    """Inject Phase 1 Jira issue keys into Issue Key column for linking.
 
-    Mutates tasks_data in-place to populate Issue Key and Parent Issue Key columns.
-    Behavior depends on hierarchy mode:
-    - If use_above_epic=False (Mode 2: Project→Epic): Sets Issue Key for tasks linking to Phase 1 project keys
-    - If use_above_epic=True (Mode 3: Project→Deliverable/Section→Epic):
-      * Above-epic rows get Issue Key = Phase 1 project key
-      * Section epic rows get Parent Issue Key = Phase 1 project key
+    Mutates tasks_data in-place to set Issue Key for above-epic rows (Phase 1 project epics).
+    The jira_parent_gid column handles all parent-child linking in Jira import.
     """
     if not parent_mappings:
         logger.warning("Phase 1 parent mappings are empty; parent key injection skipped.")
         return
 
     logger.info(
-        "Injecting Phase 1 parent keys into %d task(s) using %d parent mapping(s), use_above_epic=%s",
+        "Injecting Phase 1 issue keys into %d task(s) using %d parent mapping(s), use_above_epic=%s",
         len(tasks_data),
         len(parent_mappings),
         use_above_epic,
@@ -3867,25 +3867,16 @@ def inject_phase1_parent_keys(
     for task in tasks_data:
         task_gid = task.get("gid", "")
 
-        # For above-epic (two-level hierarchy) mode
+        # For above-epic (Mode 3) or simple epic (Mode 2), set Issue Key for rows that represent Phase 1 projects
         if use_above_epic:
-            # Above-epic rows: GID = "project_gid::above_epic" (no "::above_epic_section")
+            # Above-epic rows: GID = "project_gid::above_epic" (represents Phase 1 project epic)
             if "::above_epic" in task_gid and "::above_epic_section::" not in task_gid:
                 project_gid = task_gid.split("::above_epic")[0]
                 if project_gid in parent_mappings:
-                    # Above-epic row IS the Phase 1 project, so set its Issue Key
                     task["Issue Key"] = parent_mappings[project_gid]
                     injected_count += 1
-
-            # Section epic rows: GID = "project_gid::above_epic_section::section_name"
-            elif "::above_epic_section::" in task_gid:
-                project_gid = task_gid.split("::above_epic_section::")[0]
-                if project_gid in parent_mappings:
-                    # Section epic's parent is the Phase 1 project
-                    task["Parent Issue Key"] = parent_mappings[project_gid]
-                    injected_count += 1
         else:
-            # For simple epic mode (Mode 2), tasks link directly to Phase 1 project keys
+            # For simple epic mode (Mode 2), regular tasks represent Phase 1 project epics
             if "::" not in task_gid:
                 project_gid = task.get("_project_gid")
                 if not project_gid and task_gid:
@@ -3898,10 +3889,10 @@ def inject_phase1_parent_keys(
                         project_gid = row["project_gid"]
 
                 if project_gid and project_gid in parent_mappings:
-                    task["Parent Issue Key"] = parent_mappings[project_gid]
+                    task["Issue Key"] = parent_mappings[project_gid]
                     injected_count += 1
 
-    logger.info("Injected Phase 1 parent keys into %d task(s)", injected_count)
+    logger.info("Injected Phase 1 issue keys into %d task(s)", injected_count)
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
