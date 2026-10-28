@@ -5,9 +5,8 @@
 Prepare Jira identities and project-level hierarchy before migrating task-level
 work. This phase creates or records the destinations that later migration waves use.
 
-The interactive workflow uses the direct API to preview or create the Team-to-Epic
-and Project-to-Task hierarchy. The legacy hierarchy CSV export remains available
-under **Advanced & Recovery** for exceptional recovery work.
+The hierarchy (Team-to-Epic, Project-to-Task) is created through the direct API from
+**Assess & Plan Migration**, not from this phase.
 
 ## Menu Actions and Scripts
 
@@ -34,12 +33,6 @@ guided overwrite flow for either a reviewed CSV scope or a pasted/file Project G
 scope. Use it to load existing Jira project keys, or to overwrite selected Asana
 project GIDs with one validated Jira project key after a Jira project was recreated
 or a migration scope changed.
-
-### Preview or create Team/Project Jira hierarchy (API)
-
-Runs `scripts.atlassian.create_team_project_jira_issues`. Start with dry-run output,
-confirm field resolution and scope, and only then create issues in the intended Jira
-environment. Successful creation persists mappings directly.
 
 ### Set project Last working day in Jira
 

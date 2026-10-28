@@ -462,17 +462,6 @@ class IncrementalArgsBuilderTest(TestCase):
                 [("proj_1", "NEW", "New Project"), ("proj_2", "NEW", "New Project")],
             )
 
-    def test_attachment_sync_accepts_project_gids_file(self) -> None:
-        with patch(
-            "scripts.interactive_cli._prompt_project_gids_file",
-            return_value="/repo/projects.csv",
-        ), patch("builtins.input", side_effect=["2", "y"]):
-            args = interactive_cli.args_sync_attachments("INFO")
-        self.assertEqual(
-            args,
-            ["--log-level", "INFO", "--project-gids-file", "/repo/projects.csv", "--dry-run"],
-        )
-
     def test_attachment_archive_download_and_upload_args(self) -> None:
         with patch("builtins.input", side_effect=["1", "/secure/archives", "wave-01"]):
             download_args = interactive_cli.args_download_attachment_archive("INFO")
@@ -529,7 +518,7 @@ class IncrementalArgsBuilderTest(TestCase):
                 ["--log-level", "INFO", "--manifest", str(manifest), "--dry-run"],
             )
 
-    def test_regular_and_archival_exports_use_project_gid_file_picker(self) -> None:
+    def test_regular_export_uses_project_gid_file_picker(self) -> None:
         with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(
             "scripts.interactive_cli._prompt_project_gids_file",
             return_value="/repo/projects.csv",
@@ -537,36 +526,17 @@ class IncrementalArgsBuilderTest(TestCase):
             "builtins.input",
             side_effect=[
                 "2", "y", "", "n", "n", "", "", "", "", "", "", "n",
-                "2", "y", "", "", "", "", "",
             ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
-            archival_args = interactive_cli.args_export_archival_project("INFO")
         self.assertTrue(allow_merge)
         self.assertIn("--project-gids-file", regular_args)
         self.assertIn("/repo/projects.csv", regular_args)
-        self.assertIn("--project-gids-file", archival_args)
-        self.assertIn("/repo/projects.csv", archival_args)
-        self.assertNotIn("--workspace-gid", archival_args)
 
     @patch("scripts.interactive_cli.run_export_project_to_jira")
-    def test_unified_task_export_uses_column_mode_by_default(self, mock_regular) -> None:
-        interactive_cli.run_export_tasks_to_jira("INFO")
+    def test_migrate_menu_task_export_delegates_to_project_exporter(self, mock_regular) -> None:
+        interactive_cli.build_migrate_projects_menu("INFO")["2"].handler()
         mock_regular.assert_called_once_with("INFO")
-
-    @patch("scripts.interactive_cli.run_export_project_to_jira")
-    def test_unified_task_export_delegates_to_project_exporter(self, mock_regular) -> None:
-        interactive_cli.run_export_tasks_to_jira("INFO")
-        mock_regular.assert_called_once_with("INFO")
-
-    def test_archival_export_accepts_inline_task_gids(self) -> None:
-        with patch(
-            "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "", "", "", ""],
-        ):
-            args = interactive_cli.args_export_archival_project("INFO")
-        self.assertIn("--task-gids", args)
-        self.assertIn("task_1,task_2", args)
 
     def test_jira_csv_importer_configuration_is_standalone(self) -> None:
         with patch(
@@ -601,16 +571,7 @@ class IncrementalArgsBuilderTest(TestCase):
         self.assertIn("--synthetic-epic-limit", args)
         self.assertIn("250", args)
 
-    def test_archival_export_accepts_custom_synthetic_epic_limit(self) -> None:
-        with patch(
-            "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "", "", "", "250"],
-        ):
-            args = interactive_cli.args_export_archival_project("INFO")
-        self.assertIn("--synthetic-epic-limit", args)
-        self.assertIn("250", args)
-
-    def test_regular_and_archival_exports_use_task_gid_file_picker(self) -> None:
+    def test_regular_export_uses_task_gid_file_picker(self) -> None:
         with patch(
             "scripts.interactive_cli._open_sqlite",
             side_effect=SystemExit,
@@ -621,16 +582,12 @@ class IncrementalArgsBuilderTest(TestCase):
             "builtins.input",
             side_effect=[
                 "4", "y", "", "n", "n", "n", "", "", "", "", "", "n",
-                "4", "y", "", "", "", "", "",
             ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
-            archival_args = interactive_cli.args_export_archival_project("INFO")
         self.assertFalse(allow_merge)
         self.assertIn("--task-gids-file", regular_args)
         self.assertIn("/repo/missing-task-gids.txt", regular_args)
-        self.assertIn("--task-gids-file", archival_args)
-        self.assertIn("/repo/missing-task-gids.txt", archival_args)
 
     def test_status_updates_uses_fuzzy_team_lookup(self) -> None:
         with patch(
@@ -887,7 +844,7 @@ class IncrementalArgsBuilderTest(TestCase):
                 menu["6"].label,
             ],
             [
-                "Export initial metadata report (.xlsx)",
+                "Export all reports workbook (.xlsx)",
                 "Export field & section migration review (.xlsx)",
                 "Export project details report",
                 "Export users report",
@@ -1550,18 +1507,30 @@ class LifecycleMenuTest(TestCase):
         for menu in menus:
             self.assertEqual(list(menu), [item.key for item in menu.values()])
 
+    def test_each_operation_has_one_home_across_lifecycle_menus(self) -> None:
+        menus = [
+            interactive_cli.build_discover_refresh_menu("INFO"),
+            interactive_cli.build_assess_plan_menu("INFO"),
+            interactive_cli.build_prepare_jira_menu("INFO"),
+            interactive_cli.build_migrate_projects_menu("INFO"),
+            interactive_cli.build_maintain_validate_menu("INFO"),
+            interactive_cli.build_advanced_recovery_menu("INFO"),
+        ]
+        labels = [item.label for menu in menus for item in menu.values() if item.label != "Back"]
+        duplicates = sorted({label for label in labels if labels.count(label) > 1})
+        self.assertEqual(duplicates, [], "Operations registered in more than one menu")
+
     def test_migrate_projects_menu_uses_the_durable_attachment_workflow(self) -> None:
         menu = interactive_cli.build_migrate_projects_menu("INFO")
 
-        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "7", "8", "b"])
-        self.assertEqual(
-            menu["3"].label,
-            "Associate Jira Task Keys with Asana Task Keys",
-        )
+        self.assertEqual(list(menu), ["1", "2", "3", "4", "5", "6", "7", "8", "9", "b"])
+        self.assertEqual(menu["3"].label, "Export Phase 1 project/epic Jira CSV")
+        self.assertEqual(menu["4"].label, "Capture Phase 1 Jira keys")
+        self.assertEqual(menu["5"].label, "Associate Jira Task Keys with Asana Task Keys")
+        self.assertEqual(menu["6"].label, "Validate Jira task migration coverage")
+        self.assertEqual(menu["7"].label, "Manage export IDs")
+        self.assertNotIn("Import/update Jira project associations", [item.label for item in menu.values()])
         self.assertNotIn("Sync Jira attachments immediately", [item.label for item in menu.values()])
-        self.assertEqual(menu["4"].label, "Import/update Jira project associations")
-        self.assertEqual(menu["5"].label, "Validate Jira task migration coverage")
-        self.assertEqual(menu["6"].label, "Manage export IDs")
 
     @patch("scripts.interactive_cli.run_script")
     @patch("scripts.interactive_cli.confirm", return_value=True)
@@ -1637,26 +1606,27 @@ class LifecycleMenuTest(TestCase):
         token_label = "Migrate tokens from env file to macOS Keychain"
 
         self.assertNotIn(token_label, [item.label for item in client_menu.values()])
-        self.assertEqual(advanced_menu["5"].label, token_label)
+        self.assertEqual(advanced_menu["4"].label, token_label)
 
         with patch("scripts.interactive_cli.run_token_migration") as mock_migrate:
-            advanced_menu["5"].handler()
+            advanced_menu["4"].handler()
         mock_migrate.assert_called_once_with(interactive_cli.PROJECT_ROOT)
 
     def test_advanced_recovery_exposes_database_anonymizer(self) -> None:
         menu = interactive_cli.build_advanced_recovery_menu("INFO")
 
-        self.assertEqual(menu["6"].label, "Create anonymized troubleshooting database")
+        self.assertEqual(menu["5"].label, "Create anonymized troubleshooting database")
 
     def test_prepare_jira_starts_with_standard_import_field_setup(self) -> None:
         menu = interactive_cli.build_prepare_jira_menu("INFO")
         self.assertEqual(menu["1"].label, "Create Jira fields for task-import mappings")
         self.assertEqual(menu["2"].label, "Create Jira fields for Team/Project tracking")
-        self.assertEqual(menu["5"].label, "Preview or create Team/Project Jira hierarchy (API)")
+        self.assertEqual(menu["5"].label, "Generate Jira CSV importer configuration")
         self.assertNotIn(
-            "Export Team -> Epic / Project -> Task CSV",
+            "Preview or create Team/Project Jira hierarchy (API)",
             [item.label for item in menu.values()],
         )
+        self.assertNotIn("Export team/project Jira CSV", [item.label for item in menu.values()])
 
     @patch("scripts.interactive_cli.args_get_project_status_updates", return_value=["status"])
     @patch("scripts.interactive_cli.args_get_task_extras", return_value=["extras"])

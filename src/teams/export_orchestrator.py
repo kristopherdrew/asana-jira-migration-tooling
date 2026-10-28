@@ -91,38 +91,3 @@ def run_phase_1_capture_keys(
     logger.info("✓ Captured %d project key(s)", len(captured_keys))
     logger.info("  Stored in database: %d", stored_count)
     return captured_keys
-
-
-def run_phase_2_export(
-    database_path: str,
-    output_dir: Path,
-    path: str = "hierarchical",
-    project_gids: Optional[list[str]] = None,
-    jira_site_key: Optional[str] = None,
-) -> tuple[Path, int]:
-    """Execute Phase 2 export: tasks/sections to CSV with parent keys resolved.
-
-    Args:
-        path: Matches the path used in Phase 1
-        project_gids: Optional scope (defaults to all projects with Phase 1 mappings)
-
-    Returns:
-        (csv_path, row_count)
-    """
-    from scripts.export_project_to_jira_csv import export_project_to_jira_csv
-
-    logger.info("=== PHASE 2 EXPORT ===")
-    logger.info("Path: %s | Output: %s", path, output_dir)
-
-    # For now, delegate to existing export
-    # Phase 2-specific logic (sections for hierarchical path) to be added
-    csv_path = export_project_to_jira_csv(
-        database_path=database_path,
-        output_dir=output_dir,
-        project_gids=project_gids,
-        with_parent_keys=True,
-        jira_site_key=jira_site_key,
-    )
-
-    logger.info("✓ Phase 2 export complete: %s", csv_path)
-    return csv_path, 0  # row_count to be computed

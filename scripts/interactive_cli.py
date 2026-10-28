@@ -59,7 +59,6 @@ from scripts import (  # noqa: E402
     export_atjm_coverage_report,
     export_team_project_epic_jira_csv,
     capture_project_epic_jira_keys,
-    export_tasks_with_parent_keys_jira_csv,
 )
 from scripts.atlassian import (  # noqa: E402
     clear_jira_task_keys,
@@ -67,9 +66,7 @@ from scripts.atlassian import (  # noqa: E402
     add_service_user_to_projects,
     create_jira_import_fields,
     create_team_project_jira_issues,
-    export_archival_project_jira_csv,
     export_project_to_jira_csv,
-    export_team_project_jira_csv,
     generate_jira_csv_import_config,
     get_jira_migration_decisions,
     reverse_lookup_jira_to_asana,
@@ -78,7 +75,6 @@ from scripts.atlassian import (  # noqa: E402
     import_jira_project_map,
     set_project_last_updated_jira_field,
 )
-from scripts.deprecated import sync_jira_attachments  # noqa: E402
 from src.lib.config import (  # noqa: E402
     Credentials,
     JiraSite,
@@ -847,14 +843,6 @@ def run_token_migration(reference_path: Path = PROJECT_ROOT) -> None:
     offer_token_migration(env_path)
 
 
-def build_credentials_menu() -> Dict[str, MenuItem]:
-    return {
-        "1": MenuItem("1", "View / update credentials (creates the file if none exists)", lambda: manage_credentials(PROJECT_ROOT)),
-        "2": MenuItem("2", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
-        "b": MenuItem("b", "Back", lambda: None),
-    }
-
-
 _ANSI_CODES = {
     "reset": "\033[0m",
     "bold": "\033[1m",
@@ -1031,11 +1019,6 @@ def remove_jira_site() -> None:
     print(f"Removed {site.name}.")
 
 
-def toggle_environment() -> None:
-    """Compatibility alias for older callers; opens the named-site selector."""
-    select_jira_site()
-
-
 def switch_profile(reference_path: Path = PROJECT_ROOT) -> None:
     """Pick another project profile (profiles/*.env) and make it active."""
     profiles = list_project_profiles(reference_path)
@@ -1071,15 +1054,6 @@ def switch_profile(reference_path: Path = PROJECT_ROOT) -> None:
         )
 
 
-def build_profile_env_menu(reference_path: Path = PROJECT_ROOT) -> Dict[str, MenuItem]:
-    return {
-        "1": MenuItem("1", "Select active Jira site", select_jira_site),
-        "2": MenuItem("2", "Switch active profile", lambda: switch_profile(reference_path)),
-        "3": MenuItem("3", "Create a new profile", lambda: bootstrap_credentials(reference_path)),
-        "b": MenuItem("b", "Back", lambda: None),
-    }
-
-
 def log_run(step: str, argv: Sequence[str], status: str, error: Optional[str] = None) -> None:
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1105,13 +1079,11 @@ def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[
         export_project_last_updated_report.main,
         export_project_members_report.main,
         export_team_memberships.main,
-        export_team_project_jira_csv.main,
         export_team_report.main,
         export_users.main,
     }
     if main_func in export_mains:
-        jira_csv = main_func is export_team_project_jira_csv.main
-        show_export_readiness(argv, main_func.__module__.rsplit(".", 1)[-1], jira_csv)
+        show_export_readiness(argv, main_func.__module__.rsplit(".", 1)[-1])
     original_input = builtins.input
 
     def session_input(text: str = "") -> str:
@@ -1973,92 +1945,6 @@ def append_synthetic_epic_limit(args: List[str]) -> None:
         return
 
 
-def args_export_archival_project(log_level: str) -> List[str]:
-    args = build_common_args(log_level)
-
-    print("\nSelect export scope:")
-    print("[1] Single project")
-    print("[2] Multiple projects (comma-separated GIDs)")
-    print("[3] All projects in a team")
-    print("[4] Specific task GIDs")
-    choice = input("Choice (default 1): ").strip() or "1"
-    if choice == "1":
-        project_gid = _prompt_project_gid_from_lookup(
-            "archival export", "Project GID to export"
-        )
-        if not project_gid:
-            raise SystemExit("Project GID is required.")
-        args.extend(["--project-gid", project_gid])
-    elif choice == "2":
-        if confirm("Load project GIDs from a file?", default=False):
-            args.extend(
-                ["--project-gids-file", _prompt_project_gids_file("archival Jira CSV export")]
-            )
-        else:
-            gids = prompt("Project GIDs (comma-separated)", default="")
-            if not gids:
-                raise SystemExit("At least one project GID is required.")
-            args.extend(["--project-gids", gids])
-    elif choice == "3":
-        team_gid = _prompt_team_gid_from_lookup(
-            "archival export", "Team GID whose projects to export"
-        )
-        if not team_gid:
-            raise SystemExit("Team GID is required.")
-        args.extend(["--team-gid", team_gid])
-        scope = prompt("Archived scope (active|archived|all) [all]", default="all")
-        args.extend(["--archived-scope", scope])
-    elif choice == "4":
-        if confirm("Load task GIDs from a file?", default=False):
-            args.extend(
-                ["--task-gids-file", _prompt_task_gids_file("archival Jira CSV export")]
-            )
-        else:
-            gids = prompt("Task GIDs (comma-separated)", default="")
-            if not gids:
-                raise SystemExit("At least one task GID is required.")
-            args.extend(["--task-gids", gids])
-    else:
-        raise SystemExit(f"Invalid export scope choice: {choice}")
-
-    show_export_readiness(args, "archival Jira task CSV", jira_csv=True)
-    if not confirm("Continue with this export scope?", default=True):
-        raise CliBack
-
-    append_jira_env_flag(args)
-    fallback_atl = prompt("Fallback Atlassian account ID for unmapped users (optional)", default="")
-    if fallback_atl:
-        args.extend(["--fallback-atlassian-id", fallback_atl])
-    export_id = prompt_export_id()
-    if export_id:
-        args.extend(["--export-id", export_id])
-
-    # Hierarchy mode selection (mirrors regular export).
-    above_epic_name_arch: Optional[str] = None
-    if _session and _session.jira_site_key:
-        try:
-            site_settings_arch = load_archive_import_settings(_session.env_path, _session.jira_site_key)
-            above_epic_name_arch = site_settings_arch.above_epic_issue_type_name
-        except Exception:
-            above_epic_name_arch = None
-
-    print("\nIssue hierarchy mode:")
-    print("[1] Project → Epic  (one Epic per project, default)")
-    if above_epic_name_arch:
-        print(f"[2] Project → {above_epic_name_arch} / Section → Epic  (two-level hierarchy)")
-    else:
-        print("[2] Project → <above-Epic> / Section → Epic  (not configured — see Jira Preparation → [8])")
-    hier_choice = input("Choice (default 1): ").strip() or "1"
-    if hier_choice == "2":
-        if above_epic_name_arch:
-            args.extend(["--above-epic-issue-type", above_epic_name_arch])
-        else:
-            print("  Above-Epic issue type not configured. Using Project → Epic.")
-    append_synthetic_epic_limit(args)
-
-    return args
-
-
 def args_generate_jira_csv_import_config(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     append_jira_env_flag(args)
@@ -2171,22 +2057,22 @@ def run_export_project_to_jira(log_level: str) -> None:
     print_rerun_command("scripts.export_project_to_jira_csv", display_args)
 
 
-def run_export_archival_project(log_level: str) -> None:
-    """Run the archival Jira CSV flow with its scoped advisory summary."""
-    args = args_export_archival_project(log_level)
-    run_script(export_archival_project_jira_csv.main, args)
-    print_rerun_command("scripts.atlassian.export_archival_project_jira_csv", args)
+def _append_jira_site_flags(args: List[str]) -> None:
+    print("\nSelect Jira sites to include (enter comma-separated numbers or 'all'):")
+    if _session and _session.jira_sites:
+        for i, site in enumerate(_session.jira_sites, 1):
+            print(f"[{i}] {site.name}")
+    print("Examples: '1' (single), '1,2,3' (multiple), 'all' (all sites)")
+    site_choice = input("Choice (default: all): ").strip().lower() or "all"
 
-
-def run_export_tasks_to_jira(log_level: str) -> None:
-    """Export project tasks to a Jira CSV using the unified exporter."""
-    run_export_project_to_jira(log_level)
-
-
-def run_sync_attachments(log_level: str) -> None:
-    args = args_sync_attachments(log_level)
-    run_script(sync_jira_attachments.main, args)
-    print_rerun_command("scripts.deprecated.sync_jira_attachments", args)
+    if site_choice != "all" and _session and _session.jira_sites:
+        try:
+            indices = [int(x.strip()) - 1 for x in site_choice.split(",")]
+            for idx in indices:
+                if 0 <= idx < len(_session.jira_sites):
+                    args.extend(["--jira-site", _session.jira_sites[idx].key])
+        except (ValueError, IndexError):
+            pass
 
 
 def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
@@ -2315,25 +2201,8 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
     def run_project_import_status_report() -> None:
         args = args_report_defaults(log_level)
         append_jira_env_flag(args)
+        _append_jira_site_flags(args)
 
-        # Site selection (multi-select)
-        print("\nSelect Jira sites to include (enter comma-separated numbers or 'all'):")
-        if _session and _session.jira_sites:
-            for i, site in enumerate(_session.jira_sites, 1):
-                print(f"[{i}] {site.name}")
-        print("Examples: '1' (single), '1,2,3' (multiple), 'all' (all sites)")
-        site_choice = input("Choice (default: all): ").strip().lower() or "all"
-
-        if site_choice != "all" and _session and _session.jira_sites:
-            try:
-                indices = [int(x.strip()) - 1 for x in site_choice.split(",")]
-                for idx in indices:
-                    if 0 <= idx < len(_session.jira_sites):
-                        args.extend(["--jira-site", _session.jira_sites[idx].key])
-            except (ValueError, IndexError):
-                pass
-
-        # Project GID filtering
         print("\nProvide project scope (optional):")
         print("[1] No filter (all projects)")
         print("[2] Paste project GIDs (comma-separated)")
@@ -2351,25 +2220,8 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
     def run_atjm_coverage_report() -> None:
         args = args_report_defaults(log_level)
         append_jira_env_flag(args)
+        _append_jira_site_flags(args)
 
-        # Site selection (multi-select)
-        print("\nSelect Jira sites to include (enter comma-separated numbers or 'all'):")
-        if _session and _session.jira_sites:
-            for i, site in enumerate(_session.jira_sites, 1):
-                print(f"[{i}] {site.name}")
-        print("Examples: '1' (single), '1,2,3' (multiple), 'all' (all sites)")
-        site_choice = input("Choice (default: all): ").strip().lower() or "all"
-
-        if site_choice != "all" and _session and _session.jira_sites:
-            try:
-                indices = [int(x.strip()) - 1 for x in site_choice.split(",")]
-                for idx in indices:
-                    if 0 <= idx < len(_session.jira_sites):
-                        args.extend(["--jira-site", _session.jira_sites[idx].key])
-            except (ValueError, IndexError):
-                pass
-
-        # Team/Project scoping
         print("\nProvide ATJM coverage scope (optional):")
         print("[1] Whole workspace")
         print("[2] Single team")
@@ -2450,7 +2302,7 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem(
             "1",
-            "Export initial metadata report (.xlsx)",
+            "Export all reports workbook (.xlsx)",
             lambda: run_script(export_all_reports_xlsx.main, args_report_defaults(log_level)),
         ),
         "2": MenuItem(
@@ -2825,33 +2677,6 @@ def args_update_user_map(log_level: str) -> List[str]:
     return args
 
 
-def args_sync_attachments(log_level: str) -> List[str]:
-    args = build_common_args(log_level)
-    print("\nProvide attachment-sync project scope:")
-    print("[1] Project GID(s) (comma-separated)")
-    print("[2] Project GIDs file")
-    choice = input("Choice (default 1): ").strip() or "1"
-    if choice == "2":
-        args.extend(
-            ["--project-gids-file", _prompt_project_gids_file("Jira attachment sync")]
-        )
-    else:
-        project_gids = prompt(
-            "Project GID(s) to sync attachments for (comma-separated allowed)",
-            default="",
-        )
-        if not project_gids:
-            raise SystemExit("At least one project GID is required.")
-        if "," in project_gids:
-            args.extend(["--project-gids", project_gids])
-        else:
-            args.extend(["--project-gid", project_gids])
-    append_jira_env_flag(args)
-    if confirm("Dry run (no uploads)?", default=True):
-        args.append("--dry-run")
-    return args
-
-
 def args_download_attachment_archive(log_level: str) -> List[str]:
     args = build_common_args(log_level)
     print("\nProvide Asana-hosted attachment archive scope:")
@@ -2997,10 +2822,6 @@ def args_export_project_epic_jira_csv(log_level: str) -> List[str]:
         if gid_file:
             args.extend(["--project-gids-file", gid_file])
 
-    jira_project_key = prompt("Jira project key (where to create Epics)", default="EST")
-    if jira_project_key:
-        print(f"→ Path: {path} | Scope: {scope_choice} | Project: {jira_project_key}")
-
     return args
 
 
@@ -3021,39 +2842,6 @@ def args_capture_project_epic_jira_keys(log_level: str) -> List[str]:
         gids = prompt("Project GIDs (comma-separated)", default="")
         if gids:
             args.extend(["--project-gids", gids])
-
-    return args
-
-
-def args_export_tasks_with_parent_keys_jira_csv(log_level: str) -> List[str]:
-    """Arguments for Phase 2 task/section export with parent keys."""
-    args = build_common_args(log_level)
-    args.extend(["--database", str(active_db_path())])
-    append_jira_env_flag(args)
-
-    print("\nSelect hierarchy path (must match Phase 1):")
-    print("[1] Simple (Task-only export)")
-    print("[2] Hierarchical (Sections + Tasks)")
-    path_choice = input("Choice (default 2): ").strip() or "2"
-    path = "simple" if path_choice == "1" else "hierarchical"
-    args.extend(["--path", path])
-
-    print("\nProject scope:")
-    print("[1] All projects with Phase 1 mappings")
-    print("[2] Specific project GIDs (comma-separated)")
-    scope_choice = input("Choice (default 1): ").strip() or "1"
-    if scope_choice == "2":
-        gids = prompt("Project GIDs (comma-separated)", default="")
-        if gids:
-            args.extend(["--project-gids", gids])
-
-    print("\nExport options:")
-    export_id = prompt("Export ID (optional, for tracking)", default="")
-    if export_id:
-        args.extend(["--export-id", export_id])
-
-    if confirm("Skip custom fields (export tasks only)?", default=False):
-        args.append("--no-custom-fields")
 
     return args
 
@@ -3204,7 +2992,7 @@ def run_guided_project_migration(log_level: str) -> None:
             )
         if confirm("Import or update Jira project associations?", default=False):
             run_import_jira_project_map(log_level)
-        run_export_tasks_to_jira(log_level)
+        run_export_project_to_jira(log_level)
         print("\nImport the generated CSV through Jira's external-import wizard.")
         if confirm("Is the Jira import complete and ready for Jira-key recovery?", default=False):
             run_script(
@@ -3565,95 +3353,7 @@ def show_export_readiness(args: Sequence[str], label: str, jira_csv: bool = Fals
     print("Status is advisory; warnings do not prevent export.\n")
 
 
-def build_init_menu(log_level: str) -> Dict[str, MenuItem]:
-    return {
-        "1": MenuItem("1", "Run initial metadata (teams + memberships, users, service user Asana team access, projects, custom fields)", lambda: run_initial_metadata(log_level)),
-        "b": MenuItem("b", "Back", lambda: None),
-    }
-
-
-def build_tasks_menu(log_level: str) -> Dict[str, MenuItem]:
-    return {
-        "1": MenuItem("1", "Sync tasks", lambda: run_task_sync_flow(log_level)),
-        "2": MenuItem("2", "Sync task extras (comments/attachments)", lambda: run_script(get_task_extras.main, args_get_task_extras(log_level))),
-        "3": MenuItem("3", "Sync project status updates (project-level updates/comments)", lambda: run_script(get_project_status_updates.main, args_get_project_status_updates(log_level))),
-        "4": MenuItem("4", "Sync portfolios (all users, incl. items/memberships/updates)", lambda: run_script(get_portfolios.main, args_portfolios(log_level))),
-        "5": MenuItem("5", "Sync personal tasks (full)", lambda: run_script(get_personal_tasks.main, args_personal_tasks(log_level, delta=False))),
-        "6": MenuItem("6", "Incremental updates (recently modified tasks incl. personal)", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
-        "b": MenuItem("b", "Back", lambda: None),
-    }
-
-
-def build_atlassian_menu(log_level: str) -> Dict[str, MenuItem]:
-    def run_team_project_jira_export() -> None:
-        args = args_report_defaults(log_level)
-        if confirm("Include projects with 0 tasks?", default=False):
-            args.append("--include-empty-projects")
-        run_script(export_team_project_jira_csv.main, args)
-
-    return {
-        "1": MenuItem("1", "Export project tasks to Jira CSV", lambda: run_export_tasks_to_jira(log_level)),
-        "2": MenuItem("2", "Export team/project Jira CSV", run_team_project_jira_export),
-        "3": MenuItem("3", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
-        "4": MenuItem("4", "Clear Jira task keys", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level))),
-        "5": MenuItem(
-            "5",
-            "Update Atlassian user map from Atlassian export",
-            lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level)),
-        ),
-        "6": MenuItem("6", "Import/update Jira project associations", lambda: run_import_jira_project_map(log_level)),
-        "7": MenuItem("7", "Clear export IDs", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level))),
-        "8": MenuItem("8", "Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, build_common_args(log_level) + ["--clear-jira-project-map"])),
-        "9": MenuItem("9", "Deprecated: Sync Jira attachments immediately", lambda: run_sync_attachments(log_level)),
-        "10": MenuItem(
-            "10",
-            "Create team/project Jira issues (direct API)",
-            lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level)),
-        ),
-        "11": MenuItem(
-            "11",
-            "Pull 'Asana Migration Decision' from Jira (project-level)",
-            lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level)),
-        ),
-        "12": MenuItem(
-            "12",
-            "Set project 'Last working day' field on Jira issues",
-            lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level)),
-        ),
-        "14": MenuItem(
-            "14",
-            "Recover Jira keys from project associations",
-            lambda: run_script(
-                search_jira_external_ids.main,
-                args_search_jira_external_ids(log_level),
-            ),
-        ),
-        "15": MenuItem(
-            "15",
-            "Download durable Asana attachment archive",
-            lambda: run_script(
-                download_asana_attachments.main,
-                args_download_attachment_archive(log_level),
-            ),
-        ),
-        "16": MenuItem(
-            "16",
-            "Upload local attachment archive to Jira",
-            lambda: run_script(
-                upload_jira_attachments.main,
-                args_upload_attachment_archive(log_level),
-            ),
-        ),
-        "17": MenuItem(
-            "17",
-            "Generate Jira CSV importer configuration",
-            lambda: run_script(
-                generate_jira_csv_import_config.main,
-                args_generate_jira_csv_import_config(log_level),
-            ),
-        ),
-        "b": MenuItem("b", "Back", lambda: None),
-    }
+ASSESS_REPORT_KEYS = ("1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "j", "k", "d")
 
 
 def build_client_environment_menu(
@@ -3690,26 +3390,16 @@ def build_discover_refresh_menu(log_level: str) -> Dict[str, MenuItem]:
 
 def build_assess_plan_menu(log_level: str) -> Dict[str, MenuItem]:
     reports = build_reports_menu(log_level)
-    def report_item(key: str, report_key: str) -> MenuItem:
-        item = reports[report_key]
-        return MenuItem(key, item.label, item.handler)
-
-    return {
+    items = {
         "1": MenuItem("1", "Guided migration readiness review", lambda: run_guided_migration_review(log_level)),
-        "2": report_item("2", "1"),
-        "3": report_item("3", "2"),
-        "4": report_item("4", "3"),
-        "5": report_item("5", "a"),
-        "6": report_item("6", "9"),
-        "7": report_item("7", "4"),
-        "8": report_item("8", "5"),
-        "9": report_item("9", "6"),
-        "10": report_item("10", "7"),
-        "11": report_item("11", "8"),
-        "12": MenuItem("12", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
-        "13": report_item("13", "d"),
-        "b": MenuItem("b", "Back", lambda: None),
+        "2": MenuItem("2", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
+        "3": MenuItem("3", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
     }
+    for index, report_key in enumerate(ASSESS_REPORT_KEYS, start=4):
+        report = reports[report_key]
+        items[str(index)] = MenuItem(str(index), report.label, report.handler)
+    items["b"] = MenuItem("b", "Back", lambda: None)
+    return items
 
 
 def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
@@ -3718,12 +3408,10 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
         "2": MenuItem("2", "Create Jira fields for Team/Project tracking", lambda: run_script(create_jira_import_fields.main, args_create_jira_import_fields(log_level, "tracking"))),
         "3": MenuItem("3", "Update Atlassian user mappings", lambda: run_script(update_atlassian_user_map.main, args_update_user_map(log_level))),
         "4": MenuItem("4", "Import/update Jira project associations", lambda: run_import_jira_project_map(log_level)),
-        "5": MenuItem("5", "Preview or create Team/Project Jira hierarchy (API)", lambda: run_script(create_team_project_jira_issues.main, args_create_team_project_jira_issues(log_level))),
-        "6": MenuItem("6", "Set project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
-        "7": MenuItem("7", "Generate Jira CSV importer configuration", lambda: run_script(generate_jira_csv_import_config.main, args_generate_jira_csv_import_config(log_level))),
-        "8": MenuItem("8", "Rename Jira CSV importer configuration", rename_jira_import_config),
-        "9": MenuItem("9", "Clean up stale Jira CSV importer configuration", purge_jira_import_config),
-        "10": MenuItem("10", "Configure issue type above Epic (hierarchy)", run_configure_above_epic_hierarchy),
+        "5": MenuItem("5", "Generate Jira CSV importer configuration", lambda: run_script(generate_jira_csv_import_config.main, args_generate_jira_csv_import_config(log_level))),
+        "6": MenuItem("6", "Rename Jira CSV importer configuration", rename_jira_import_config),
+        "7": MenuItem("7", "Clean up stale Jira CSV importer configuration", purge_jira_import_config),
+        "8": MenuItem("8", "Configure issue type above Epic (hierarchy)", run_configure_above_epic_hierarchy),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -3731,13 +3419,14 @@ def build_prepare_jira_menu(log_level: str) -> Dict[str, MenuItem]:
 def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Guided project migration", lambda: run_guided_project_migration(log_level)),
-        "2": MenuItem("2", "Export project tasks for Jira CSV import", lambda: run_export_tasks_to_jira(log_level)),
-        "3": MenuItem("3", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
-        "4": MenuItem("4", "Import/update Jira project associations", lambda: run_import_jira_project_map(log_level)),
-        "5": MenuItem("5", "Validate Jira task migration coverage", build_reports_menu(log_level)["c"].handler),
-        "6": MenuItem("6", "Manage export IDs", lambda: run_manage_export_ids(log_level)),
-        "7": MenuItem("7", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
-        "8": MenuItem("8", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
+        "2": MenuItem("2", "Export project tasks for Jira CSV import", lambda: run_export_project_to_jira(log_level)),
+        "3": MenuItem("3", "Export Phase 1 project/epic Jira CSV", lambda: run_script(export_team_project_epic_jira_csv.main, args_export_project_epic_jira_csv(log_level))),
+        "4": MenuItem("4", "Capture Phase 1 Jira keys", lambda: run_script(capture_project_epic_jira_keys.main, args_capture_project_epic_jira_keys(log_level))),
+        "5": MenuItem("5", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
+        "6": MenuItem("6", "Validate Jira task migration coverage", build_reports_menu(log_level)["c"].handler),
+        "7": MenuItem("7", "Manage export IDs", lambda: run_manage_export_ids(log_level)),
+        "8": MenuItem("8", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
+        "9": MenuItem("9", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -3745,15 +3434,9 @@ def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
 def build_maintain_validate_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Show migration readiness summary", show_migration_readiness),
-        "2": MenuItem("2", "Run incremental Asana refresh", lambda: run_script(get_incremental_updates.main, args_incremental_updates(log_level))),
-        "3": MenuItem("3", "Pull migration decisions from Jira", lambda: run_script(get_jira_migration_decisions.main, args_get_jira_migration_decisions(log_level))),
-        "4": MenuItem("4", "Associate Jira Task Keys with Asana Task Keys", lambda: run_script(search_jira_external_ids.main, args_search_jira_external_ids(log_level))),
-        "5": MenuItem("5", "Reverse lookup: map Jira external IDs to Asana tasks", lambda: run_script(reverse_lookup_jira_to_asana.main, args_reverse_lookup_jira_to_asana(log_level))),
-        "6": MenuItem("6", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
-        "7": MenuItem("7", "Export project last-updated report", build_reports_menu(log_level)["a"].handler),
-        "8": MenuItem("8", "Export recent Asana task changes (live API)", lambda: run_script(export_recent_task_changes_api.main, args_recent_task_changes_api(log_level))),
-        "9": MenuItem("9", "Export project import status report", build_reports_menu(log_level)["j"].handler),
-        "10": MenuItem("10", "Export ATJM coverage diagnostic report", build_reports_menu(log_level)["k"].handler),
+        "2": MenuItem("2", "Reverse lookup: map Jira external IDs to Asana tasks", lambda: run_script(reverse_lookup_jira_to_asana.main, args_reverse_lookup_jira_to_asana(log_level))),
+        "3": MenuItem("3", "Update project 'Last working day' in Jira", lambda: run_script(set_project_last_updated_jira_field.main, args_set_project_last_updated_jira_field(log_level))),
+        "4": MenuItem("4", "Export recent Asana task changes (live API)", lambda: run_script(export_recent_task_changes_api.main, args_recent_task_changes_api(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
@@ -3776,25 +3459,21 @@ def build_advanced_recovery_menu(log_level: str) -> Dict[str, MenuItem]:
     return {
         "1": MenuItem("1", "Clear Jira task-key mappings", lambda: run_recovery_action("Clear Jira task-key mappings", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level)))),
         "2": MenuItem("2", "Clear Jira project associations", lambda: run_recovery_action("Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, build_common_args(log_level) + ["--clear-jira-project-map"]))),
-        "3": MenuItem("3", "Clear export-ID history", lambda: run_recovery_action("Clear export-ID history", lambda: run_script(export_project_to_jira_csv.main, args_clear_export_ids(log_level)))),
-        "4": MenuItem("4", "Reset direct-API Team/Project mappings", lambda: run_recovery_action("Reset direct-API Team/Project mappings", reset_direct_api_mappings)),
-        "5": MenuItem("5", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
-        "6": MenuItem(
-            "6",
+        "3": MenuItem("3", "Reset direct-API Team/Project mappings", lambda: run_recovery_action("Reset direct-API Team/Project mappings", reset_direct_api_mappings)),
+        "4": MenuItem("4", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
+        "5": MenuItem(
+            "5",
             "Create anonymized troubleshooting database",
             lambda: run_script(anonymize_database.main, args_anonymize_database(log_level)),
         ),
-        "7": MenuItem(
-            "7",
+        "6": MenuItem(
+            "6",
             "Inspect task Apps / attachment payload",
             lambda: run_script(inspect_task_apps.main, args_inspect_task_apps(log_level)),
         ),
-        "8": MenuItem("8", "Legacy Initialization menu", lambda: run_group("Legacy Initialization", build_init_menu(log_level))),
-        "9": MenuItem("9", "Legacy Tasks menu", lambda: run_group("Legacy Tasks", build_tasks_menu(log_level))),
-        "10": MenuItem("10", "Legacy Atlassian menu", lambda: run_group("Legacy Atlassian", build_atlassian_menu(log_level))),
-        "11": MenuItem("11", "Legacy Reports menu", lambda: run_group("Legacy Reports", build_reports_menu(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
+
 
 
 def build_top_menu(log_level: str) -> Dict[str, MenuItem]:

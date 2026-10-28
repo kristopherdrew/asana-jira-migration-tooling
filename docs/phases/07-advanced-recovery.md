@@ -44,17 +44,11 @@ Moves supported secret tokens into the profile-scoped Keychain accounts while
 retaining non-secret configuration in the profile file. This is credential storage
 maintenance rather than migration-data recovery.
 
-### Legacy technical menus
-
-The Initialization, Tasks, Atlassian, and Reports menus expose the previous technical
-organization during the transition to lifecycle phases. They call the same scripts
-as the phase menus and should not be treated as a separate workflow.
-
 ### Deprecated scripts
 
-The Legacy Atlassian menu retains **Deprecated: Sync Jira attachments immediately**
-for exceptional compatibility use. It runs `scripts.deprecated.sync_jira_attachments`;
-new migration waves should use the durable attachment archive download/upload workflow.
+`scripts.deprecated.sync_jira_attachments` is no longer wired into the interactive CLI.
+New migration waves use the durable attachment archive download/upload workflow in
+Migrate Projects; the standalone deprecated script remains in `scripts/deprecated/`.
 
 ## Expected Result
 

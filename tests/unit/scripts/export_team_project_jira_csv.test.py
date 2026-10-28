@@ -7,7 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase
 
 from src.lib.database import Database
-from scripts.export_team_project_jira_csv import (
+from scripts.atlassian.export_team_project_jira_csv import (
     EPIC_INSTRUCTIONS,
     PERSONAL_TASK_INSTRUCTIONS,
     TASK_INSTRUCTIONS,

@@ -33,11 +33,9 @@ flags, and prerequisites. You never modify source files or the SQLite schema.
   from project-level Jira issues and store in `project_jira_decisions`.
 - `scripts.create_team_project_jira_issues` — create Team Epics and Project Tasks via the
   Jira REST API (createmeta resolution, persisted mappings, 429 requeue).
-- `scripts.export_team_project_jira_csv` — Team→Epic / Project→Task Jira import CSV.
+- `scripts.atlassian.export_team_project_jira_csv` — Team→Epic / Project→Task row builder (shared with the direct-API creator).
 - `scripts.export_project_to_jira_csv` — per-project or exact-task-list Jira import CSV
   with comments, custom fields, and paired Atlassian columns.
-- `scripts.atlassian.export_archival_project_jira_csv` — simplified archival CSV with
-  custom fields folded into the Description block.
 - `scripts.upload_jira_attachments` — verify local archive, resolve mappings at upload
   time, and post attachments to Jira issues.
 - `scripts.download_asana_attachments` — build/verify a durable local attachment archive

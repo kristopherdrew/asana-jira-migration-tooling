@@ -38,7 +38,7 @@ Two creation paths exist — pick one per wave, don't mix:
     control fields. `--add-epics` / `--add-section-epics` to inject Epic ancestors.
   - For unattended runs pass `--jira-base-url <url> --no-jira-url-prompt --no-custom-field-prompt`.
 - **Team→Project hierarchy (Team→Epic / Project→Task):**
-  `python3 -m scripts.export_team_project_jira_csv`
+  `python3 -m scripts.atlassian.export_team_project_jira_csv`
   (skips zero-task projects unless `--include-empty-projects`; team-less projects land under a
   synthetic `No Team` epic).
 
