@@ -3738,10 +3738,6 @@ def build_migrate_projects_menu(log_level: str) -> Dict[str, MenuItem]:
         "6": MenuItem("6", "Manage export IDs", lambda: run_manage_export_ids(log_level)),
         "7": MenuItem("7", "Download durable Asana attachment archive", lambda: run_script(download_asana_attachments.main, args_download_attachment_archive(log_level))),
         "8": MenuItem("8", "Upload attachment archive to Jira", lambda: run_script(upload_jira_attachments.main, args_upload_attachment_archive(log_level))),
-        "---": MenuItem("---", "--- NEW TWO-PHASE EXPORT (Phase 1 & 2) ---", lambda: None),
-        "p1": MenuItem("p1", "[Phase 1] Export projects/sections for Jira", lambda: run_script(export_team_project_epic_jira_csv.main, args_export_project_epic_jira_csv(log_level))),
-        "p1c": MenuItem("p1c", "[Phase 1] Capture Jira keys after import", lambda: run_script(capture_project_epic_jira_keys.main, args_capture_project_epic_jira_keys(log_level))),
-        "p2": MenuItem("p2", "[Phase 2] Export tasks/sections with parent keys", lambda: run_script(export_tasks_with_parent_keys_jira_csv.main, args_export_tasks_with_parent_keys_jira_csv(log_level))),
         "b": MenuItem("b", "Back", lambda: None),
     }
 
