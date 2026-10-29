@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SiteMapping:
     project_keys: set[str] = field(default_factory=set)
+    jira_keys: set[str] = field(default_factory=set)
     mapped_task_gids: set[str] = field(default_factory=set)
 
 
@@ -39,10 +40,14 @@ class ProjectRecord:
     name: str
     team: str
     archived: bool
-    task_count: int = 0
+    task_gids: set[str] = field(default_factory=set)
     atjm_ticket: str = ""
     decision: str = ""
     site_mappings: dict[str, SiteMapping] = field(default_factory=dict)
+
+    @property
+    def task_count(self) -> int:
+        return len(self.task_gids)
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -132,19 +137,30 @@ def _load_projects(connection: sqlite3.Connection, project_gids: Optional[list[s
     }
 
 
-def _load_task_counts(connection: sqlite3.Connection, projects: dict[str, ProjectRecord]) -> None:
+def _load_project_tasks(connection: sqlite3.Connection, projects: dict[str, ProjectRecord]) -> None:
     rows = connection.execute(
         """
-        SELECT tp.project_gid, COUNT(DISTINCT tp.task_gid)
+        SELECT tp.project_gid, tp.task_gid
         FROM task_projects tp
         JOIN tasks t ON t.gid = tp.task_gid
         WHERE t.is_deleted = 0
-        GROUP BY tp.project_gid
         """
     ).fetchall()
-    for project_gid, count in rows:
+    for project_gid, task_gid in rows:
         if project_gid in projects:
-            projects[project_gid].task_count = count
+            projects[project_gid].task_gids.add(task_gid)
+
+
+def _count_unsynced_project_refs(connection: sqlite3.Connection) -> int:
+    row = connection.execute(
+        """
+        SELECT COUNT(DISTINCT tp.project_gid)
+        FROM task_projects tp
+        JOIN tasks t ON t.gid = tp.task_gid AND t.is_deleted = 0
+        WHERE tp.project_gid NOT IN (SELECT gid FROM projects)
+        """
+    ).fetchone()
+    return row[0]
 
 
 def _load_site_mappings(
@@ -168,6 +184,7 @@ def _load_site_mappings(
             continue
         mapping = project.site_mappings.setdefault(site, SiteMapping())
         mapping.mapped_task_gids.add(task_gid)
+        mapping.jira_keys.add(jira_key)
         mapping.project_keys.add(_project_key(jira_key))
     if orphan_gids:
         logger.warning(
@@ -221,8 +238,21 @@ def _archived_label(project: ProjectRecord) -> str:
     return "Yes" if project.archived else "No"
 
 
+def _migrated_label(project: ProjectRecord) -> str:
+    return "Yes" if project.site_mappings else "No"
+
+
 def _build_projects_tab(projects: list[ProjectRecord], sites: list[str]) -> list[list]:
-    header = ["Project GID", "Project Name", "Team", "Archived", "ATJM Ticket", "ATJM Migration Decision", "Task Count"]
+    header = [
+        "Project GID",
+        "Project Name",
+        "Team",
+        "Archived",
+        "Migrated",
+        "ATJM Ticket",
+        "ATJM Migration Decision",
+        "Task Count",
+    ]
     for site in sites:
         header.extend([f"{site} Project Key", f"{site} Mapped", f"{site} %"])
     header.append("Multi-Site")
@@ -234,6 +264,7 @@ def _build_projects_tab(projects: list[ProjectRecord], sites: list[str]) -> list
             project.name,
             project.team,
             _archived_label(project),
+            _migrated_label(project),
             project.atjm_ticket,
             project.decision,
             project.task_count,
@@ -294,6 +325,69 @@ def _build_unmigrated_tab(projects: list[ProjectRecord]) -> list[list]:
     return rows
 
 
+def _build_site_migrated_tab(projects: list[ProjectRecord], sites: list[str], site: str) -> list[list]:
+    migrated = [project for project in projects if site in project.site_mappings]
+    return _build_projects_tab(migrated, sites)
+
+
+def _build_summary_tab(projects: list[ProjectRecord], sites: list[str], unsynced_refs: int) -> list[list]:
+    header = [
+        "Jira Site",
+        "Asana Projects Migrated",
+        "Tasks Migrated",
+        "Keys Mapped",
+        "Asana Tasks in Migrated Projects",
+        "% of Asana Tasks Migrated",
+        "Projects with Multiple Keys",
+        "Distinct Project Keys",
+    ]
+    rows = [header]
+    decision_counts: dict[str, dict[str, int]] = {}
+
+    for site in sites:
+        migrated = [project for project in projects if site in project.site_mappings]
+        migrated_tasks: set[str] = set()
+        keyed_tasks: set[str] = set()
+        jira_keys: set[str] = set()
+        project_keys: set[str] = set()
+        multi_key_projects = 0
+        for project in migrated:
+            mapping = project.site_mappings[site]
+            migrated_tasks.update(project.task_gids)
+            keyed_tasks.update(mapping.mapped_task_gids)
+            jira_keys.update(mapping.jira_keys)
+            project_keys.update(mapping.project_keys)
+            if len(mapping.project_keys) > 1:
+                multi_key_projects += 1
+            decision = project.decision or "(no decision)"
+            decision_counts.setdefault(decision, {}).setdefault(site, 0)
+            decision_counts[decision][site] += 1
+
+        rows.append(
+            [
+                site,
+                len(migrated),
+                len(keyed_tasks),
+                len(jira_keys),
+                len(migrated_tasks),
+                _percent(len(keyed_tasks), len(migrated_tasks)),
+                multi_key_projects,
+                len(project_keys),
+            ]
+        )
+
+    multi_site_count = sum(1 for project in projects if len(project.site_mappings) >= 2)
+    rows.append([])
+    rows.append(["Projects mapped to 2+ selected sites", multi_site_count])
+    rows.append(["Unsynced project GIDs referenced by tasks (workspace-wide)", unsynced_refs])
+
+    rows.append([])
+    rows.append(["ATJM Migration Decision (migrated projects)", *sites])
+    for decision in sorted(decision_counts):
+        rows.append([decision, *[decision_counts[decision].get(site, 0) for site in sites]])
+    return rows
+
+
 def export_project_import_status_workbook(
     database_path: str,
     output_dir: Path,
@@ -324,15 +418,18 @@ def export_project_import_status_workbook(
         logger.info("Generating workbook for sites: %s", ", ".join(sites))
 
         projects = _load_projects(connection, project_gids)
-        _load_task_counts(connection, projects)
+        _load_project_tasks(connection, projects)
         _load_site_mappings(connection, projects, sites)
         _load_atjm_tickets(connection, projects, sites)
         _load_decisions(connection, projects, sites)
+        unsynced_refs = _count_unsynced_project_refs(connection)
 
         ordered = sorted(projects.values(), key=_sort_key)
         multi_site = [p for p in ordered if len(p.site_mappings) >= 2]
         sheets = [
+            ("Summary", _build_summary_tab(ordered, sites, unsynced_refs)),
             ("Projects", _build_projects_tab(ordered, sites)),
+            *[(f"{site} Migrated", _build_site_migrated_tab(ordered, sites, site)) for site in sites],
             ("Multi-Site", _build_multi_site_tab(multi_site, sites)),
             ("Unmigrated", _build_unmigrated_tab(ordered)),
         ]
