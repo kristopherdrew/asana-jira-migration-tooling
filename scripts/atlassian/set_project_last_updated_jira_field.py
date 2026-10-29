@@ -32,11 +32,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.config import load_credentials, resolve_jira_base_url
+from src.lib.config import load_credentials, resolve_credentials_path, resolve_jira_base_url
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.date_formatting import format_report_date
 from src.lib.jira_client import JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.migration_defaults import DEFAULT_SETTINGS, load_migration_settings
 from scripts.export_project_last_updated_report import fetch_project_last_updated
 from scripts.atlassian.create_team_project_jira_issues import (
     DEFAULT_WORKERS,
@@ -49,8 +50,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
 
-# "Last working day" date custom field the last-updated date is written to.
-DEFAULT_FIELD_ID = "customfield_11475"
+# "Last working day" date custom field the last-updated date is written to (profile setting wins).
+DEFAULT_FIELD_ID = DEFAULT_SETTINGS.last_working_day_field_id
 # "Task Count (Asana)" numeric custom field. No default — must be supplied via --task-count-field-id.
 DEFAULT_TASK_COUNT_FIELD_ID = ""
 
@@ -66,7 +67,7 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Target the production Jira site (JIRA_BASE_URL). Default: sandbox (JIRA_SANDBOX_BASE_URL).",
     )
     parser.add_argument("--jira-site", help="Named Jira site key from the active profile.")
-    parser.add_argument("--field-id", default=DEFAULT_FIELD_ID, help=f"Jira date custom field id for 'Last working day' (default: {DEFAULT_FIELD_ID}).")
+    parser.add_argument("--field-id", default=None, help=f"Jira date custom field id for 'Last working day' (default: profile MIGRATION_LAST_WORKING_DAY_FIELD_ID, else {DEFAULT_FIELD_ID}).")
     parser.add_argument("--task-count-field-id", default=DEFAULT_TASK_COUNT_FIELD_ID, help="Jira numeric custom field id for 'Task Count (Asana)'. Required to update that field.")
     parser.add_argument("--team-gid", help="Optional team GID to scope the update to one team's projects.")
     parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS, help=f"Concurrent workers for the update pass (default: {DEFAULT_WORKERS}).")
@@ -223,7 +224,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             database_path=args.database,
             jira_base_url=jira_base_url,
             output_dir=Path(args.output_dir),
-            field_id=args.field_id,
+            field_id=args.field_id or load_migration_settings(resolve_credentials_path()).last_working_day_field_id,
             task_count_field_id=args.task_count_field_id,
             team_gid=args.team_gid,
             workers=max(args.workers, 1),
