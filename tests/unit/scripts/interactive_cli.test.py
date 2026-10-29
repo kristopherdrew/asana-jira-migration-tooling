@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from scripts import interactive_cli
 from src.lib.config import Credentials, JiraSite, load_credentials, write_credentials_file
+from src.lib.migration_defaults import DEFAULT_SETTINGS, MigrationSettings, save_migration_settings
 
 
 class JiraSiteFlagSelectionTest(TestCase):
@@ -148,6 +149,8 @@ class IncrementalArgsBuilderTest(TestCase):
         with patch(
             "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value="team_a"
         ), patch(
+            "scripts.interactive_cli._review_migration_settings", return_value=DEFAULT_SETTINGS
+        ), patch(
             "builtins.input",
             side_effect=["MIG", "y", "n"],
         ):
@@ -170,6 +173,8 @@ class IncrementalArgsBuilderTest(TestCase):
         interactive_cli._session.use_prod = True
         with patch(
             "scripts.interactive_cli._prompt_team_gid_from_lookup", return_value=""
+        ), patch(
+            "scripts.interactive_cli._review_migration_settings", return_value=DEFAULT_SETTINGS
         ), patch(
             "builtins.input",
             side_effect=["MIG", "n", "y"],
@@ -1065,6 +1070,59 @@ class IncrementalArgsBuilderTest(TestCase):
         )
         mock_args_get_tasks.assert_called_once_with("INFO")
         self.assertEqual(mock_confirm.call_count, 2)
+
+
+class MigrationSettingsReviewTest(TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.env_path = Path(self._tmp.name) / "profile.env"
+        self.env_path.write_text("export CLIENT_NAME=Acme\n", encoding="utf-8")
+        session = SimpleNamespace(env_path=self.env_path)
+        patcher = patch.object(interactive_cli, "_session", session)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_confirmed_profile_reuses_stored_settings_when_accepted(self) -> None:
+        stored = MigrationSettings(epic_deadline="March 3", atlassian_team_name="Acme")
+        save_migration_settings(self.env_path, stored)
+
+        with patch("builtins.input", side_effect=["y"]) as fake_input:
+            settings = interactive_cli._review_migration_settings()
+
+        self.assertEqual(settings, stored, "Accepting the confirm step must reuse the stored settings")
+        self.assertEqual(fake_input.call_count, 1, "A confirmed profile must not re-prompt each field")
+
+    def test_confirmed_profile_reprompts_when_declined(self) -> None:
+        save_migration_settings(self.env_path, MigrationSettings(epic_deadline="March 3"))
+
+        answers = ["n", "-", "Acme", "RO", "PO", "customfield_1", "Decision", "-"]
+        with patch("builtins.input", side_effect=answers):
+            settings = interactive_cli._review_migration_settings()
+
+        self.assertIsNone(settings.epic_deadline, "'-' must clear the stored deadline")
+        self.assertEqual(settings.atlassian_team_name, "Acme", "Typed values must replace stored defaults")
+
+    def test_first_run_prompts_for_every_setting_and_saves_them(self) -> None:
+        answers = ["March 3", "Acme", "RO", "PO", "customfield_1", "Decision", "ACME"]
+        with patch("builtins.input", side_effect=answers):
+            settings = interactive_cli._review_migration_settings()
+
+        self.assertEqual(
+            settings,
+            MigrationSettings(
+                epic_deadline="March 3",
+                atlassian_team_name="Acme",
+                archive_read_only_label="RO",
+                archive_preservation_label="PO",
+                last_working_day_field_id="customfield_1",
+                decision_field_name="Decision",
+                jira_project_key="ACME",
+            ),
+            "First-run answers must be returned as the active settings",
+        )
+        reloaded = interactive_cli.load_migration_settings(self.env_path)
+        self.assertEqual(reloaded, settings, "First-run answers must be persisted to the profile")
 
 
 class TokenMigrationTest(TestCase):
