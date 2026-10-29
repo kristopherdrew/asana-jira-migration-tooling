@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Sequence
@@ -24,6 +25,11 @@ class CsvPart:
     issue_count: int
 
 
+def raise_csv_field_limit() -> None:
+    # Folded Description cells can exceed csv's 131072-char default field limit.
+    csv.field_size_limit(sys.maxsize)
+
+
 def _column_index(header: Sequence[str], names: Sequence[str]) -> int:
     for name in names:
         if name in header:
@@ -32,6 +38,7 @@ def _column_index(header: Sequence[str], names: Sequence[str]) -> int:
 
 
 def count_csv_issues(path: Path) -> int:
+    raise_csv_field_limit()
     with path.open("r", newline="", encoding="utf-8") as handle:
         return max(sum(1 for _ in csv.reader(handle)) - 1, 0)
 
@@ -49,6 +56,7 @@ def parse_synthetic_epic_limit(value: str) -> int:
 
 
 def _read_csv(path: Path) -> tuple[List[str], List[List[str]]]:
+    raise_csv_field_limit()
     with path.open("r", newline="", encoding="utf-8") as handle:
         reader = csv.reader(handle)
         try:
