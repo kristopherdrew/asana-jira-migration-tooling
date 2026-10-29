@@ -193,9 +193,13 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
         zf = self._run(jira_sites=[SITE_PROD, SITE_ARCHIVE])
 
         prod_rows = _read_sheet(zf, f"{SITE_PROD} Migrated")
+        header = prod_rows[0]
 
-        self.assertEqual(prod_rows[0], _read_sheet(zf, PROJECTS_TAB)[0])
         self.assertEqual([row[0] for row in prod_rows[1:]], ["proj_prod"])
+        self.assertIn(f"{SITE_PROD} Project Key", header)
+        self.assertIn(f"{SITE_PROD} %", header)
+        self.assertFalse(any(column.startswith(f"{SITE_ARCHIVE} ") for column in header))
+        self.assertEqual(header[:5], _read_sheet(zf, PROJECTS_TAB)[0][:5])
 
     def test_multi_site_project_appears_in_each_site_tab_and_once_on_projects(self) -> None:
         self._project("proj_both", "Both Sites")
