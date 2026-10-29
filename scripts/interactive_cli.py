@@ -100,6 +100,12 @@ from src.lib.config import (  # noqa: E402
 from src.lib.database import ASANA_JIRA_DB_PATH_ENV, ASANA_JIRA_SITE_KEY_ENV  # noqa: E402
 from src.lib.database import Database  # noqa: E402
 from src.lib.database_anonymizer import default_output_path  # noqa: E402
+from src.lib.migration_defaults import (  # noqa: E402
+    MigrationSettings,
+    is_migration_settings_confirmed,
+    load_migration_settings,
+    save_migration_settings,
+)
 from src.lib.export_id_history import (  # noqa: E402
     ExportIdSummary,
     clear_export_id,
@@ -2741,9 +2747,72 @@ def args_upload_attachment_archive(log_level: str) -> List[str]:
     return args
 
 
+def _optional_setting(value: str) -> Optional[str]:
+    cleaned = value.strip()
+    return None if cleaned in ("", "-") else cleaned
+
+
+def _prompt_migration_settings(current: MigrationSettings) -> MigrationSettings:
+    print("Enter each value (blank keeps the shown default; '-' clears an optional value).")
+    epic_deadline = prompt(
+        "Epic instruction deadline (e.g. 'July 8'; blank/'-' = omit the sentence)",
+        default=current.epic_deadline or "-",
+    )
+    team_name = prompt(
+        "Atlassian team name used in archive wording ('needed by the <name> team')",
+        default=current.atlassian_team_name,
+    )
+    read_only_label = prompt("Archive option label: read only", default=current.archive_read_only_label)
+    preservation_label = prompt(
+        "Archive option label: preservation only", default=current.archive_preservation_label
+    )
+    field_id = prompt("Jira 'Last working day' date field id", default=current.last_working_day_field_id)
+    decision_field = prompt("Jira migration decision field name", default=current.decision_field_name)
+    project_key = prompt(
+        "Jira project key for creation (blank/'-' = none)",
+        default=current.jira_project_key or "-",
+    )
+    return MigrationSettings(
+        epic_deadline=_optional_setting(epic_deadline),
+        atlassian_team_name=team_name or current.atlassian_team_name,
+        archive_read_only_label=read_only_label or current.archive_read_only_label,
+        archive_preservation_label=preservation_label or current.archive_preservation_label,
+        last_working_day_field_id=field_id or current.last_working_day_field_id,
+        decision_field_name=decision_field or current.decision_field_name,
+        jira_project_key=_optional_setting(project_key),
+    )
+
+
+def _print_migration_settings(settings: MigrationSettings) -> None:
+    print("Current Team/Project Jira settings for this profile:")
+    print(f"  Epic deadline: {settings.epic_deadline or '(none)'}")
+    print(f"  Atlassian team name: {settings.atlassian_team_name}")
+    print(f"  Archive read-only label: {settings.archive_read_only_label}")
+    print(f"  Archive preservation label: {settings.archive_preservation_label}")
+    print(f"  Last working day field id: {settings.last_working_day_field_id}")
+    print(f"  Migration decision field: {settings.decision_field_name}")
+    print(f"  Jira project key: {settings.jira_project_key or '(none)'}")
+
+
+def _review_migration_settings() -> MigrationSettings:
+    env_path = _session.env_path
+    current = load_migration_settings(env_path)
+    if is_migration_settings_confirmed(env_path):
+        _print_migration_settings(current)
+        if confirm("Use these Team/Project Jira settings?", default=True):
+            return current
+    else:
+        print("First run for this profile: review the Team/Project Jira wording and field settings.")
+        print("They are saved to the profile env file and confirmed on later runs.")
+    settings = _prompt_migration_settings(current)
+    save_migration_settings(env_path, settings)
+    return settings
+
+
 def args_create_team_project_jira_issues(log_level: str) -> List[str]:
     args = build_common_args(log_level)
-    jira_project_key = prompt("Target Jira project key (e.g. MIG)", default="")
+    settings = _review_migration_settings()
+    jira_project_key = prompt("Target Jira project key (e.g. MIG)", default=settings.jira_project_key or "")
     if not jira_project_key:
         raise SystemExit("Jira project key is required.")
     args.extend(["--jira-project-key", jira_project_key])
@@ -2798,7 +2867,7 @@ def args_get_jira_migration_decisions(log_level: str) -> List[str]:
     )
     if jql:
         args.extend(["--jql", jql])
-    field_name = prompt("Decision field name", default="Asana Migration Decision")
+    field_name = prompt("Decision field name", default=load_migration_settings(_session.env_path).decision_field_name)
     if field_name:
         args.extend(["--field-name", field_name])
     if confirm("Store mapped issues even when the decision is blank?", default=False):
