@@ -327,7 +327,7 @@ def _build_unmigrated_tab(projects: list[ProjectRecord]) -> list[list]:
 
 def _build_site_migrated_tab(projects: list[ProjectRecord], sites: list[str], site: str) -> list[list]:
     migrated = [project for project in projects if site in project.site_mappings]
-    return _build_projects_tab(migrated, sites)
+    return _build_projects_tab(migrated, [site])
 
 
 def _build_summary_tab(projects: list[ProjectRecord], sites: list[str], unsynced_refs: int) -> list[list]:
