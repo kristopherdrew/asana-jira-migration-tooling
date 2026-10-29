@@ -89,16 +89,17 @@ Optional flags:
 Use `--team-gid` to scope by team, or `--project-gids <gid1,gid2>` / `--project-gids-file <path>` for an explicit migration-wave project list. The interactive Assessment menu offers team lookup, pasted GIDs, a GID file, or the whole workspace.
 
 ### Project Import Status Report (.xlsx)
-A multi-tab workbook showing which Asana projects have been exported to Jira, by Jira environment, with import coverage and migration decision tracking. Four tabs:
+A per-project reconciliation workbook showing, for the selected Jira sites, which Asana projects have been exported and under which project keys. Every project in scope is listed (archived projects included, flagged in an `Archived` column). Three tabs:
 
-- **Overview** — Workspace-wide and per-environment summary: total projects in scope, migrated count (to selected sites), unmigrated count, coverage percentage (for selected sites), and per-site breakdown.
-- **Migrated** — Projects with Jira exports, one row per (project, site) combination, sorted by environment → Jira project key → Asana project name. Columns: `environment`, `jira_project_key`, `asana_project_gid`, `asana_project_name`, `total_tasks`, `active_tasks`, `imported_tasks`, `coverage_percent` (calculated per-site: only counts imports for the selected environment). Project key is extracted from imported Jira issue keys (e.g., `ABC-123` → `ABC`) when no explicit mapping exists.
-- **Summary** — Count breakdown of unmigrated projects by migration decision type, showing how many projects have each decision status (including "(no decision)" projects). Useful for seeing the landscape of migration decisions at a glance.
-- **Unmigrated** — Detailed list of projects with no Jira exports. Columns: `asana_project_gid`, `asana_project_name`, `team_gid`, `team_name`, `total_tasks`, `jira_migration_decision` (scoped to selected sites, shows "(no decision)" when blank), `jira_tracking_key` (the Jira issue key from the migration decision, if present).
+- **Projects** — One row per project. Columns: `Project GID`, `Project Name`, `Team`, `Archived`, `ATJM Ticket` (from `team_project_jira_mappings`, kind `project`, on the selected sites), `ATJM Migration Decision` (from `project_jira_decisions` on the selected sites), `Task Count` (non-deleted tasks). Then, for each selected site, three columns: `<site> Project Key` (project key(s) that tasks were exported under, comma-joined when more than one), `<site> Mapped` (non-deleted tasks in the project with a Jira key on that site), and `<site> %` (Mapped / Task Count; blank when the project has no tasks). `Multi-Site` shows `Yes - see Multi-Site tab` when the project maps to two or more selected sites.
+- **Multi-Site** — Projects mapped to two or more selected sites, one row per (project, site), for reconciliation. Columns: `Project GID`, `Project Name`, `Team`, `Archived`, `Jira Site`, `Project Key(s)`, `Mapped`, `Task Count`, `Mapped %`.
+- **Unmigrated** — Projects with no mapped task at any selected site. Columns: `Project GID`, `Project Name`, `Archived`, `ATJM Ticket`, `ATJM Migration Decision`, `Task Count`.
+
+Project key is the part of a Jira issue key before the first `-` (e.g., `ABC-123` → `ABC`). Mappings on unselected sites never appear in any column or tab.
 
 ```bash
-python3 -m scripts.export_project_import_status --database data/asana.sqlite --jira-site prod
-python3 -m scripts.export_project_import_status --database data/asana.sqlite --jira-site prod --jira-site dev
+python3 -m scripts.export_project_import_status --database data/asana.sqlite --jira-site production_jira
+python3 -m scripts.export_project_import_status --database data/asana.sqlite --jira-site production_jira --jira-site sandbox_jira
 ```
 
 Required flags:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export project import status as multi-tab workbook: Overview, Migrated, Summary, Unmigrated."""
+"""Export project import status as a reconciliation workbook: Projects, Multi-Site, Unmigrated."""
 
 from __future__ import annotations
 
@@ -7,9 +7,11 @@ import argparse
 import logging
 import sqlite3
 import sys
+from collections import defaultdict
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Iterable, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -21,7 +23,26 @@ from src.lib.xlsx_writer import write_workbook
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
+MULTI_SITE_FLAG = "Yes - see Multi-Site tab"
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SiteMapping:
+    project_keys: set[str] = field(default_factory=set)
+    mapped_task_gids: set[str] = field(default_factory=set)
+
+
+@dataclass
+class ProjectRecord:
+    gid: str
+    name: str
+    team: str
+    archived: bool
+    task_count: int = 0
+    atjm_ticket: str = ""
+    decision: str = ""
+    site_mappings: dict[str, SiteMapping] = field(default_factory=dict)
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -87,254 +108,190 @@ def _get_all_jira_sites(connection: sqlite3.Connection) -> list[str]:
     return [row[0] for row in connection.execute(query).fetchall()]
 
 
-def _build_overview_tab(
-    connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
-) -> list[list]:
-    """Build Overview tab with workspace-wide and per-environment stats."""
-    jira_filter = "" if not jira_sites else f"AND tjm.jira_site_key IN ({','.join('?' * len(jira_sites))})"
-    gid_filter = "" if not project_gids else f"AND p.gid IN ({','.join('?' * len(project_gids))})"
-    params_migrated = jira_sites + (project_gids or [])
+def _placeholders(values: list) -> str:
+    return ",".join("?" * len(values))
 
-    # Workspace stats - count total projects in scope
-    workspace_query = "SELECT COUNT(DISTINCT gid) FROM projects"
-    workspace_params = []
-    if project_gids:
-        workspace_query += f" WHERE gid IN ({','.join('?' * len(project_gids))})"
-        workspace_params = project_gids
-    total_projects = connection.execute(workspace_query, workspace_params).fetchone()[0]
 
-    # Migrated count - projects with External IDs synced back (tasks in task_jira_mappings)
-    migrated_query = f"""
-    SELECT COUNT(DISTINCT tp.project_gid)
-    FROM task_jira_mappings tjm
-    JOIN tasks t ON t.gid = tjm.task_gid
-    JOIN task_projects tp ON tp.task_gid = t.gid
-    JOIN projects p ON p.gid = tp.project_gid
-    WHERE 1=1 {jira_filter} {gid_filter}
-    """
-    migrated_projects = connection.execute(migrated_query, params_migrated).fetchone()[0]
+def _project_key(jira_key: str) -> str:
+    return jira_key.split("-", 1)[0]
 
-    # Per-environment stats
-    per_env_query = f"""
-    SELECT
-        tjm.jira_site_key,
-        COUNT(DISTINCT tp.project_gid) as migrated_count
-    FROM task_jira_mappings tjm
-    JOIN tasks t ON t.gid = tjm.task_gid
-    JOIN task_projects tp ON tp.task_gid = t.gid
-    JOIN projects p ON p.gid = tp.project_gid
-    WHERE 1=1 {jira_filter} {gid_filter}
-    GROUP BY tjm.jira_site_key
-    ORDER BY tjm.jira_site_key
-    """
-    per_env_rows = connection.execute(per_env_query, params_migrated).fetchall()
 
-    # Build overview rows
-    rows = [
-        ["Project Import Status Report"],
-        ["Generated (UTC)", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")],
-        ["Total Projects in Scope", str(total_projects)],
-        ["Migrated to Selected Sites", str(migrated_projects)],
-        ["Not Yet Migrated", str(total_projects - migrated_projects)],
-        [
-            "Overall Coverage %",
-            f"{100.0 * migrated_projects / total_projects:.1f}%" if total_projects > 0 else "0%",
-        ],
-        [None, None],
-        ["Environment", "Migrated Count"],
-    ]
-    for site_key, count in per_env_rows:
-        rows.append([site_key, str(count)])
+def _load_projects(connection: sqlite3.Connection, project_gids: Optional[list[str]]) -> dict[str, ProjectRecord]:
+    rows = connection.execute(
+        """
+        SELECT p.gid, p.name, COALESCE(t.name, p.team_name, ''), COALESCE(p.archived, 0)
+        FROM projects p
+        LEFT JOIN teams t ON t.gid = p.team_gid
+        """
+    ).fetchall()
+    scope = set(project_gids) if project_gids else None
+    return {
+        gid: ProjectRecord(gid=gid, name=name or "", team=team or "", archived=bool(archived))
+        for gid, name, team, archived in rows
+        if scope is None or gid in scope
+    }
 
+
+def _load_task_counts(connection: sqlite3.Connection, projects: dict[str, ProjectRecord]) -> None:
+    rows = connection.execute(
+        """
+        SELECT tp.project_gid, COUNT(DISTINCT tp.task_gid)
+        FROM task_projects tp
+        JOIN tasks t ON t.gid = tp.task_gid
+        WHERE t.is_deleted = 0
+        GROUP BY tp.project_gid
+        """
+    ).fetchall()
+    for project_gid, count in rows:
+        if project_gid in projects:
+            projects[project_gid].task_count = count
+
+
+def _load_site_mappings(
+    connection: sqlite3.Connection, projects: dict[str, ProjectRecord], sites: list[str]
+) -> None:
+    rows = connection.execute(
+        f"""
+        SELECT DISTINCT tjm.jira_site_key, tp.project_gid, tjm.task_gid, tjm.jira_key
+        FROM task_jira_mappings tjm
+        JOIN tasks t ON t.gid = tjm.task_gid AND t.is_deleted = 0
+        JOIN task_projects tp ON tp.task_gid = t.gid
+        WHERE tjm.jira_site_key IN ({_placeholders(sites)})
+        """,
+        sites,
+    ).fetchall()
+    orphan_gids: set[str] = set()
+    for site, project_gid, task_gid, jira_key in rows:
+        project = projects.get(project_gid)
+        if project is None:
+            orphan_gids.add(project_gid)
+            continue
+        mapping = project.site_mappings.setdefault(site, SiteMapping())
+        mapping.mapped_task_gids.add(task_gid)
+        mapping.project_keys.add(_project_key(jira_key))
+    if orphan_gids:
+        logger.warning(
+            "%d mapped project GID(s) have no row in the projects table and are omitted: %s",
+            len(orphan_gids),
+            ", ".join(sorted(orphan_gids)),
+        )
+
+
+def _load_atjm_tickets(connection: sqlite3.Connection, projects: dict[str, ProjectRecord], sites: list[str]) -> None:
+    rows = connection.execute(
+        f"""
+        SELECT asana_gid, jira_key FROM team_project_jira_mappings
+        WHERE kind = 'project' AND jira_site_key IN ({_placeholders(sites)})
+        """,
+        sites,
+    ).fetchall()
+    tickets: dict[str, set[str]] = defaultdict(set)
+    for gid, jira_key in rows:
+        if gid in projects:
+            tickets[gid].add(jira_key)
+    for gid, keys in tickets.items():
+        projects[gid].atjm_ticket = ", ".join(sorted(keys))
+
+
+def _load_decisions(connection: sqlite3.Connection, projects: dict[str, ProjectRecord], sites: list[str]) -> None:
+    rows = connection.execute(
+        f"""
+        SELECT project_gid, decision FROM project_jira_decisions
+        WHERE jira_site_key IN ({_placeholders(sites)}) AND TRIM(COALESCE(decision, '')) <> ''
+        """,
+        sites,
+    ).fetchall()
+    decisions: dict[str, set[str]] = defaultdict(set)
+    for gid, decision in rows:
+        if gid in projects:
+            decisions[gid].add(decision.strip())
+    for gid, values in decisions.items():
+        projects[gid].decision = ", ".join(sorted(values))
+
+
+def _percent(mapped: int, total: int) -> str:
+    return f"{100.0 * mapped / total:.1f}%" if total > 0 else ""
+
+
+def _sort_key(project: ProjectRecord) -> tuple[str, str, str]:
+    return (project.team.lower(), project.name.lower(), project.gid)
+
+
+def _archived_label(project: ProjectRecord) -> str:
+    return "Yes" if project.archived else "No"
+
+
+def _build_projects_tab(projects: list[ProjectRecord], sites: list[str]) -> list[list]:
+    header = ["Project GID", "Project Name", "Team", "Archived", "ATJM Ticket", "ATJM Migration Decision", "Task Count"]
+    for site in sites:
+        header.extend([f"{site} Project Key", f"{site} Mapped", f"{site} %"])
+    header.append("Multi-Site")
+
+    rows = [header]
+    for project in projects:
+        row = [
+            project.gid,
+            project.name,
+            project.team,
+            _archived_label(project),
+            project.atjm_ticket,
+            project.decision,
+            project.task_count,
+        ]
+        for site in sites:
+            mapping = project.site_mappings.get(site)
+            mapped = len(mapping.mapped_task_gids) if mapping else 0
+            keys = ", ".join(sorted(mapping.project_keys)) if mapping else ""
+            row.extend([keys, mapped, _percent(mapped, project.task_count)])
+        row.append(MULTI_SITE_FLAG if len(project.site_mappings) >= 2 else "")
+        rows.append(row)
     return rows
 
 
-def _build_migrated_tab(
-    connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
-) -> list[list]:
-    """Build Migrated tab with projects that have External IDs synced back, sorted by environment."""
-    jira_filter = "" if not jira_sites else f"AND tjm.jira_site_key IN ({','.join('?' * len(jira_sites))})"
-    gid_filter = "" if not project_gids else f"AND p.gid IN ({','.join('?' * len(project_gids))})"
-    params = jira_sites + (project_gids or [])
-
-    query = f"""
-    SELECT DISTINCT
-        tjm.jira_site_key,
-        p.gid,
-        p.name,
-        COUNT(DISTINCT tp.task_gid) as total_tasks,
-        SUM(CASE WHEN t.is_deleted = 0 THEN 1 ELSE 0 END) as active_tasks,
-        COUNT(DISTINCT tjm.task_gid) as imported_tasks
-    FROM task_jira_mappings tjm
-    JOIN tasks t ON t.gid = tjm.task_gid
-    JOIN task_projects tp ON tp.task_gid = t.gid
-    JOIN projects p ON p.gid = tp.project_gid
-    WHERE 1=1 {jira_filter} {gid_filter}
-    GROUP BY tjm.jira_site_key, p.gid
-    ORDER BY tjm.jira_site_key, p.name
-    """
-
-    rows = connection.execute(query, params).fetchall()
-    if not rows:
-        return [["(no data)"]]
-
-    result = [
-        ["Environment", "Asana Project GID", "Asana Project Name", "Total Tasks", "Active Tasks", "Imported Tasks", "Coverage %"]
+def _build_multi_site_tab(projects: list[ProjectRecord], sites: list[str]) -> list[list]:
+    rows = [
+        ["Project GID", "Project Name", "Team", "Archived", "Jira Site", "Project Key(s)", "Mapped", "Task Count", "Mapped %"]
     ]
-    for env, proj_gid, proj_name, total, active, imported in rows:
-        coverage = 100.0 * imported / total if total > 0 else 0
-        result.append([env, proj_gid, proj_name, str(total), str(active), str(imported), f"{coverage:.1f}%"])
-
-    return result
-
-
-def _build_summary_tab(
-    connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
-) -> list[list]:
-    """Build Summary tab with unmigrated project counts pivoted by decision and team."""
-    jira_filter = (
-        "" if not jira_sites else f"AND tjm.jira_site_key IN ({','.join('?' * len(jira_sites))})"
-    )
-    gid_filter = "" if not project_gids else f"AND p.gid IN ({','.join('?' * len(project_gids))})"
-
-    params = jira_sites + (project_gids or [])
-
-    # Get all decisions and teams that appear in unmigrated projects
-    query = f"""
-    SELECT DISTINCT
-        COALESCE(pjd.decision, '(no decision)') as decision,
-        COALESCE(t.name, p.team_name, '(no team)') as team_name
-    FROM projects p
-    LEFT JOIN teams t ON t.gid = p.team_gid
-    LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM task_jira_mappings tjm
-        JOIN tasks t2 ON t2.gid = tjm.task_gid
-        JOIN task_projects tp ON tp.task_gid = t2.gid
-        WHERE tp.project_gid = p.gid {jira_filter}
-    )
-    {gid_filter}
-    ORDER BY team_name, decision
-    """
-
-    distinct_rows = connection.execute(query, params).fetchall()
-    if not distinct_rows:
-        return [["(no unmigrated projects)"]]
-
-    # Get all unique decisions and teams
-    decisions = sorted(set(row[0] for row in distinct_rows))
-    teams = sorted(set(row[1] for row in distinct_rows))
-
-    # Build pivot counts: (team, decision) -> count
-    count_query = f"""
-    SELECT
-        COALESCE(t.name, p.team_name, '(no team)') as team_name,
-        COALESCE(pjd.decision, '(no decision)') as decision,
-        COUNT(DISTINCT p.gid) as count
-    FROM projects p
-    LEFT JOIN teams t ON t.gid = p.team_gid
-    LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM task_jira_mappings tjm
-        JOIN tasks t2 ON t2.gid = tjm.task_gid
-        JOIN task_projects tp ON tp.task_gid = t2.gid
-        WHERE tp.project_gid = p.gid {jira_filter}
-    )
-    {gid_filter}
-    GROUP BY team_name, decision
-    """
-
-    count_rows = connection.execute(count_query, params).fetchall()
-    pivot_data = {(row[0], row[1]): row[2] for row in count_rows}
-
-    # Build result with pivot table
-    result = [["Team / Decision"] + decisions + ["Team Total"]]
-
-    total_by_team = {}
-    for team in teams:
-        row = [team]
-        team_total = 0
-        for decision in decisions:
-            count = pivot_data.get((team, decision), 0)
-            row.append(count)
-            team_total += count
-        row.append(team_total)
-        result.append(row)
-        total_by_team[team] = team_total
-
-    # Add total row
-    result.append([None] * len(result[0]))  # Blank row for spacing
-    total_row = ["Total by Decision"]
-    grand_total = 0
-    for decision in decisions:
-        decision_total = sum(pivot_data.get((team, decision), 0) for team in teams)
-        total_row.append(decision_total)
-        grand_total += decision_total
-    total_row.append(grand_total)
-    result.append(total_row)
-
-    return result
+    for project in projects:
+        if len(project.site_mappings) < 2:
+            continue
+        for site in sites:
+            mapping = project.site_mappings.get(site)
+            if mapping is None:
+                continue
+            mapped = len(mapping.mapped_task_gids)
+            rows.append(
+                [
+                    project.gid,
+                    project.name,
+                    project.team,
+                    _archived_label(project),
+                    site,
+                    ", ".join(sorted(mapping.project_keys)),
+                    mapped,
+                    project.task_count,
+                    _percent(mapped, project.task_count),
+                ]
+            )
+    return rows
 
 
-def _build_unmigrated_tab(
-    connection: sqlite3.Connection, jira_sites: list[str], project_gids: Optional[list[str]]
-) -> list[list]:
-    """Build Unmigrated tab with projects without External IDs synced, including their ATJM ticket and decision."""
-    jira_filter = (
-        "" if not jira_sites else f"AND tjm.jira_site_key IN ({','.join('?' * len(jira_sites))})"
-    )
-    gid_filter = "" if not project_gids else f"AND p.gid IN ({','.join('?' * len(project_gids))})"
-
-    params = jira_sites + (project_gids or [])
-
-    query = f"""
-    SELECT
-        p.gid,
-        p.name,
-        p.team_gid,
-        COALESCE(t.name, p.team_name) as team_name,
-        COUNT(DISTINCT tp.task_gid) as total_tasks,
-        pjd.decision,
-        tpm.jira_key as atjm_ticket_key
-    FROM projects p
-    LEFT JOIN teams t ON t.gid = p.team_gid
-    LEFT JOIN task_projects tp ON tp.project_gid = p.gid
-    LEFT JOIN project_jira_decisions pjd ON pjd.project_gid = p.gid
-    LEFT JOIN team_project_jira_mappings tpm ON tpm.asana_gid = p.gid AND tpm.kind = 'project'
-    WHERE NOT EXISTS (
-        SELECT 1
-        FROM task_jira_mappings tjm
-        JOIN tasks t2 ON t2.gid = tjm.task_gid
-        JOIN task_projects tp2 ON tp2.task_gid = t2.gid
-        WHERE tp2.project_gid = p.gid {jira_filter}
-    )
-    {gid_filter}
-    GROUP BY p.gid
-    ORDER BY COALESCE(team_name, ''), COALESCE(pjd.decision, '(no decision)'), p.name
-    """
-
-    rows = connection.execute(query, params).fetchall()
-    if not rows:
-        return [["(no data)"]]
-
-    result = [
-        ["Asana Project GID", "Asana Project Name", "Team GID", "Team Name", "Total Tasks", "Jira Migration Decision", "ATJM Ticket Key"]
-    ]
-
-    for proj_gid, proj_name, team_gid, team_name, total, decision, atjm_key in rows:
-        result.append([
-            proj_gid,
-            proj_name,
-            team_gid or "",
-            team_name or "",
-            str(total),
-            decision or "(no decision)",
-            atjm_key or "",
-        ])
-
-    return result
+def _build_unmigrated_tab(projects: list[ProjectRecord]) -> list[list]:
+    rows = [["Project GID", "Project Name", "Archived", "ATJM Ticket", "ATJM Migration Decision", "Task Count"]]
+    for project in projects:
+        if project.site_mappings:
+            continue
+        rows.append(
+            [
+                project.gid,
+                project.name,
+                _archived_label(project),
+                project.atjm_ticket,
+                project.decision,
+                project.task_count,
+            ]
+        )
+    return rows
 
 
 def export_project_import_status_workbook(
@@ -344,7 +301,7 @@ def export_project_import_status_workbook(
     jira_sites: Optional[list[str]] = None,
     project_gids: Optional[list[str]] = None,
 ) -> Path:
-    """Generate multi-tab workbook for project import status."""
+    """Generate the per-project reconciliation workbook for the selected Jira sites."""
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -359,25 +316,25 @@ def export_project_import_status_workbook(
     with database.connect() as connection:
         database.initialize(connection)
 
-        # Resolve site selection
-        if not jira_sites:
-            jira_sites = _get_all_jira_sites(connection)
-            if not jira_sites:
-                jira_sites = ["legacy_unknown"]
+        if jira_sites:
+            sites = list(dict.fromkeys(jira_sites))
+        else:
+            sites = _get_all_jira_sites(connection) or ["legacy_unknown"]
 
-        logger.info("Generating workbook for sites: %s", ", ".join(jira_sites))
+        logger.info("Generating workbook for sites: %s", ", ".join(sites))
 
-        # Build sheets
-        overview_rows = _build_overview_tab(connection, jira_sites, project_gids)
-        migrated_rows = _build_migrated_tab(connection, jira_sites, project_gids)
-        summary_rows = _build_summary_tab(connection, jira_sites, project_gids)
-        unmigrated_rows = _build_unmigrated_tab(connection, jira_sites, project_gids)
+        projects = _load_projects(connection, project_gids)
+        _load_task_counts(connection, projects)
+        _load_site_mappings(connection, projects, sites)
+        _load_atjm_tickets(connection, projects, sites)
+        _load_decisions(connection, projects, sites)
 
+        ordered = sorted(projects.values(), key=_sort_key)
+        multi_site = [p for p in ordered if len(p.site_mappings) >= 2]
         sheets = [
-            ("Overview", overview_rows),
-            ("Migrated", migrated_rows),
-            ("Summary", summary_rows),
-            ("Unmigrated", unmigrated_rows),
+            ("Projects", _build_projects_tab(ordered, sites)),
+            ("Multi-Site", _build_multi_site_tab(multi_site, sites)),
+            ("Unmigrated", _build_unmigrated_tab(ordered)),
         ]
 
         write_workbook(output_path, sheets)
