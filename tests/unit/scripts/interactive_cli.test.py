@@ -13,6 +13,48 @@ from scripts import interactive_cli
 from src.lib.config import Credentials, JiraSite, load_credentials, write_credentials_file
 
 
+class JiraSiteFlagSelectionTest(TestCase):
+    PROD_KEY = "production_jira"
+    ARCHIVE_KEY = "archive_jira"
+
+    def setUp(self) -> None:
+        self._orig_session = interactive_cli._session
+        interactive_cli._session = interactive_cli.CliSession(
+            reference_path=Path("/tmp/project"),
+            env_path=Path("/tmp/.asana_jira_env"),
+            use_prod=False,
+            jira_sites=(
+                JiraSite(self.PROD_KEY, "Production Jira", "https://prod.example.atlassian.net"),
+                JiraSite(self.ARCHIVE_KEY, "Archive Jira", "https://archive.example.atlassian.net"),
+            ),
+        )
+        self.addCleanup(lambda: setattr(interactive_cli, "_session", self._orig_session))
+
+    def test_site_number_selection_appends_only_that_site(self) -> None:
+        args: list[str] = []
+        with patch("builtins.input", side_effect=["1"]), redirect_stdout(io.StringIO()):
+            interactive_cli._append_jira_site_flags(args)
+        self.assertEqual(args, ["--jira-site", self.PROD_KEY])
+
+    def test_site_key_selection_is_accepted(self) -> None:
+        args: list[str] = []
+        with patch("builtins.input", side_effect=[self.PROD_KEY]), redirect_stdout(io.StringIO()):
+            interactive_cli._append_jira_site_flags(args)
+        self.assertEqual(args, ["--jira-site", self.PROD_KEY])
+
+    def test_unrecognized_selection_reprompts_instead_of_exporting_all_sites(self) -> None:
+        args: list[str] = []
+        with patch("builtins.input", side_effect=["production", "2"]), redirect_stdout(io.StringIO()):
+            interactive_cli._append_jira_site_flags(args)
+        self.assertEqual(args, ["--jira-site", self.ARCHIVE_KEY])
+
+    def test_blank_or_all_selection_appends_no_site_filter(self) -> None:
+        args: list[str] = []
+        with patch("builtins.input", side_effect=[""]), redirect_stdout(io.StringIO()):
+            interactive_cli._append_jira_site_flags(args)
+        self.assertEqual(args, [])
+
+
 class IncrementalArgsBuilderTest(TestCase):
     def setUp(self) -> None:
         # Force the env-file backend so credential tests stay hermetic (no real Keychain).

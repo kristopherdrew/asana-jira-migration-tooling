@@ -2057,22 +2057,36 @@ def run_export_project_to_jira(log_level: str) -> None:
     print_rerun_command("scripts.export_project_to_jira_csv", display_args)
 
 
-def _append_jira_site_flags(args: List[str]) -> None:
-    print("\nSelect Jira sites to include (enter comma-separated numbers or 'all'):")
-    if _session and _session.jira_sites:
-        for i, site in enumerate(_session.jira_sites, 1):
-            print(f"[{i}] {site.name}")
-    print("Examples: '1' (single), '1,2,3' (multiple), 'all' (all sites)")
-    site_choice = input("Choice (default: all): ").strip().lower() or "all"
+def _parse_jira_site_choice(choice: str, sites: Tuple[JiraSite, ...]) -> Optional[List[str]]:
+    keys: List[str] = []
+    for token in (part.strip() for part in choice.split(",")):
+        if token.isdigit() and 1 <= int(token) <= len(sites):
+            key = sites[int(token) - 1].key
+        elif token in {site.key for site in sites}:
+            key = token
+        else:
+            return None
+        if key not in keys:
+            keys.append(key)
+    return keys
 
-    if site_choice != "all" and _session and _session.jira_sites:
-        try:
-            indices = [int(x.strip()) - 1 for x in site_choice.split(",")]
-            for idx in indices:
-                if 0 <= idx < len(_session.jira_sites):
-                    args.extend(["--jira-site", _session.jira_sites[idx].key])
-        except (ValueError, IndexError):
-            pass
+
+def _append_jira_site_flags(args: List[str]) -> None:
+    sites = _session.jira_sites if _session else ()
+    print("\nSelect Jira sites to include (enter comma-separated numbers or keys, or 'all'):")
+    for i, site in enumerate(sites, 1):
+        print(f"[{i}] {site.name} ({site.key})")
+    print("Examples: '1' (single), '1,2,3' (multiple), 'all' (all sites)")
+    while True:
+        site_choice = input("Choice (default: all): ").strip().lower() or "all"
+        if site_choice == "all" or not sites:
+            return
+        keys = _parse_jira_site_choice(site_choice, sites)
+        if keys:
+            for key in keys:
+                args.extend(["--jira-site", key])
+            return
+        print("Unrecognized site selection. Enter site numbers or keys from the list, or 'all'.")
 
 
 def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
