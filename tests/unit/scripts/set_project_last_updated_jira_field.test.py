@@ -6,8 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import MagicMock, patch
 
 from src.lib.database import Database
+from src.lib.migration_defaults import DEFAULT_SETTINGS, MigrationSettings, save_migration_settings
+from scripts.atlassian import set_project_last_updated_jira_field as set_project_module
 from scripts.atlassian.set_project_last_updated_jira_field import (
     set_project_last_updated_jira_field,
 )
@@ -178,3 +181,41 @@ class SetProjectLastUpdatedJiraFieldTest(TestCase):
 
         self.assertEqual(len(client.updates), 1)
         self.assertEqual(client.updates[0][0], "ATJM-1")
+
+
+class SetProjectFieldSettingsTest(TestCase):
+    PROFILE_FIELD_ID = "customfield_99999"
+    EXPLICIT_FIELD_ID = "customfield_555"
+
+    def setUp(self) -> None:
+        temp_dir = TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        self.profile_path = Path(temp_dir.name) / "profile.env"
+        self.profile_path.write_text("", encoding="utf-8")
+        self.core = MagicMock(return_value=Path("report.csv"))
+        patchers = [
+            patch.object(set_project_module, "resolve_credentials_path", return_value=self.profile_path),
+            patch.object(set_project_module, "load_credentials", return_value=MagicMock()),
+            patch.object(set_project_module, "resolve_jira_base_url", return_value="https://example.atlassian.net"),
+            patch.object(set_project_module, "set_project_last_updated_jira_field", self.core),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _field_id_passed(self, argv: list[str]) -> str:
+        set_project_module.main(argv)
+        self.core.assert_called_once()
+        return self.core.call_args.kwargs["field_id"]
+
+    def test_profile_field_id_used_when_flag_omitted(self) -> None:
+        save_migration_settings(self.profile_path, MigrationSettings(last_working_day_field_id=self.PROFILE_FIELD_ID))
+        self.assertEqual(self._field_id_passed([]), self.PROFILE_FIELD_ID)
+
+    def test_explicit_field_id_overrides_profile(self) -> None:
+        save_migration_settings(self.profile_path, MigrationSettings(last_working_day_field_id=self.PROFILE_FIELD_ID))
+        self.assertEqual(self._field_id_passed(["--field-id", self.EXPLICIT_FIELD_ID]), self.EXPLICIT_FIELD_ID)
+
+    def test_unset_profile_falls_back_to_default_field_id(self) -> None:
+        save_migration_settings(self.profile_path, DEFAULT_SETTINGS)
+        self.assertEqual(self._field_id_passed([]), DEFAULT_SETTINGS.last_working_day_field_id)
