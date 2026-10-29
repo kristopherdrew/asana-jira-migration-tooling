@@ -16,6 +16,7 @@ from src.lib.jira_csv_partition import (
 
 
 HEADER = ["task_gid", "External issue ID", "jira_parent_gid", "jira_hierarchy_depth", "task_name"]
+LARGE_FIELD_CHARS = 200_000
 
 
 def write_rows(path: Path, rows) -> None:
@@ -131,6 +132,19 @@ class JiraCsvPartitionTest(TestCase):
             with self.assertRaisesRegex(SystemExit, "real task hierarchy"):
                 partition_project_csv(path, limit=6)
             self.assertFalse(path.exists())
+
+    def test_partitions_csv_with_folded_description_larger_than_default_field_limit(self) -> None:
+        """Regression: folded Description cells exceeded csv's 131072-char default and crashed partitioning."""
+        oversized_description = "x" * (LARGE_FIELD_CHARS)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "tasks.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(HEADER + ["Description"])
+                writer.writerow(["t0", "t0", "", "0", "Task 0", oversized_description])
+                writer.writerow(["t1", "t1", "", "0", "Task 1", "short"])
+            parts = partition_project_csv(path, limit=6)
+            self.assertEqual(sum(part.issue_count for part in parts), 2)
 
     def test_consolidation_packs_whole_project_parts(self) -> None:
         parts = [CsvPart(Path("a.csv"), 5), CsvPart(Path("b.csv"), 4), CsvPart(Path("c.csv"), 3)]
