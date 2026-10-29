@@ -3,9 +3,12 @@ from __future__ import annotations
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from scripts.atlassian import get_jira_migration_decisions as decisions_mod
 from src.lib.database import Database
+from src.lib.migration_defaults import DEFAULT_SETTINGS, MigrationSettings, save_migration_settings
 
 
 class FakeClient:
@@ -200,6 +203,49 @@ class UpsertDecisionsTests(unittest.TestCase):
             summary = decisions_mod.upsert_decisions(db_path, issues, include_empty=True)
             self.assertEqual(summary["written"], 2)
             self.assertEqual(summary["empty_skipped"], 0)
+
+
+class DecisionFieldNameSettingsTests(unittest.TestCase):
+    PROFILE_FIELD_NAME = "Client Decision Field"
+    EXPLICIT_FIELD_NAME = "Other Decision Field"
+
+    def setUp(self) -> None:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        self.profile_path = Path(temp_dir.name) / "profile.env"
+        self.profile_path.write_text("", encoding="utf-8")
+        self.resolve_field_id = MagicMock(return_value="customfield_1")
+        patchers = [
+            patch.object(decisions_mod, "resolve_credentials_path", return_value=self.profile_path),
+            patch.object(decisions_mod, "load_credentials", return_value=MagicMock()),
+            patch.object(decisions_mod, "ensure_atlassian_credentials", return_value=("user", "token")),
+            patch.object(decisions_mod, "resolve_jira_base_url", return_value="https://example.atlassian.net"),
+            patch.object(decisions_mod, "JiraSearchClient"),
+            patch.object(decisions_mod, "resolve_field_id", self.resolve_field_id),
+            patch.object(decisions_mod, "collect_decisions", return_value=[]),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _resolved_field_name(self, argv: list[str]) -> str:
+        decisions_mod.main([*argv, "--jql", "project = MIG"])
+        self.resolve_field_id.assert_called_once()
+        return self.resolve_field_id.call_args.args[1]
+
+    def test_profile_field_name_used_when_flag_omitted(self) -> None:
+        save_migration_settings(self.profile_path, MigrationSettings(decision_field_name=self.PROFILE_FIELD_NAME))
+        self.assertEqual(self._resolved_field_name([]), self.PROFILE_FIELD_NAME)
+
+    def test_explicit_field_name_overrides_profile(self) -> None:
+        save_migration_settings(self.profile_path, MigrationSettings(decision_field_name=self.PROFILE_FIELD_NAME))
+        self.assertEqual(
+            self._resolved_field_name(["--field-name", self.EXPLICIT_FIELD_NAME]), self.EXPLICIT_FIELD_NAME
+        )
+
+    def test_unset_profile_falls_back_to_default_field_name(self) -> None:
+        save_migration_settings(self.profile_path, DEFAULT_SETTINGS)
+        self.assertEqual(self._resolved_field_name([]), DEFAULT_SETTINGS.decision_field_name)
 
 
 if __name__ == "__main__":

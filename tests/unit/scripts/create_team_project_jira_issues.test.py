@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from src.lib.database import Database
 from src.lib.jira_client import JiraApiError
+from src.lib.migration_defaults import DEFAULT_SETTINGS, MigrationSettings, save_migration_settings
 from scripts.atlassian import create_team_project_jira_issues as creator
 from scripts.atlassian.create_team_project_jira_issues import (
     _resolve_field_def,
@@ -740,3 +741,39 @@ class CreateTeamProjectJiraIssuesTest(TestCase):
         self.assertEqual(set(mappings), {("team", "team_a")})
         error_rows = [r for r in _read_report(report) if r["status"] == "error"]
         self.assertTrue(any(r["kind"] == "project" for r in error_rows))
+
+
+class CreateTeamProjectSettingsTest(TestCase):
+    def setUp(self) -> None:
+        temp_dir = TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        self.profile_path = Path(temp_dir.name) / "profile.env"
+        self.profile_path.write_text("", encoding="utf-8")
+        self.core = MagicMock(return_value=Path("report.csv"))
+        patchers = [
+            patch.object(creator, "resolve_credentials_path", return_value=self.profile_path),
+            patch.object(creator, "load_credentials", return_value=MagicMock()),
+            patch.object(creator, "resolve_jira_base_url", return_value="https://example.atlassian.net"),
+            patch.object(creator, "create_team_project_jira_issues", self.core),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _settings_passed(self) -> MigrationSettings:
+        creator.main(["--jira-project-key", "MIG"])
+        self.core.assert_called_once()
+        return self.core.call_args.kwargs["settings"]
+
+    def test_profile_settings_passed_to_creator(self) -> None:
+        profile = MigrationSettings(atlassian_team_name="Acme Atlassian", epic_deadline="2026-12-31")
+        save_migration_settings(self.profile_path, profile)
+        settings = self._settings_passed()
+        self.assertEqual(settings.atlassian_team_name, "Acme Atlassian")
+        self.assertEqual(settings.epic_deadline, "2026-12-31")
+
+    def test_unset_profile_passes_neutral_defaults(self) -> None:
+        save_migration_settings(self.profile_path, DEFAULT_SETTINGS)
+        settings = self._settings_passed()
+        self.assertEqual(settings, DEFAULT_SETTINGS)
+        self.assertIsNone(settings.epic_deadline)
