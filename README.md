@@ -39,6 +39,17 @@ chmod 600 profiles/client_a.env
 echo "client_a" > profiles/.asana_jira_active
 ```
 
+Team/Project Jira wording and field settings are optional non-secret keys in the same profile file. Unset keys fall back to neutral defaults (no deadline sentence, generic team wording, `customfield_11475` for "Last working day", "Asana Migration Decision" for the decision field). The Interactive CLI's Direct-API create action asks for them on first use and asks you to confirm them on later runs:
+```bash
+export MIGRATION_EPIC_DEADLINE="July 8"
+export MIGRATION_ATLASSIAN_TEAM_NAME="Acme Atlassian"
+export MIGRATION_ARCHIVE_READ_ONLY_LABEL="Archive-Read Only"
+export MIGRATION_ARCHIVE_PRESERVATION_LABEL="Archive-Preservation Only"
+export MIGRATION_LAST_WORKING_DAY_FIELD_ID="customfield_11475"
+export MIGRATION_DECISION_FIELD_NAME="Asana Migration Decision"
+export MIGRATION_JIRA_PROJECT_KEY="MIG"
+```
+
 Leave `SKIP_SSL_VERIFICATION` set to `false` for normal use. Only set it to `true` as a temporary local troubleshooting workaround for a broken trust store or certificate validation issue, then return it to `false` once the environment is fixed. Rotate tokens immediately if they are ever committed or shared.
 
 ## Project Layout

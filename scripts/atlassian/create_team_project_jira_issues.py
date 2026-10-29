@@ -27,10 +27,16 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.adf import text_to_adf
 from src.lib.atlassian_status import is_active_atlassian_status
-from src.lib.config import Credentials, load_credentials, resolve_jira_base_url
+from src.lib.config import (
+    Credentials,
+    load_credentials,
+    resolve_credentials_path,
+    resolve_jira_base_url,
+)
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.jira_client import JiraApiError, JiraClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.migration_defaults import DEFAULT_SETTINGS, MigrationSettings, load_migration_settings
 from src.lib.team_picker import search_team
 from scripts.atlassian.export_team_project_jira_csv import build_team_project_rows
 
@@ -407,6 +413,7 @@ def create_team_project_jira_issues(
     pick_team: bool = False,
     include_empty_projects: bool = False,
     client: Optional[JiraClient] = None,
+    settings: MigrationSettings = DEFAULT_SETTINGS,
 ) -> Path:
     credentials = load_credentials()
     username, token = ensure_atlassian_credentials(credentials)
@@ -416,7 +423,10 @@ def create_team_project_jira_issues(
     with database.connect() as connection:
         database.initialize(connection)
         epic_rows, task_rows = build_team_project_rows(
-            connection, workspace_gid, include_empty_projects=include_empty_projects
+            connection,
+            workspace_gid,
+            include_empty_projects=include_empty_projects,
+            settings=settings,
         )
         existing = database.load_team_project_jira_mappings(connection)
 
@@ -699,6 +709,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             team_gid=args.team_gid,
             pick_team=args.pick_team,
             include_empty_projects=args.include_empty_projects,
+            settings=load_migration_settings(resolve_credentials_path()),
         )
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(str(exc)) from exc

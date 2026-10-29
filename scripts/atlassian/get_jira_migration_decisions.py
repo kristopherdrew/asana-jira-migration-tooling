@@ -21,9 +21,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.lib.config import load_credentials, resolve_jira_base_url
+from src.lib.config import load_credentials, resolve_credentials_path, resolve_jira_base_url
 from src.lib.database import Database, DEFAULT_DB_PATH, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.migration_defaults import DEFAULT_SETTINGS, load_migration_settings
 from scripts.atlassian.search_jira_external_ids import (
     DEFAULT_FIELDS,
     JIRA_SEARCH_PAGE_SIZE,
@@ -35,7 +36,7 @@ from scripts.atlassian.search_jira_external_ids import (
 
 
 logger = logging.getLogger(__name__)
-DEFAULT_FIELD_NAME = "Asana Migration Decision"
+DEFAULT_FIELD_NAME = DEFAULT_SETTINGS.decision_field_name
 
 
 def resolve_field_id(client: JiraSearchClient, field_name: str) -> str:
@@ -284,8 +285,8 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--field-name",
-        default=DEFAULT_FIELD_NAME,
-        help=f"Display name of the decision field to resolve (default: {DEFAULT_FIELD_NAME!r}).",
+        default=None,
+        help=f"Display name of the decision field to resolve (default: profile MIGRATION_DECISION_FIELD_NAME, else {DEFAULT_FIELD_NAME!r}).",
     )
     parser.add_argument(
         "--include-empty",
@@ -315,6 +316,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     configure_logging(log_level)
 
     credentials = load_credentials()
+    settings = load_migration_settings(resolve_credentials_path())
+    args.field_name = args.field_name or settings.decision_field_name
     try:
         username, jira_token = ensure_atlassian_credentials(credentials)
         base_url = resolve_jira_base_url(credentials, prod=args.prod, site_key=args.jira_site)

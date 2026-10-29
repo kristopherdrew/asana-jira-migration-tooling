@@ -8,6 +8,7 @@ import csv
 import logging
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, NamedTuple, Optional
@@ -31,9 +32,11 @@ from src.lib.asana_urls import (
     infer_workspace_gid,
 )
 from src.lib.atlassian_status import is_active_atlassian_status
+from src.lib.config import resolve_credentials_path
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.date_formatting import format_report_date, parse_iso_datetime
 from src.lib.logging_utils import configure_logging, resolve_log_level
+from src.lib.migration_defaults import DEFAULT_SETTINGS, MigrationSettings, load_migration_settings
 from src.lib.team_analysis import build_team_analysis
 
 
@@ -45,160 +48,189 @@ logger = logging.getLogger(__name__)
 # Instruction copy is authored once as structured blocks, then rendered to plain text
 # (for the CSV export) and to rich ADF (for the direct Jira API path) so the two paths
 # never drift. See src/lib/adf.py for the block model.
-EPIC_INSTRUCTION_BLOCKS = [
-    Heading("Instructions", level=1),
-    Paragraph(["This Epic represents an Asana team that you are the effective owner of."]),
-    Paragraph(["The Epic assignee is responsible for:"]),
-    BulletList(
-        [
+def epic_instruction_blocks(settings: MigrationSettings) -> list:
+    deadline_items = (
+        [[f"Ensure a migration decision has been recorded for every project by {settings.epic_deadline}."]]
+        if settings.epic_deadline
+        else []
+    )
+    return [
+        Heading("Instructions", level=1),
+        Paragraph(["This Epic represents an Asana team that you are the effective owner of."]),
+        Paragraph(["The Epic assignee is responsible for:"]),
+        BulletList(
             [
-                "If someone else should be representing this Asana team, please reassign "
-                "this epic to that person."
-            ],
+                [
+                    "If someone else should be representing this Asana team, please reassign "
+                    "this epic to that person."
+                ],
+                [
+                    "Review all tasks within the Epic (which represent individual Asana "
+                    "projects). If a project owner is incorrect, reassign the task immediately."
+                ],
+                *deadline_items,
+            ]
+        ),
+        Paragraph(
             [
-                "Review all tasks within the Epic (which represent individual Asana "
-                "projects). If a project owner is incorrect, reassign the task immediately."
-            ],
-            ["Ensure a migration decision has been recorded for every project by July 8."],
-        ]
-    ),
-    Paragraph(
-        [
-            "The Epic should not be considered complete until all child tasks contain a "
-            "documented migration decision and any required supporting information."
-        ]
-    ),
-]
+                "The Epic should not be considered complete until all child tasks contain a "
+                "documented migration decision and any required supporting information."
+            ]
+        ),
+    ]
 
 
-TASK_INSTRUCTION_BLOCKS = [
-    Heading("Instructions", level=1),
-    Paragraph(
-        ["A migration decision is required for this project. Select one of the following options:"]
-    ),
-    Heading("Active", level=3),
-    BulletList(
-        [
+def task_instruction_blocks(settings: MigrationSettings) -> list:
+    return [
+        Heading("Instructions", level=1),
+        Paragraph(
+            ["A migration decision is required for this project. Select one of the following options:"]
+        ),
+        Heading("Active", level=3),
+        BulletList(
             [
-                "Select Active if the project is currently being used, ongoing work is "
-                "taking place or there are reporting requirements."
-            ],
+                [
+                    "Select Active if the project is currently being used, ongoing work is "
+                    "taking place or there are reporting requirements."
+                ],
+                [
+                    "The migration team will be reaching out with next steps to align on Jira "
+                    "project configurations."
+                ],
+            ]
+        ),
+        Heading(settings.archive_read_only_label, level=3),
+        BulletList(
             [
-                "The migration team will be reaching out with next steps to align on Jira "
-                "project configurations."
-            ],
-        ]
-    ),
-    Heading("Archive-Read Only", level=3),
-    BulletList(
-        [
+                [
+                    "Select Archive if the project is no longer actively used but the "
+                    "historical information should be retained and be able to be queried."
+                ],
+                [
+                    "Archived projects will be migrated in a simplified format focused on "
+                    "preserving project data and records. Configuration, workflows, and other "
+                    "advanced project settings will not be recreated."
+                ],
+            ]
+        ),
+        Heading(settings.archive_preservation_label, level=3),
+        BulletList(
             [
-                "Select Archive if the project is no longer actively used but the "
-                "historical information should be retained and be able to be queried."
-            ],
+                [
+                    "Select Archive if the project is no longer actively used but the "
+                    "historical information should be retained and will ",
+                    Run("NOT", bold=True),
+                    " be able to be queried. Data will be preserved and can be unarchived if "
+                    f"needed by the {settings.atlassian_team_name} team.",
+                ],
+                [
+                    "Archived projects will be migrated in a simplified format focused on "
+                    "preserving project data and records. Configuration, workflows, and other "
+                    "advanced project settings will not be recreated."
+                ],
+            ]
+        ),
+        Heading("Abandon", level=3),
+        BulletList(
             [
-                "Archived projects will be migrated in a simplified format focused on "
-                "preserving project data and records. Configuration, workflows, and other "
-                "advanced project settings will not be recreated."
-            ],
-        ]
-    ),
-    Heading("Archive-Preservation Only", level=3),
-    BulletList(
-        [
+                [
+                    "Select Abandon if the project is no longer needed and the data does not "
+                    "need to be migrated."
+                ],
+                [
+                    "Projects marked as Abandon will be excluded from the migration. You will "
+                    "lose access to this data once the migration is complete."
+                ],
+            ]
+        ),
+        Heading("Required Action", level=2),
+        Paragraph(
             [
-                "Select Archive if the project is no longer actively used but the "
-                "historical information should be retained and will ",
-                Run("NOT", bold=True),
-                " be able to be queried. Data will be preserved and can be unarchived if "
-                "needed by the Roblox Atlassian team.",
-            ],
-            [
-                "Archived projects will be migrated in a simplified format focused on "
-                "preserving project data and records. Configuration, workflows, and other "
-                "advanced project settings will not be recreated."
-            ],
-        ]
-    ),
-    Heading("Abandon", level=3),
-    BulletList(
-        [
-            [
-                "Select Abandon if the project is no longer needed and the data does not "
-                "need to be migrated."
-            ],
-            [
-                "Projects marked as Abandon will be excluded from the migration. You will "
-                "lose access to this data once the migration is complete."
-            ],
-        ]
-    ),
-    Heading("Required Action", level=2),
-    Paragraph(
-        [
-            "Review the project and record a migration decision of Active, Archive-Read "
-            "Only, Archive-Preservation Only or Abandon. If additional context is needed to "
-            "support the decision, include it in the task comments or designated assessment "
-            "fields."
-        ]
-    ),
-]
+                "Review the project and record a migration decision of Active, "
+                f"{settings.archive_read_only_label}, {settings.archive_preservation_label} "
+                "or Abandon. If additional context is needed to support the decision, include "
+                "it in the task comments or designated assessment fields."
+            ]
+        ),
+    ]
 
 
-PERSONAL_TASK_INSTRUCTION_BLOCKS = [
-    Heading("Instructions", level=1),
-    Paragraph(
-        [
-            "A migration decision is required for this project containing personal tasks. "
-            "This has been classified as a personal task tracker because it is connected to "
-            "your user account, not a team. Select one of the following options:"
-        ]
-    ),
-    Heading("Active-Personal Task Tracker", level=3),
-    BulletList(
-        [
+def personal_task_instruction_blocks() -> list:
+    return [
+        Heading("Instructions", level=1),
+        Paragraph(
             [
-                "Select Active if the project is currently being used or ongoing work is "
-                "taking place."
-            ],
+                "A migration decision is required for this project containing personal tasks. "
+                "This has been classified as a personal task tracker because it is connected to "
+                "your user account, not a team. Select one of the following options:"
+            ]
+        ),
+        Heading("Active-Personal Task Tracker", level=3),
+        BulletList(
             [
-                "This project will be migrated into a personal Task Tracker space that will "
-                "only be visible to you."
-            ],
-        ]
-    ),
-    Heading("Abandon", level=3),
-    BulletList(
-        [
+                [
+                    "Select Active if the project is currently being used or ongoing work is "
+                    "taking place."
+                ],
+                [
+                    "This project will be migrated into a personal Task Tracker space that will "
+                    "only be visible to you."
+                ],
+            ]
+        ),
+        Heading("Abandon", level=3),
+        BulletList(
             [
-                "Select Abandon if the project is no longer needed and the data does not "
-                "need to be migrated."
-            ],
+                [
+                    "Select Abandon if the project is no longer needed and the data does not "
+                    "need to be migrated."
+                ],
+                [
+                    "Projects marked as Abandon will be excluded from the migration. You will "
+                    "lose access to this data once the migration is complete."
+                ],
+            ]
+        ),
+        Heading("Required Action", level=2),
+        Paragraph(
             [
-                "Projects marked as Abandon will be excluded from the migration. You will "
-                "lose access to this data once the migration is complete."
-            ],
-        ]
-    ),
-    Heading("Required Action", level=2),
-    Paragraph(
-        [
-            "Review the project and record a migration decision of Active or Abandon. If "
-            "additional context is needed to support the decision, include it in the task "
-            "comments or designated assessment fields."
-        ]
-    ),
-]
+                "Review the project and record a migration decision of Active or Abandon. If "
+                "additional context is needed to support the decision, include it in the task "
+                "comments or designated assessment fields."
+            ]
+        ),
+    ]
 
 
-# Plain-text renderings preserve the existing public constant names (imported by the
-# CSV export rows and by tests); the ADF renderings feed the direct-API creator.
-EPIC_INSTRUCTIONS = render_blocks_text(EPIC_INSTRUCTION_BLOCKS)
-TASK_INSTRUCTIONS = render_blocks_text(TASK_INSTRUCTION_BLOCKS)
-PERSONAL_TASK_INSTRUCTIONS = render_blocks_text(PERSONAL_TASK_INSTRUCTION_BLOCKS)
-EPIC_INSTRUCTIONS_ADF = render_blocks_adf(EPIC_INSTRUCTION_BLOCKS)
-TASK_INSTRUCTIONS_ADF = render_blocks_adf(TASK_INSTRUCTION_BLOCKS)
-PERSONAL_TASK_INSTRUCTIONS_ADF = render_blocks_adf(PERSONAL_TASK_INSTRUCTION_BLOCKS)
+@dataclass(frozen=True)
+class InstructionTexts:
+    epic: str
+    epic_adf: str
+    task: str
+    task_adf: str
+    personal_task: str
+    personal_task_adf: str
+
+
+def build_instruction_texts(settings: MigrationSettings) -> InstructionTexts:
+    epic = epic_instruction_blocks(settings)
+    task = task_instruction_blocks(settings)
+    personal = personal_task_instruction_blocks()
+    return InstructionTexts(
+        epic=render_blocks_text(epic),
+        epic_adf=render_blocks_adf(epic),
+        task=render_blocks_text(task),
+        task_adf=render_blocks_adf(task),
+        personal_task=render_blocks_text(personal),
+        personal_task_adf=render_blocks_adf(personal),
+    )
+
+
+# Plain-text constants keep the public names imported by tests, rendered with default settings.
+_DEFAULT_INSTRUCTION_TEXTS = build_instruction_texts(DEFAULT_SETTINGS)
+EPIC_INSTRUCTIONS = _DEFAULT_INSTRUCTION_TEXTS.epic
+TASK_INSTRUCTIONS = _DEFAULT_INSTRUCTION_TEXTS.task
+PERSONAL_TASK_INSTRUCTIONS = _DEFAULT_INSTRUCTION_TEXTS.personal_task
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -470,6 +502,7 @@ def build_team_project_rows(
     connection,
     workspace_gid: Optional[str] = None,
     include_empty_projects: bool = False,
+    settings: MigrationSettings = DEFAULT_SETTINGS,
 ) -> tuple[list[dict], list[dict]]:
     """Build the Team→Epic and Project→Task rows shared by the CSV exporter and
     the direct Jira issue creator.
@@ -484,6 +517,7 @@ def build_team_project_rows(
     are skipped. Pass ``include_empty_projects=True`` to emit a Project→Task row
     for every project regardless of task count (empty projects render a task
     count of ``0``)."""
+    instruction_texts = build_instruction_texts(settings)
     resolved_workspace_gid = workspace_gid or infer_workspace_gid(connection)
 
     # Discover all unique custom fields for dynamic CSV columns
@@ -708,12 +742,12 @@ def build_team_project_rows(
                     else str(aggregate["actual_task_count_total"])
                 ),
                 "Labels": "",
-                "Instructions": EPIC_INSTRUCTIONS,
+                "Instructions": instruction_texts.epic,
                 "Description": render_blocks_text(team_description_blocks),
                 "_kind": "team",
                 "_asana_gid": team_gid,
                 "_adf_overrides": {
-                    "Instructions": EPIC_INSTRUCTIONS_ADF,
+                    "Instructions": instruction_texts.epic_adf,
                     "Description": render_blocks_adf(team_description_blocks),
                 },
             }
@@ -745,11 +779,11 @@ def build_team_project_rows(
                 "Project Count (Asana)": str(no_team_project_count),
                 "Task Count (Asana)": str(no_team_task_total),
                 "Labels": "",
-                "Instructions": EPIC_INSTRUCTIONS,
+                "Instructions": instruction_texts.epic,
                 "Description": "",
                 "_kind": "no_team",
                 "_asana_gid": "",
-                "_adf_overrides": {"Instructions": EPIC_INSTRUCTIONS_ADF},
+                "_adf_overrides": {"Instructions": instruction_texts.epic_adf},
             }
         )
 
@@ -794,9 +828,9 @@ def build_team_project_rows(
             )
         else:
             project_url = build_project_url(resolved_workspace_gid, row["gid"])
-        instructions = PERSONAL_TASK_INSTRUCTIONS if is_personal else TASK_INSTRUCTIONS
+        instructions = instruction_texts.personal_task if is_personal else instruction_texts.task
         instructions_adf = (
-            PERSONAL_TASK_INSTRUCTIONS_ADF if is_personal else TASK_INSTRUCTIONS_ADF
+            instruction_texts.personal_task_adf if is_personal else instruction_texts.task_adf
         )
         # Fetch project-level custom fields
         project_custom_fields = _fetch_project_custom_fields(connection, row["gid"])
@@ -886,6 +920,7 @@ def export_team_project_jira_csv(
     filename: Optional[str] = None,
     workspace_gid: Optional[str] = None,
     include_empty_projects: bool = False,
+    settings: MigrationSettings = DEFAULT_SETTINGS,
 ) -> Path:
     database = Database(db_path=database_path)
     output_dir = output_dir.resolve()
@@ -901,7 +936,10 @@ def export_team_project_jira_csv(
     with database.connect() as connection:
         database.initialize(connection)
         epic_rows, task_rows = build_team_project_rows(
-            connection, workspace_gid, include_empty_projects=include_empty_projects
+            connection,
+            workspace_gid,
+            include_empty_projects=include_empty_projects,
+            settings=settings,
         )
 
         # Discover custom field names to build dynamic columns
@@ -937,6 +975,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         filename=args.filename,
         workspace_gid=args.workspace_gid,
         include_empty_projects=args.include_empty_projects,
+        settings=load_migration_settings(resolve_credentials_path()),
     )
     logger.info("Jira team/project import export completed: %s", output_path)
 

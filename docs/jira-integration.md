@@ -79,7 +79,7 @@ python3 -m scripts.atlassian.get_jira_migration_decisions \\
 Optional flags:
 - `--prod` to target the production Jira site (`JIRA_BASE_URL`); omit to use the sandbox (`JIRA_SANDBOX_BASE_URL`).
 - `--jql <expression>` to pick the issue set explicitly (order is forced to `created ASC`). Omit to derive the default from stored project keys.
-- `--field-name <name>` display name of the decision field (default `Asana Migration Decision`; resolved case-insensitively and used in the derived JQL).
+- `--field-name <name>` display name of the decision field (default: the profile's `MIGRATION_DECISION_FIELD_NAME`, else `Asana Migration Decision`; resolved case-insensitively and used in the derived JQL).
 - Jira searches always request 100 issues per page, Jira's API limit; next-page-token pagination retrieves larger result sets.
 - `--include-empty` to store mapped issues even when the decision field is blank (default skips blanks).
 - `--database <path>` SQLite file to update (default `data/asana.sqlite`).
@@ -233,6 +233,8 @@ Optional flags:
 
 ### Create Team/Project Jira Issues (Direct API)
 A direct alternative to the CSV import above: instead of generating a CSV for the Jira import wizard, this creates the same Team→Epic and Project→Task hierarchy by POSTing to the Jira Cloud REST API. It reuses the exact row-building logic of `export_team_project_jira_csv`, resolves issue types and fields through `createmeta`, creates Epics first, and links each Project Task to its team's Epic. The default configuration resolves the setup fields by name: `Team URL`→`Asana Team Link`, `Project URL`→`Asana Project Link`, `Project Status`→`Asana Current Project Status`, `Task Count (Asana)`→`Asana Task Count`, and `Last Working Day`→`Asana Last Working Day`. `--field-map` can override these defaults. A mapped field must be on the relevant Jira create screen or its value is warned-and-skipped. Created issues are recorded in `team_project_jira_mappings`, so re-runs skip existing mappings. Requires `ATLASSIAN_USERNAME`/`ATLASSIAN_TOKEN` in the resolved credentials.
+
+The Epic and Task instruction text is built from the profile's `MIGRATION_*` settings (epic deadline sentence, Atlassian team name in the archive wording, archive option labels; see the README profile section). On first use in the Interactive CLI, the Direct-API create action prompts for these values, saves them to the profile, and asks for confirmation on later runs. The CSV export ([Export Team Project Jira CSV](#export-team-project-jira-csv)) reads the same saved values without prompting. Unset values give neutral text and omit the deadline sentence.
 ```bash
 # Preview the payloads without creating anything (sandbox)
 python3 -m scripts.create_team_project_jira_issues --jira-project-key MIG --dry-run
@@ -293,7 +295,7 @@ Writes a run report CSV (`personal_project_url_update_report.csv`) with `asana_g
 ### Set Project "Last Working Day" Field
 New issues created by [Create Team/Project Jira Issues](#create-teamproject-jira-issues-direct-api) already get this date at creation (the `Last Working Day`→`customfield_11475` field-map entry). This script is the way to **update** it on issues that already exist — a re-run after more Asana data has synced, or a backfill of issues created before the field was folded in.
 
-Pushes each Asana project's most recent task-update date onto the migrated Jira **Task** issue that represents it. The value is `MAX(tasks.modified_at)` per project — the same figure the [project last-updated report](reports.md) computes — written as a `YYYY-MM-DD` date string to the "Last working day" date custom field (`customfield_11475` by default) via an in-place `PUT /rest/api/3/issue/{key}` (comments, attachments, and history are preserved). The same PUT can also write the project's actual task count onto a "Task Count (Asana)" numeric custom field when `--task-count-field-id` is supplied (no default — omit the flag to skip that field entirely). Only `team_project_jira_mappings` rows with `kind='project'` are targeted (Team→Epic issues are left alone). Projects with no tasks (no last-updated date) are skipped (`skipped-no-date`, field left untouched); unmapped projects are `skipped-unmapped`.
+Pushes each Asana project's most recent task-update date onto the migrated Jira **Task** issue that represents it. The value is `MAX(tasks.modified_at)` per project — the same figure the [project last-updated report](reports.md) computes — written as a `YYYY-MM-DD` date string to the "Last working day" date custom field (`customfield_11475` by default, or the profile's `MIGRATION_LAST_WORKING_DAY_FIELD_ID`; `--field-id` overrides both) via an in-place `PUT /rest/api/3/issue/{key}` (comments, attachments, and history are preserved). The same PUT can also write the project's actual task count onto a "Task Count (Asana)" numeric custom field when `--task-count-field-id` is supplied (no default — omit the flag to skip that field entirely). Only `team_project_jira_mappings` rows with `kind='project'` are targeted (Team→Epic issues are left alone). Projects with no tasks (no last-updated date) are skipped (`skipped-no-date`, field left untouched); unmapped projects are `skipped-unmapped`.
 ```bash
 # Safe preview first (no writes):
 python3 -m scripts.atlassian.set_project_last_updated_jira_field --dry-run
