@@ -20,6 +20,7 @@ SUMMARY_TAB = "Summary"
 PROJECTS_TAB = "Projects"
 MULTI_SITE_TAB = "Multi-Site"
 UNMIGRATED_TAB = "Unmigrated"
+NO_TASKS_TAB = "No Tasks"
 
 
 def _column_index(ref: str) -> int:
@@ -153,12 +154,15 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
                 f"{SITE_ARCHIVE} Migrated",
                 MULTI_SITE_TAB,
                 UNMIGRATED_TAB,
+                NO_TASKS_TAB,
             ],
         )
 
     def test_archived_project_is_listed_with_archived_flag(self) -> None:
         self._project("proj_live", "Live Project")
         self._project("proj_old", "Old Project", archived=True)
+        self._task("task_live", ["proj_live"])
+        self._task("task_old", ["proj_old"])
         zf = self._run()
 
         records = self._projects_records(zf)
@@ -173,6 +177,7 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
         self._project("proj_other_site", "Other Site Only")
         self._task("task_1", ["proj_mapped"])
         self._task("task_2", ["proj_other_site"])
+        self._task("task_3", ["proj_unmapped"])
         self._map_task("task_1", "PRD-1", SITE_PROD)
         self._map_task("task_2", "ARC-1", SITE_ARCHIVE)
         zf = self._run(jira_sites=[SITE_PROD])
@@ -291,18 +296,54 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
         self.assertEqual(row["ATJM Migration Decision"], "Migrate")
         self.assertEqual(row["Task Count"], "2")
 
-    def test_zero_task_project_has_blank_percent_without_error(self) -> None:
+    def test_zero_task_projects_listed_only_on_no_tasks_tab(self) -> None:
         self._project("proj_empty", "Empty Project")
+        self._project("proj_real", "Real Project")
+        self._task("task_1", ["proj_real"])
+        self._atjm_ticket("proj_empty", "ATJM-7", SITE_PROD)
+        self._decision("proj_empty", "ATJM-7", "Migrate", SITE_PROD)
         zf = self._run(jira_sites=[SITE_PROD])
 
-        record = self._projects_records(zf)["proj_empty"]
+        no_tasks = _as_records(_read_sheet(zf, NO_TASKS_TAB))
 
-        self.assertEqual(record["Task Count"], "0")
-        self.assertEqual(record[f"{SITE_PROD} %"], "")
+        self.assertEqual([row["Project GID"] for row in no_tasks], ["proj_empty"])
+        self.assertEqual(no_tasks[0]["ATJM Ticket"], "ATJM-7")
+        self.assertEqual(no_tasks[0]["ATJM Migration Decision"], "Migrate")
+        self.assertNotIn("proj_empty", self._projects_records(zf))
+        self.assertEqual([row[0] for row in _read_sheet(zf, UNMIGRATED_TAB)[1:]], ["proj_real"])
+
+    def test_no_tasks_tab_is_last_and_empty_when_every_project_has_tasks(self) -> None:
+        self._project("proj_real", "Real Project")
+        self._task("task_1", ["proj_real"])
+        zf = self._run(jira_sites=[SITE_PROD])
+
+        self.assertEqual(_sheet_names(zf)[-1], NO_TASKS_TAB)
+        self.assertEqual(_read_sheet(zf, NO_TASKS_TAB)[1:], [])
+
+    def test_multi_site_tab_sorted_by_project_coverage(self) -> None:
+        self._project("proj_low", "Aardvark Partial")
+        self._project("proj_full", "Zebra Full")
+        self._task("low_1", ["proj_low"])
+        self._task("low_2", ["proj_low"])
+        self._task("low_3", ["proj_low"])
+        self._task("low_4", ["proj_low"])
+        self._map_task("low_1", "PRD-1", SITE_PROD)
+        self._map_task("low_2", "ARC-1", SITE_ARCHIVE)
+        self._task("full_1", ["proj_full"])
+        self._task("full_2", ["proj_full"])
+        self._map_task("full_1", "PRD-2", SITE_PROD)
+        self._map_task("full_2", "ARC-2", SITE_ARCHIVE)
+        zf = self._run(jira_sites=[SITE_PROD, SITE_ARCHIVE])
+
+        multi_rows = _read_sheet(zf, MULTI_SITE_TAB)[1:]
+
+        self.assertEqual([row[0] for row in multi_rows], ["proj_full", "proj_full", "proj_low", "proj_low"])
 
     def test_project_gids_scope_limits_projects_tab(self) -> None:
         self._project("proj_in", "In Scope")
         self._project("proj_out", "Out of Scope")
+        self._task("task_in", ["proj_in"])
+        self._task("task_out", ["proj_out"])
         zf = self._run(project_gids=["proj_in"])
 
         self.assertEqual(set(self._projects_records(zf)), {"proj_in"})
@@ -389,6 +430,130 @@ class ExportProjectImportStatusWorkbookTest(TestCase):
 
         self.assertEqual(metric[1], "1")
         self.assertEqual(self._summary_row(zf, SITE_PROD)["Asana Projects Migrated"], "1")
+
+    def test_previously_assigned_projects_excluded_from_every_tab(self) -> None:
+        self._project("proj_left_user", "blair@roblox.com's previously assigned tasks")
+        self._project("proj_no_email", "Kortney K Rupp's Previously Assigned Tasks")
+        self._project("proj_real", "Real Project")
+        self._task("task_1", ["proj_left_user"])
+        self._task("task_2", ["proj_no_email"])
+        self._task("task_3", ["proj_real"])
+        self._map_task("task_1", "PRD-1", SITE_PROD)
+        self._map_task("task_2", "PRD-2", SITE_PROD)
+        self._map_task("task_3", "PRD-3", SITE_PROD)
+        zf = self._run(jira_sites=[SITE_PROD])
+
+        self.assertEqual(set(self._projects_records(zf)), {"proj_real"})
+        self.assertEqual([row[0] for row in _read_sheet(zf, f"{SITE_PROD} Migrated")[1:]], ["proj_real"])
+        self.assertEqual([row[0] for row in _read_sheet(zf, UNMIGRATED_TAB)[1:]], [])
+        self.assertEqual(self._summary_row(zf, SITE_PROD)["Asana Projects Migrated"], "1")
+
+    def test_previously_assigned_match_ignores_lookalike_names(self) -> None:
+        self._project("proj_review", "Previously Assigned Tasks Review")
+        self._project("proj_planning", "Weekly previously assigned tasks planning")
+        self._task("task_1", ["proj_review"])
+        self._task("task_2", ["proj_planning"])
+        zf = self._run()
+
+        self.assertEqual(set(self._projects_records(zf)), {"proj_review", "proj_planning"})
+
+    def test_previously_assigned_project_mappings_do_not_produce_orphan_warning(self) -> None:
+        self._project("proj_left_user", "someone@roblox.com's previously assigned tasks")
+        self._task("task_1", ["proj_left_user"])
+        self._map_task("task_1", "PRD-1", SITE_PROD)
+
+        with self.assertNoLogs("scripts.export_project_import_status", level="WARNING"):
+            self._run(jira_sites=[SITE_PROD])
+
+    def test_site_tab_sorted_by_project_coverage_with_fully_covered_first(self) -> None:
+        self._project("proj_quarter", "Quarter Migrated")
+        self._project("proj_half", "Half Migrated")
+        self._project("proj_full", "Fully Migrated")
+        for index in range(4):
+            self._task(f"quarter_{index}", ["proj_quarter"])
+        self._map_task("quarter_0", "PRD-1", SITE_PROD)
+        for index in range(2):
+            self._task(f"half_{index}", ["proj_half"])
+        self._map_task("half_0", "PRD-2", SITE_PROD)
+        for index in range(2):
+            self._task(f"full_{index}", ["proj_full"])
+            self._map_task(f"full_{index}", f"PRD-{10 + index}", SITE_PROD)
+        zf = self._run(jira_sites=[SITE_PROD])
+
+        self.assertEqual(
+            [row[0] for row in _read_sheet(zf, f"{SITE_PROD} Migrated")[1:]],
+            ["proj_full", "proj_half", "proj_quarter"],
+        )
+
+    def test_projects_tab_sorted_by_project_coverage_with_fully_covered_first(self) -> None:
+        self._project("proj_partial", "Partial")
+        self._project("proj_split", "Split Across Sites")
+        for index in range(2):
+            self._task(f"partial_{index}", ["proj_partial"])
+        self._map_task("partial_0", "PRD-1", SITE_PROD)
+        for index in range(2):
+            self._task(f"split_{index}", ["proj_split"])
+        self._map_task("split_0", "PRD-2", SITE_PROD)
+        self._map_task("split_1", "ARC-1", SITE_ARCHIVE)
+        zf = self._run(jira_sites=[SITE_PROD, SITE_ARCHIVE])
+
+        self.assertEqual([row[0] for row in _read_sheet(zf, PROJECTS_TAB)[1:]], ["proj_split", "proj_partial"])
+
+    def test_split_project_is_fully_covered_across_selected_sites(self) -> None:
+        self._project("proj_split", "Split Project")
+        for index in range(10):
+            self._task(f"task_{index}", ["proj_split"])
+        for index in range(9):
+            self._map_task(f"task_{index}", f"PRD-{index}", SITE_PROD)
+        self._map_task("task_9", "ARC-9", SITE_ARCHIVE)
+        zf = self._run(jira_sites=[SITE_PROD, SITE_ARCHIVE])
+
+        record = self._projects_records(zf)["proj_split"]
+
+        self.assertEqual(record["Covered Tasks"], "10")
+        self.assertEqual(record["Project Coverage %"], "100.0%")
+        self.assertEqual(record["Fully Covered"], "Yes")
+        self.assertEqual(record[f"{SITE_PROD} %"], "90.0%")
+        self.assertEqual(record[f"{SITE_ARCHIVE} %"], "10.0%")
+
+    def test_coverage_counts_task_mapped_on_two_sites_once(self) -> None:
+        self._project("proj_shared", "Shared Task")
+        self._task("task_1", ["proj_shared"])
+        self._task("task_2", ["proj_shared"])
+        self._map_task("task_1", "PRD-1", SITE_PROD)
+        self._map_task("task_1", "ARC-1", SITE_ARCHIVE)
+        zf = self._run(jira_sites=[SITE_PROD, SITE_ARCHIVE])
+
+        record = self._projects_records(zf)["proj_shared"]
+
+        self.assertEqual(record["Covered Tasks"], "1")
+        self.assertEqual(record["Project Coverage %"], "50.0%")
+        self.assertEqual(record["Fully Covered"], "No")
+
+    def test_coverage_ignores_mappings_on_unselected_sites(self) -> None:
+        self._project("proj_other", "Other Site Only")
+        self._task("task_1", ["proj_other"])
+        self._map_task("task_1", "ARC-1", SITE_ARCHIVE)
+        zf = self._run(jira_sites=[SITE_PROD])
+
+        record = self._projects_records(zf)["proj_other"]
+
+        self.assertEqual(record["Covered Tasks"], "0")
+        self.assertEqual(record["Fully Covered"], "No")
+
+    def test_summary_counts_projects_fully_covered_on_selected_sites(self) -> None:
+        self._project("proj_full", "Full")
+        self._project("proj_partial", "Partial")
+        self._task("full_1", ["proj_full"])
+        self._task("partial_1", ["proj_partial"])
+        self._task("partial_2", ["proj_partial"])
+        self._map_task("full_1", "PRD-1", SITE_PROD)
+        self._map_task("partial_1", "PRD-2", SITE_PROD)
+        zf = self._run(jira_sites=[SITE_PROD])
+
+        summary_rows = {row[0]: row[1] for row in _read_sheet(zf, SUMMARY_TAB) if row}
+
+        self.assertEqual(summary_rows["Projects fully covered (selected sites)"], "1")
 
     def test_workbook_structure_is_valid_xlsx(self) -> None:
         zf = self._run()

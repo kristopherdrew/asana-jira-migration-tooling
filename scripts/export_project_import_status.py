@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export project import status as a reconciliation workbook: Projects, Multi-Site, Unmigrated."""
+"""Export project import status as a reconciliation workbook: Summary, Projects, <site> Migrated, Multi-Site, Unmigrated, No Tasks."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from src.lib.xlsx_writer import write_workbook
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
 MULTI_SITE_FLAG = "Yes - see Multi-Site tab"
+PREVIOUSLY_ASSIGNED_SUFFIX = "'s previously assigned tasks"
 logger = logging.getLogger(__name__)
 
 
@@ -48,6 +49,13 @@ class ProjectRecord:
     @property
     def task_count(self) -> int:
         return len(self.task_gids)
+
+    @property
+    def covered_count(self) -> int:
+        covered: set[str] = set()
+        for mapping in self.site_mappings.values():
+            covered.update(mapping.mapped_task_gids)
+        return len(covered)
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -121,7 +129,13 @@ def _project_key(jira_key: str) -> str:
     return jira_key.split("-", 1)[0]
 
 
-def _load_projects(connection: sqlite3.Connection, project_gids: Optional[list[str]]) -> dict[str, ProjectRecord]:
+def _is_previously_assigned_project(name: str) -> bool:
+    return name.strip().lower().endswith(PREVIOUSLY_ASSIGNED_SUFFIX)
+
+
+def _load_projects(
+    connection: sqlite3.Connection, project_gids: Optional[list[str]]
+) -> tuple[dict[str, ProjectRecord], set[str]]:
     rows = connection.execute(
         """
         SELECT p.gid, p.name, COALESCE(t.name, p.team_name, ''), COALESCE(p.archived, 0)
@@ -130,11 +144,16 @@ def _load_projects(connection: sqlite3.Connection, project_gids: Optional[list[s
         """
     ).fetchall()
     scope = set(project_gids) if project_gids else None
-    return {
-        gid: ProjectRecord(gid=gid, name=name or "", team=team or "", archived=bool(archived))
-        for gid, name, team, archived in rows
-        if scope is None or gid in scope
-    }
+    projects: dict[str, ProjectRecord] = {}
+    excluded: set[str] = set()
+    for gid, name, team, archived in rows:
+        if scope is not None and gid not in scope:
+            continue
+        if _is_previously_assigned_project(name or ""):
+            excluded.add(gid)
+            continue
+        projects[gid] = ProjectRecord(gid=gid, name=name or "", team=team or "", archived=bool(archived))
+    return projects, excluded
 
 
 def _load_project_tasks(connection: sqlite3.Connection, projects: dict[str, ProjectRecord]) -> None:
@@ -164,7 +183,7 @@ def _count_unsynced_project_refs(connection: sqlite3.Connection) -> int:
 
 
 def _load_site_mappings(
-    connection: sqlite3.Connection, projects: dict[str, ProjectRecord], sites: list[str]
+    connection: sqlite3.Connection, projects: dict[str, ProjectRecord], sites: list[str], excluded: set[str]
 ) -> None:
     rows = connection.execute(
         f"""
@@ -180,7 +199,8 @@ def _load_site_mappings(
     for site, project_gid, task_gid, jira_key in rows:
         project = projects.get(project_gid)
         if project is None:
-            orphan_gids.add(project_gid)
+            if project_gid not in excluded:
+                orphan_gids.add(project_gid)
             continue
         mapping = project.site_mappings.setdefault(site, SiteMapping())
         mapping.mapped_task_gids.add(task_gid)
@@ -230,8 +250,20 @@ def _percent(mapped: int, total: int) -> str:
     return f"{100.0 * mapped / total:.1f}%" if total > 0 else ""
 
 
+def _ratio(part: int, total: int) -> float:
+    return part / total if total > 0 else 0.0
+
+
 def _sort_key(project: ProjectRecord) -> tuple[str, str, str]:
     return (project.team.lower(), project.name.lower(), project.gid)
+
+
+def _coverage_sort_key(project: ProjectRecord) -> tuple:
+    return (-_ratio(project.covered_count, project.task_count), *_sort_key(project))
+
+
+def _is_fully_covered(project: ProjectRecord) -> bool:
+    return project.task_count > 0 and project.covered_count == project.task_count
 
 
 def _archived_label(project: ProjectRecord) -> str:
@@ -240,6 +272,10 @@ def _archived_label(project: ProjectRecord) -> str:
 
 def _migrated_label(project: ProjectRecord) -> str:
     return "Yes" if project.site_mappings else "No"
+
+
+def _fully_covered_label(project: ProjectRecord) -> str:
+    return "Yes" if _is_fully_covered(project) else "No"
 
 
 def _build_projects_tab(projects: list[ProjectRecord], sites: list[str]) -> list[list]:
@@ -252,6 +288,9 @@ def _build_projects_tab(projects: list[ProjectRecord], sites: list[str]) -> list
         "ATJM Ticket",
         "ATJM Migration Decision",
         "Task Count",
+        "Covered Tasks",
+        "Project Coverage %",
+        "Fully Covered",
     ]
     for site in sites:
         header.extend([f"{site} Project Key", f"{site} Mapped", f"{site} %"])
@@ -259,6 +298,7 @@ def _build_projects_tab(projects: list[ProjectRecord], sites: list[str]) -> list
 
     rows = [header]
     for project in projects:
+        covered = project.covered_count
         row = [
             project.gid,
             project.name,
@@ -268,6 +308,9 @@ def _build_projects_tab(projects: list[ProjectRecord], sites: list[str]) -> list
             project.atjm_ticket,
             project.decision,
             project.task_count,
+            covered,
+            _percent(covered, project.task_count),
+            _fully_covered_label(project),
         ]
         for site in sites:
             mapping = project.site_mappings.get(site)
@@ -330,6 +373,22 @@ def _build_site_migrated_tab(projects: list[ProjectRecord], sites: list[str], si
     return _build_projects_tab(migrated, [site])
 
 
+def _build_no_tasks_tab(projects: list[ProjectRecord]) -> list[list]:
+    rows = [["Project GID", "Project Name", "Team", "Archived", "ATJM Ticket", "ATJM Migration Decision"]]
+    for project in projects:
+        rows.append(
+            [
+                project.gid,
+                project.name,
+                project.team,
+                _archived_label(project),
+                project.atjm_ticket,
+                project.decision,
+            ]
+        )
+    return rows
+
+
 def _build_summary_tab(projects: list[ProjectRecord], sites: list[str], unsynced_refs: int) -> list[list]:
     header = [
         "Jira Site",
@@ -379,6 +438,8 @@ def _build_summary_tab(projects: list[ProjectRecord], sites: list[str], unsynced
     multi_site_count = sum(1 for project in projects if len(project.site_mappings) >= 2)
     rows.append([])
     rows.append(["Projects mapped to 2+ selected sites", multi_site_count])
+    fully_covered_count = sum(1 for project in projects if _is_fully_covered(project))
+    rows.append(["Projects fully covered (selected sites)", fully_covered_count])
     rows.append(["Unsynced project GIDs referenced by tasks (workspace-wide)", unsynced_refs])
 
     rows.append([])
@@ -417,21 +478,24 @@ def export_project_import_status_workbook(
 
         logger.info("Generating workbook for sites: %s", ", ".join(sites))
 
-        projects = _load_projects(connection, project_gids)
+        projects, excluded = _load_projects(connection, project_gids)
         _load_project_tasks(connection, projects)
-        _load_site_mappings(connection, projects, sites)
+        _load_site_mappings(connection, projects, sites, excluded)
         _load_atjm_tickets(connection, projects, sites)
         _load_decisions(connection, projects, sites)
         unsynced_refs = _count_unsynced_project_refs(connection)
 
-        ordered = sorted(projects.values(), key=_sort_key)
-        multi_site = [p for p in ordered if len(p.site_mappings) >= 2]
+        with_tasks = [project for project in projects.values() if project.task_count > 0]
+        no_tasks = sorted((project for project in projects.values() if project.task_count == 0), key=_sort_key)
+        by_coverage = sorted(with_tasks, key=_coverage_sort_key)
+        multi_site = [p for p in by_coverage if len(p.site_mappings) >= 2]
         sheets = [
-            ("Summary", _build_summary_tab(ordered, sites, unsynced_refs)),
-            ("Projects", _build_projects_tab(ordered, sites)),
-            *[(f"{site} Migrated", _build_site_migrated_tab(ordered, sites, site)) for site in sites],
+            ("Summary", _build_summary_tab(by_coverage, sites, unsynced_refs)),
+            ("Projects", _build_projects_tab(by_coverage, sites)),
+            *[(f"{site} Migrated", _build_site_migrated_tab(by_coverage, sites, site)) for site in sites],
             ("Multi-Site", _build_multi_site_tab(multi_site, sites)),
-            ("Unmigrated", _build_unmigrated_tab(ordered)),
+            ("Unmigrated", _build_unmigrated_tab(by_coverage)),
+            ("No Tasks", _build_no_tasks_tab(no_tasks)),
         ]
 
         write_workbook(output_path, sheets)
