@@ -45,6 +45,7 @@ IDENTIFIER_COLUMNS = {
     "task_gid",
     "user_gid",
     "user_task_list_gid",
+    "value_gid",
     "workspace_gid",
 }
 
@@ -84,6 +85,7 @@ NAME_COLUMNS = {
     "tag_name",
     "team_name",
     "user_name",
+    "value_name",
     "workspace_name",
 }
 

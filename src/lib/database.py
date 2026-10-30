@@ -411,6 +411,19 @@ CREATE TABLE IF NOT EXISTS project_custom_fields (
 );
 """
 
+PROJECT_CUSTOM_FIELD_VALUES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS project_custom_field_values (
+    project_gid TEXT NOT NULL,
+    custom_field_gid TEXT NOT NULL,
+    value_gid TEXT NOT NULL,
+    value_name TEXT,
+    position INTEGER NOT NULL,
+    synced_at TEXT NOT NULL,
+    PRIMARY KEY (project_gid, custom_field_gid, value_gid),
+    FOREIGN KEY (project_gid) REFERENCES projects(gid)
+);
+"""
+
 PROJECT_CUSTOM_FIELD_SETTINGS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS project_custom_field_settings (
     project_gid TEXT NOT NULL,
@@ -810,6 +823,7 @@ class Database:
         connection.executescript(TEAM_SCHEMA)
         connection.executescript(PROJECT_SCHEMA)
         connection.executescript(PROJECT_CUSTOM_FIELDS_SCHEMA)
+        connection.executescript(PROJECT_CUSTOM_FIELD_VALUES_SCHEMA)
         connection.executescript(PROJECT_CUSTOM_FIELD_SETTINGS_SCHEMA)
         connection.executescript(PROJECT_MEMBERS_SCHEMA)
         connection.executescript(PROJECT_UPDATES_SCHEMA)
@@ -1027,7 +1041,9 @@ class Database:
         if not project_gid:
             return
         connection.execute("DELETE FROM project_custom_fields WHERE project_gid = ?", (project_gid,))
+        connection.execute("DELETE FROM project_custom_field_values WHERE project_gid = ?", (project_gid,))
         rows = []
+        value_rows = []
         for field in custom_fields:
             if not isinstance(field, dict):
                 continue
@@ -1035,6 +1051,17 @@ class Database:
             custom_field_gid = field.get("gid")
             if not custom_field_gid:
                 continue
+            for position, value in enumerate(_multi_value_entries(field)):
+                value_rows.append(
+                    {
+                        "project_gid": project_gid,
+                        "custom_field_gid": custom_field_gid,
+                        "value_gid": value.get("gid"),
+                        "value_name": value.get("name"),
+                        "position": position,
+                        "synced_at": synced_at.isoformat(),
+                    }
+                )
             rows.append(
                 {
                     "project_gid": project_gid,
@@ -1065,6 +1092,18 @@ class Database:
                 """,
             rows,
         )
+        if value_rows:
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO project_custom_field_values (
+                    project_gid, custom_field_gid, value_gid, value_name, position, synced_at
+                )
+                VALUES (
+                    :project_gid, :custom_field_gid, :value_gid, :value_name, :position, :synced_at
+                )
+                """,
+                value_rows,
+            )
 
     def upsert_portfolio(self, connection: sqlite3.Connection, portfolio: Dict[str, Any], synced_at: datetime) -> None:
         owner = portfolio.get("owner") or {}
@@ -3510,6 +3549,19 @@ def _bool_to_int(value: Any) -> Optional[int]:
     if value is None:
         return None
     return 1 if bool(value) else 0
+
+
+def _multi_value_entries(field: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return every selected person or multi-select option on a custom field payload."""
+    if field.get("type") == "people":
+        raw = field.get("people_value") or []
+    elif field.get("type") == "multi_enum":
+        raw = field.get("multi_enum_values") or []
+    else:
+        return []
+    if isinstance(raw, dict):
+        raw = [raw]
+    return [entry for entry in raw if isinstance(entry, dict) and entry.get("gid")]
 
 
 def _serialize_recurrence(recurrence: Any) -> Optional[str]:
