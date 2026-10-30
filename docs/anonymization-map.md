@@ -291,6 +291,17 @@ Views are included because they are queryable SQL objects, but the anonymizer on
 | `enabled` | INTEGER |  | no | none | preserved | Boolean/flag value preserved. |
 | `synced_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
 
+#### `project_custom_field_values`
+
+| Column | Type | PK | Anonymized | Method | Replacement shape | Notes |
+|---|---|---|---|---|---|---|
+| `project_gid` | TEXT | ✓ | yes | identifier | `gid_<hash>` | Deterministic fake identifier; join relationships remain consistent. |
+| `custom_field_gid` | TEXT | ✓ | yes | identifier | `gid_<hash>` | Deterministic fake identifier; join relationships remain consistent. |
+| `value_gid` | TEXT | ✓ | yes | identifier | `gid_<hash>` | Deterministic fake identifier; join relationships remain consistent. |
+| `value_name` | TEXT |  | yes | name | `<Column Label> <hash>` | Deterministic fake display/name value. |
+| `position` | INTEGER |  | no | none | preserved | Numeric/count value preserved. |
+| `synced_at` | TEXT |  | no | none | preserved | Timestamp/date value preserved. |
+
 #### `project_custom_field_settings`
 
 | Column | Type | PK | Anonymized | Method | Replacement shape | Notes |

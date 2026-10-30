@@ -265,6 +265,15 @@ TABLE_METADATA: Dict[str, TableMeta] = {
         "_replace_project_custom_fields (via upsert_project)",
         "Full-replace per project_gid. PK (project_gid, custom_field_gid).",
     ),
+    "project_custom_field_values": _m(
+        "project_custom_field_values",
+        "Project sub-resources",
+        "Each person (people fields) or option (multi-select fields) selected on a project custom field.",
+        "Derived from each project's custom_fields people_value / multi_enum_values during project sync.",
+        ["scripts/get_projects.py", "scripts/get_incremental_updates.py"],
+        "_replace_project_custom_fields (via upsert_project)",
+        "Full-replace per project_gid. PK (project_gid, custom_field_gid, value_gid); position preserves Asana order.",
+    ),
     "project_custom_field_settings": _m(
         "project_custom_field_settings",
         "Project sub-resources",

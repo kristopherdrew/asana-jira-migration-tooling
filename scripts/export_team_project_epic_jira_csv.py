@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
+import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
@@ -26,7 +27,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.lib.database import Database, resolve_default_db_path
 from src.lib.logging_utils import configure_logging, resolve_log_level
-from scripts.atlassian.export_project_to_jira_csv import fetch_project_update_comment_rows
+from scripts.atlassian.export_project_to_jira_csv import (
+    fetch_project_update_comment_rows,
+    format_user_display_name,
+    load_user_display_names,
+    load_user_emails,
+    resolve_atlassian_identity,
+)
 
 DEFAULT_DB_PATH = "data/asana.sqlite"
 DEFAULT_OUTPUT_DIR = "exports"
@@ -62,6 +69,30 @@ def _discover_custom_field_names(
         ).fetchall()
 
     return [f["name"] for f in fields]
+
+
+def _discover_repeated_field_names(
+    connection: sqlite3.Connection,
+    scope_gids: Optional[list[str]] = None,
+) -> List[tuple[str, str]]:
+    """Return (name, type) for people and multi-select fields with at least one selected value."""
+    scope_filter = ""
+    params: list[str] = []
+    if scope_gids:
+        placeholders = ",".join("?" * len(scope_gids))
+        scope_filter = f"AND v.project_gid IN ({placeholders})"
+        params = list(scope_gids)
+    fields = connection.execute(
+        f"""SELECT f.name AS name, MIN(f.type) AS type
+            FROM project_custom_field_values v
+            JOIN project_custom_fields f
+              ON f.project_gid = v.project_gid AND f.custom_field_gid = v.custom_field_gid
+            WHERE 1 = 1 {scope_filter}
+            GROUP BY f.name
+            ORDER BY f.name""",
+        params,
+    ).fetchall()
+    return [(f["name"], f["type"]) for f in fields]
 
 
 def _format_comment_for_jira(comment: Dict, connection: sqlite3.Connection) -> str:
@@ -124,11 +155,15 @@ def _format_comments_for_issue(comments: List[Dict], connection: sqlite3.Connect
 
 def _build_phase1_epic_rows(
     connection: sqlite3.Connection,
+    user_map: Dict[str, Dict[str, Optional[str]]],
+    user_display_names: Dict[str, str],
+    user_emails: Dict[str, str],
     scope_gids: Optional[list[str]] = None,
-) -> List[Dict]:
+) -> tuple[List[Dict], List[str]]:
     """Build epic rows from projects table with custom fields for Phase 1 export.
 
-    Returns project data as Epic rows with custom field columns (only those with values).
+    Returns the project rows and the ordered repeated-column keys for people and
+    multi-select fields (people fields expand to name/email/Atlassian ID triples).
     """
     if scope_gids:
         placeholders = ",".join("?" * len(scope_gids))
@@ -141,8 +176,9 @@ def _build_phase1_epic_rows(
             "SELECT gid, name, notes, archived FROM projects ORDER BY name"
         ).fetchall()
 
-    # Discover custom field names with populated values for this scope
     custom_field_names = _discover_custom_field_names(connection, scope_gids)
+    repeated_fields = _discover_repeated_field_names(connection, scope_gids)
+    max_values: Dict[str, int] = {name: 0 for name, _ in repeated_fields}
 
     rows = []
     for project in projects:
@@ -154,7 +190,6 @@ def _build_phase1_epic_rows(
             "_asana_gid": project["gid"],
         }
 
-        # Add custom field columns (fetch values for this project)
         for field_name in custom_field_names:
             field_row = connection.execute(
                 """SELECT type, enum_value_name, number_value, text_value
@@ -165,7 +200,6 @@ def _build_phase1_epic_rows(
 
             field_value = ""
             if field_row:
-                # Extract value based on field type
                 if field_row["type"] == "enum":
                     field_value = field_row["enum_value_name"] or ""
                 elif field_row["type"] == "number":
@@ -175,10 +209,52 @@ def _build_phase1_epic_rows(
 
             row[field_name] = field_value
 
+        for field_name, field_type in repeated_fields:
+            values = connection.execute(
+                """SELECT v.value_gid, v.value_name
+                   FROM project_custom_field_values v
+                   JOIN project_custom_fields f
+                     ON f.project_gid = v.project_gid AND f.custom_field_gid = v.custom_field_gid
+                   WHERE v.project_gid = ? AND f.name = ?
+                   ORDER BY v.position""",
+                [project["gid"], field_name],
+            ).fetchall()
+            max_values[field_name] = max(max_values[field_name], len(values))
+            for index, value in enumerate(values, start=1):
+                gid = value["value_gid"]
+                if field_type == "people":
+                    account_id, _ = resolve_atlassian_identity(user_map, gid)
+                    row[f"{field_name}__{index}"] = format_user_display_name(
+                        gid, user_display_names.get(gid) or value["value_name"]
+                    )
+                    row[f"{field_name}_email__{index}"] = user_emails.get(gid, "")
+                    row[f"{field_name}_atlassian_id__{index}"] = account_id
+                else:
+                    row[f"{field_name}__{index}"] = value["value_name"] or ""
+
         rows.append(row)
 
-    logger.info("Built %d epic rows from projects table with %d custom fields", len(rows), len(custom_field_names))
-    return rows
+    repeated_columns: List[str] = []
+    for field_name, field_type in repeated_fields:
+        for index in range(1, max_values[field_name] + 1):
+            if field_type == "people":
+                repeated_columns.extend(
+                    [
+                        f"{field_name}__{index}",
+                        f"{field_name}_email__{index}",
+                        f"{field_name}_atlassian_id__{index}",
+                    ]
+                )
+            else:
+                repeated_columns.append(f"{field_name}__{index}")
+
+    logger.info(
+        "Built %d epic rows from projects table with %d custom fields and %d repeated columns",
+        len(rows),
+        len(custom_field_names),
+        len(repeated_columns),
+    )
+    return rows, repeated_columns
 
 
 def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
@@ -365,68 +441,55 @@ def export_team_project_epic_jira_csv(
         existing_mappings = _get_existing_mappings(connection, jira_site_key, project_gids)
         logger.info("Found %d existing project→Jira mappings", len(existing_mappings))
 
-        # Build epic rows directly from projects table (Phase 1 only needs basic project data)
-        epic_rows = _build_phase1_epic_rows(connection, project_gids)
+        user_map = database.load_atlassian_account_map(connection)
+        user_display_names = load_user_display_names(connection)
+        user_emails = load_user_emails(connection)
+        epic_rows, repeated_columns = _build_phase1_epic_rows(
+            connection, user_map, user_display_names, user_emails, project_gids
+        )
 
         # Prepare output rows with proper External IDs and Jira keys
         output_rows, comment_count = _build_export_rows(
             connection, epic_rows, path, existing_mappings, project_gids
         )
 
-    # Expand multi-comment rows into separate Comment columns
-    # Find maximum number of comments for any row
     max_comments = max(
         (len(row.get("_comments", [])) for row in output_rows),
         default=0
     )
 
-    # Expand _comments into separate Comment_1, Comment_2, etc. columns for CSV writing
-    # Then remove the _comments field
     for row in output_rows:
         comments = row.pop("_comments", [])
         for i, comment in enumerate(comments):
-            formatted = _format_comment_for_jira(comment, connection)
-            # Store as Comment_1, Comment_2, etc. for now (will be renamed in CSV header)
-            row[f"Comment_{i + 1}"] = formatted
+            row[f"Comment__{i + 1}"] = _format_comment_for_jira(comment, connection)
 
-    # Determine CSV columns (filter out internal fields, preserve order)
-    # Collect all possible columns from all rows to ensure Comment columns are included
     all_keys = set()
     for row in output_rows:
         all_keys.update(k for k in row.keys() if not k.startswith("_"))
 
-    # Preserve standard column order: Issue Type, Summary, Description, then custom fields, then Comments, then task_gid, External issue ID
     standard_cols = ["Issue Type", "Summary", "Description"]
-    custom_cols = sorted([k for k in all_keys if k not in standard_cols + ["task_gid", "External issue ID"] and not k.startswith("Comment_")])
-    comment_cols = [f"Comment_{i + 1}" for i in range(max_comments)] if max_comments > 0 else []
     special_cols = ["task_gid", "External issue ID"]
+    repeated_set = set(repeated_columns)
+    reserved = set(standard_cols + special_cols) | repeated_set
+    custom_cols = sorted(
+        k for k in all_keys if k not in reserved and not k.startswith("Comment__")
+    )
+    repeated_cols = [c for c in repeated_columns if c in all_keys]
+    comment_cols = [f"Comment__{i + 1}" for i in range(max_comments)] if max_comments > 0 else []
 
-    csv_columns = standard_cols + custom_cols + comment_cols + special_cols
-    # Only include columns that actually exist in all_keys
+    csv_columns = standard_cols + custom_cols + repeated_cols + comment_cols + special_cols
     csv_columns = [c for c in csv_columns if c in all_keys]
 
     logger.debug("CSV columns: %s", csv_columns)
 
-    # Write CSV with support for duplicate "Comment" column names
-    # Rename Comment_1, Comment_2, etc. back to "Comment" for Jira's importer
-    csv_header = []
-    column_mapping = {}  # Maps Comment_N to its position in the actual header
-    for col in csv_columns:
-        if col.startswith("Comment_"):
-            csv_header.append("Comment")
-        else:
-            csv_header.append(col)
+    csv_header = [re.sub(r"__\d+$", "", col) for col in csv_columns]
 
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(csv_header)
 
         for row in output_rows:
-            row_values = []
-            for col in csv_columns:
-                value = row.get(col, "")
-                row_values.append(value if value else "")
-            writer.writerow(row_values)
+            writer.writerow([row.get(col, "") or "" for col in csv_columns])
 
     project_count = len([r for r in output_rows if r.get("Issue Type") in ("Epic", "Deliverable")])
     logger.info(

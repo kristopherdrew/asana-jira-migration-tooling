@@ -428,6 +428,25 @@ Custom field values set on the project itself.
 | `enabled` | INTEGER |  |
 | `synced_at` | TEXT |  |
 
+#### `project_custom_field_values`
+
+Each person (people fields) or option (multi-select fields) selected on a project custom field.
+
+- **Source:** Derived from each project's custom_fields people_value / multi_enum_values during project sync.
+- **Populated by:** `scripts/get_projects.py`, `scripts/get_incremental_updates.py`
+- **Written by:** `_replace_project_custom_fields (via upsert_project)`
+- **Write semantics:** Full-replace per project_gid. PK (project_gid, custom_field_gid, value_gid); position preserves Asana order.
+- **Foreign keys:** project_gid → projects(gid)
+
+| Column | Type | PK |
+|---|---|---|
+| `project_gid` | TEXT | ✓ |
+| `custom_field_gid` | TEXT | ✓ |
+| `value_gid` | TEXT | ✓ |
+| `value_name` | TEXT |  |
+| `position` | INTEGER |  |
+| `synced_at` | TEXT |  |
+
 #### `project_custom_field_settings`
 
 Per-project custom field configuration (importance, global-to-workspace).
