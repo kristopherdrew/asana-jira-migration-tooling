@@ -14,6 +14,7 @@ from src.tasks.tasks import collect_user_gids_from_task, fetch_project_tasks
 from scripts.get_tasks import (
     _save_completed_teams,
     build_missing_project_candidate,
+    is_syncable_project_gid,
     write_missing_project_candidates,
 )
 
@@ -310,3 +311,12 @@ class GetTasksHelpersTest(TestCase):
 
         self.assertEqual(payload["missing_project_gids"], ["proj_other"])
         self.assertEqual(payload["projects"][0]["project_gid"], "proj_other")
+
+
+class SyncableProjectGidTest(TestCase):
+    def test_numeric_gid_is_syncable(self):
+        self.assertTrue(is_syncable_project_gid("1213919862239844"))
+
+    def test_synthetic_gids_are_not_syncable(self):
+        for gid in ("proj_active", "proj_1", "personal_1214754256629913", "", None):
+            self.assertFalse(is_syncable_project_gid(gid), gid)

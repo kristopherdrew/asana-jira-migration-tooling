@@ -60,7 +60,7 @@ class GetTasksCliIntegrationTest(TestCase):
                     "determine_projects",
                     MagicMock(return_value=[
                         {
-                            "project_gid": "proj_1",
+                            "project_gid": "1000000000000001",
                             "project_name": "Project",
                             "team_name": "Team",
                         }
@@ -71,9 +71,13 @@ class GetTasksCliIntegrationTest(TestCase):
                 patch.object(get_tasks_cli, "fetch_subtasks", MagicMock(return_value=[])),
                 patch("src.lib.user_backfill.UserBackfill.ensure_users", autospec=True, return_value=None),
                 patch("src.lib.user_backfill.UserBackfill.prime", autospec=True, return_value=None),
-                patch.dict(environ, {"ASANA_JIRA_ENV_FILE": str(env_path)}, clear=False),
+                patch.dict(
+                    environ,
+                    {"ASANA_JIRA_ENV_FILE": str(env_path), "ASANA_JIRA_DB_PATH": str(database_path)},
+                    clear=False,
+                ),
             ):
-                get_tasks_cli.main(["--project-gid", "proj_1"])
+                get_tasks_cli.main(["--project-gid", "1000000000000001"])
 
             connection = sqlite3.connect(database_path)
             try:

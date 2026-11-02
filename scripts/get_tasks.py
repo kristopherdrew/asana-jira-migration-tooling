@@ -120,6 +120,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help=f"Number of concurrent workers for detail fetches (default: {DEFAULT_WORKERS}).",
     )
     parser.add_argument(
+        "--database",
+        default=None,
+        help="Path to the SQLite database (default: the active profile database).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
@@ -319,6 +324,11 @@ def process_tasks_for_project(
         detail_executor.shutdown(wait=True)
 
 
+def is_syncable_project_gid(project_gid: object) -> bool:
+    """Real Asana project GIDs are all digits; synthetic ones (personal_*, test ids) 400 the API."""
+    return str(project_gid).isdigit()
+
+
 def main(argv: Optional[Iterable[str]] = None) -> None:
     args = parse_args(argv)
     validate_scope_args(
@@ -343,7 +353,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=resolve_default_db_path(DEFAULT_DB_PATH))
+    database = Database(db_path=args.database or resolve_default_db_path(DEFAULT_DB_PATH))
     sync_time = synced_at_timestamp()
 
     with database.connect() as connection:
@@ -392,6 +402,17 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                     "Skipping team '%s' (%s) — marked complete in previous run.",
                     team_name or team_gid,
                     team_gid,
+                )
+                continue
+
+            if not is_syncable_project_gid(project_gid):
+                logger.warning(
+                    "(%s/%s) Skipping '%s' (%s): not a real Asana project GID%s.",
+                    index,
+                    total_projects,
+                    project_name,
+                    project_gid,
+                    "; personal tasks sync via get_personal_tasks" if str(project_gid).startswith("personal_") else "",
                 )
                 continue
 
