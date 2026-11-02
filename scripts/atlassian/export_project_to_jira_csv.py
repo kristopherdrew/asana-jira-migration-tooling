@@ -3935,7 +3935,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     if args.clear_jira_project_map:
         with database.connect() as connection:
             database.initialize(connection)
-            cleared = database.clear_jira_project_mappings(connection)
+            cleared = database.clear_jira_project_mappings(connection, jira_site_key=args.jira_site)
         logger.info("Cleared %s Jira project association(s).", cleared)
         return
 

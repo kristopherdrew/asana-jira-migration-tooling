@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import builtins
+import inspect
 import json
 import logging
 import os
@@ -1074,7 +1075,35 @@ def log_run(step: str, argv: Sequence[str], status: str, error: Optional[str] = 
         fp.write(f"{record}\n")
 
 
+_DATABASE_FLAG_CACHE: Dict[str, bool] = {}
+
+
+def script_accepts_database_flag(main_func: Callable) -> bool:
+    """True when the script module behind ``main_func`` defines a ``--database`` argument."""
+    module_name = getattr(main_func, "__module__", None)
+    module = sys.modules.get(module_name) if module_name else None
+    if module is None:
+        return False
+    if module_name not in _DATABASE_FLAG_CACHE:
+        try:
+            source = inspect.getsource(module)
+        except (OSError, TypeError):
+            source = ""
+        _DATABASE_FLAG_CACHE[module_name] = '"--database"' in source
+    return _DATABASE_FLAG_CACHE[module_name]
+
+
+def with_active_database(main_func: Callable, argv: List[str]) -> List[str]:
+    """Pin ``--database`` to the active profile DB for scripts that accept it, unless already given."""
+    if any(arg == "--database" or arg.startswith("--database=") for arg in argv):
+        return argv
+    if not script_accepts_database_flag(main_func):
+        return argv
+    return [*argv, "--database", str(active_db_path())]
+
+
 def run_script(main_func: Callable[[Optional[Iterable[str]]], None], argv: List[str]):
+    argv = with_active_database(main_func, argv)
     export_mains = {
         export_all_reports_xlsx.main,
         export_custom_field_usage_report.main,
@@ -2220,7 +2249,6 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
     def run_project_import_status_report() -> None:
         args = args_report_defaults(log_level)
-        append_jira_env_flag(args)
         _append_jira_site_flags(args)
 
         print("\nProvide project scope (optional):")
@@ -2239,7 +2267,6 @@ def build_reports_menu(log_level: str) -> Dict[str, MenuItem]:
 
     def run_atjm_coverage_report() -> None:
         args = args_report_defaults(log_level)
-        append_jira_env_flag(args)
         _append_jira_site_flags(args)
 
         print("\nProvide ATJM coverage scope (optional):")
@@ -2663,6 +2690,13 @@ def run_merge_project_exports(log_level: str) -> None:
     if strip_suffix:
         args.extend(["--strip-suffix", strip_suffix])
     run_script(merge_project_exports.main, args)
+
+
+def args_clear_jira_project_map(log_level: str) -> List[str]:
+    args = build_common_args(log_level)
+    append_jira_env_flag(args)
+    args.append("--clear-jira-project-map")
+    return args
 
 
 def args_clear_jira_keys(log_level: str) -> List[str]:
@@ -3541,7 +3575,7 @@ def build_advanced_recovery_menu(log_level: str) -> Dict[str, MenuItem]:
 
     return {
         "1": MenuItem("1", "Clear Jira task-key mappings", lambda: run_recovery_action("Clear Jira task-key mappings", lambda: run_script(clear_jira_task_keys.main, args_clear_jira_keys(log_level)))),
-        "2": MenuItem("2", "Clear Jira project associations", lambda: run_recovery_action("Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, build_common_args(log_level) + ["--clear-jira-project-map"]))),
+        "2": MenuItem("2", "Clear Jira project associations", lambda: run_recovery_action("Clear Jira project associations", lambda: run_script(export_project_to_jira_csv.main, args_clear_jira_project_map(log_level)))),
         "3": MenuItem("3", "Reset direct-API Team/Project mappings", lambda: run_recovery_action("Reset direct-API Team/Project mappings", reset_direct_api_mappings)),
         "4": MenuItem("4", "Migrate tokens from env file to macOS Keychain", lambda: run_token_migration(PROJECT_ROOT)),
         "5": MenuItem(

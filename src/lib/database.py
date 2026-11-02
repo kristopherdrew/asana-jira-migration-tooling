@@ -2717,8 +2717,8 @@ class Database:
             if row["project_gid"]
         }
 
-    def clear_jira_project_mappings(self, connection: sqlite3.Connection) -> int:
-        active_site = os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
+    def clear_jira_project_mappings(self, connection: sqlite3.Connection, jira_site_key: Optional[str] = None) -> int:
+        active_site = jira_site_key or os.environ.get(ASANA_JIRA_SITE_KEY_ENV)
         deleted = connection.execute(
             "DELETE FROM jira_project_mappings" + (" WHERE jira_site_key = ?" if active_site else ""),
             ((active_site,) if active_site else ()),
