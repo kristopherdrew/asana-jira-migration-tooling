@@ -8,7 +8,7 @@ import logging
 from typing import Iterable, Optional, Set
 
 from src.lib.config import load_credentials
-from src.lib.database import Database, synced_at_timestamp
+from src.lib.database import Database, resolve_default_db_path, synced_at_timestamp
 from src.lib.http_client import AsanaHttpClient
 from src.lib.logging_utils import configure_logging, resolve_log_level
 from src.lib.user_backfill import UserBackfill
@@ -55,6 +55,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help=f"Number of concurrent detail requests (default: {DEFAULT_WORKERS}).",
     )
     parser.add_argument(
+        "--database",
+        default=resolve_default_db_path(DEFAULT_DB_PATH),
+        help="Path to the SQLite database (default: the active profile database).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
@@ -80,7 +85,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=DEFAULT_DB_PATH)
+    database = Database(db_path=args.database)
     sync_time = synced_at_timestamp()
 
     with database.connect() as connection:

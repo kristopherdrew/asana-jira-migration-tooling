@@ -45,6 +45,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--database",
+        default=None,
+        help="Path to the SQLite database (default: the active profile database).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
@@ -67,7 +72,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=resolve_default_db_path(DEFAULT_DB_PATH))
+    db_path = args.database or resolve_default_db_path(DEFAULT_DB_PATH)
+    database = Database(db_path=db_path)
     sync_time = synced_at_timestamp()
 
     user_count = 0
@@ -121,7 +127,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
 
         connection.commit()
 
-    logger.info("Synced %s users into %s.", user_count, DEFAULT_DB_PATH)
+    logger.info("Synced %s users into %s.", user_count, db_path)
     logger.info("Captured %s user-workspace links.", workspace_links)
     logger.info(
         "Captured %s My Tasks list GID(s); %s skipped (inaccessible/missing).",

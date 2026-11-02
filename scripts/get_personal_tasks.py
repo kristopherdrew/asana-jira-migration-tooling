@@ -59,6 +59,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help="Optional ISO-8601 timestamp for completed task filtering (mirrors Asana API semantics).",
     )
     parser.add_argument(
+        "--database",
+        default=None,
+        help="Path to the SQLite database (default: the active profile database).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
@@ -84,7 +89,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=resolve_default_db_path(DEFAULT_DB_PATH))
+    database = Database(db_path=args.database or resolve_default_db_path(DEFAULT_DB_PATH))
     sync_time = synced_at_timestamp()
 
     with database.connect() as connection:

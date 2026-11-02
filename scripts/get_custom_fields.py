@@ -34,6 +34,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help=f"Page size for API pagination (default: {CUSTOM_FIELD_PAGE_SIZE}).",
     )
     parser.add_argument(
+        "--database",
+        default=None,
+        help="Path to the SQLite database (default: the active profile database).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
@@ -56,7 +61,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=resolve_default_db_path(DEFAULT_DB_PATH))
+    db_path = args.database or resolve_default_db_path(DEFAULT_DB_PATH)
+    database = Database(db_path=db_path)
     sync_time = synced_at_timestamp()
 
     field_count = 0
@@ -113,7 +119,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             if index == 1 or index % PROGRESS_INTERVAL == 0:
                 logger.info("Backfilled %s project-local custom field(s)...", index)
 
-    logger.info("Synced %s custom fields into %s.", field_count, DEFAULT_DB_PATH)
+    logger.info("Synced %s custom fields into %s.", field_count, db_path)
     if local_field_count:
         logger.info("Backfilled %s project-local custom field(s).", local_field_count)
     logger.info("Captured %s enum option rows.", enum_option_count)

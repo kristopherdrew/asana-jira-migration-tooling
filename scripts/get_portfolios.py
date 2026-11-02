@@ -63,6 +63,11 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
         help=f"Number of concurrent workers (default: {DEFAULT_WORKERS}).",
     )
     parser.add_argument(
+        "--database",
+        default=None,
+        help="Path to the SQLite database (default: the active profile database).",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging verbosity (default: INFO).",
@@ -137,7 +142,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         token=credentials.token,
         skip_ssl_verification=credentials.skip_ssl_verification,
     )
-    database = Database(db_path=resolve_default_db_path(DEFAULT_DB_PATH))
+    db_path = args.database or resolve_default_db_path(DEFAULT_DB_PATH)
+    database = Database(db_path=db_path)
     sync_time = synced_at_timestamp()
 
     totals = {
@@ -234,7 +240,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         "Synced %s portfolios into %s (%s nested) — %s items, %s memberships, "
         "%s custom field settings, %s status updates.",
         totals["portfolios"],
-        DEFAULT_DB_PATH,
+        db_path,
         totals["nested"],
         totals["items"],
         totals["memberships"],
