@@ -16,6 +16,9 @@ def _load_module_from_path(module_name: str, path: Path) -> types.ModuleType:
 
 
 def load_tests(loader: unittest.TestLoader, tests: unittest.TestSuite, pattern: str) -> unittest.TestSuite:
+    from tests import scrub_profile_env
+
+    scrub_profile_env()
     root = Path(__file__).parent
     suite = unittest.TestSuite()
     for path in root.rglob("*.test.py"):

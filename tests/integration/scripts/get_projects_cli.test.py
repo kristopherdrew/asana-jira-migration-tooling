@@ -64,7 +64,11 @@ class GetProjectsCliIntegrationTest(TestCase):
                 patch.object(get_projects_cli, "AsanaHttpClient", client_mock),
                 patch.object(get_projects_cli, "fetch_workspace_projects", fetch_mock),
                 patch.object(get_projects_cli, "fetch_project_task_counts", counts_mock),
-                patch.dict(environ, {"ASANA_JIRA_ENV_FILE": str(env_path)}, clear=False),
+                patch.dict(
+                    environ,
+                    {"ASANA_JIRA_ENV_FILE": str(env_path), "ASANA_JIRA_DB_PATH": str(database_path)},
+                    clear=False,
+                ),
             ):
                 get_projects_cli.main([])
             fetch_mock.assert_called_once()
@@ -125,7 +129,11 @@ class GetProjectsCliIntegrationTest(TestCase):
                 patch.object(get_projects_cli, "AsanaHttpClient", MagicMock(return_value=MagicMock())),
                 patch.object(get_projects_cli, "fetch_workspace_projects", fetch_mock),
                 patch.object(get_projects_cli, "fetch_project_task_counts", counts_mock),
-                patch.dict(environ, {"ASANA_JIRA_ENV_FILE": str(env_path)}, clear=False),
+                patch.dict(
+                    environ,
+                    {"ASANA_JIRA_ENV_FILE": str(env_path), "ASANA_JIRA_DB_PATH": str(database_path)},
+                    clear=False,
+                ),
             ):
                 get_projects_cli.main(["--archived-scope", "all"])
 

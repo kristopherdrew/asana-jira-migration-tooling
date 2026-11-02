@@ -87,7 +87,11 @@ class GetProjectStatusUpdatesCliIntegrationTest(TestCase):
                 patch.object(cli, "UserBackfill", MagicMock(return_value=MagicMock())),
                 patch.object(cli, "fetch_project_status_updates", MagicMock(return_value=status_updates)),
                 patch.object(cli, "fetch_project_comments", MagicMock(return_value=comments)),
-                patch.dict(environ, {"ASANA_JIRA_ENV_FILE": str(env_path)}, clear=False),
+                patch.dict(
+                    environ,
+                    {"ASANA_JIRA_ENV_FILE": str(env_path), "ASANA_JIRA_DB_PATH": str(database_path)},
+                    clear=False,
+                ),
             ):
                 cli.main(["--project-gid", "proj_1"])
 

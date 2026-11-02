@@ -49,6 +49,7 @@ class GetPortfoliosScriptTest(TestCase):
             return nested_records.get(portfolio_gid, {"gid": portfolio_gid, "name": portfolio_gid})
 
         with patch.object(get_portfolios, "DEFAULT_DB_PATH", self.db_path), \
+            patch.dict("os.environ", {"ASANA_JIRA_DB_PATH": self.db_path}), \
             patch.object(get_portfolios, "load_credentials", return_value=self.credentials), \
             patch.object(get_portfolios, "AsanaHttpClient", return_value=object()), \
             patch.object(get_portfolios, "fetch_user_portfolios", side_effect=fake_user_portfolios), \
