@@ -1810,6 +1810,21 @@ def args_export_project_to_jira(log_level: str) -> tuple[List[str], bool]:
     if confirm("Link tasks to existing Jira projects created in Phase 1?", default=False):
         args.append("--link-to-phase1-parents")
 
+    # Personal-project owner visibility (Issue Security targets)
+    if confirm(
+        "Personal-project export: ensure each personal project's owner is Reporter, "
+        "Assignee, or Collaborator?",
+        default=False,
+    ):
+        args.append("--ensure-personal-owner-access")
+        override_key = prompt(
+            "Jira project key to use on every row, ignoring stored project mappings "
+            "(blank keeps existing mappings)",
+            "",
+        ).strip()
+        if override_key:
+            args.extend(["--jira-project-key-override", override_key])
+
     return args, allow_merge
 
 

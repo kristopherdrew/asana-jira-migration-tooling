@@ -29,6 +29,8 @@ from scripts.export_project_to_jira_csv import (
 
 
 class ExportProjectToJiraCsvTest(TestCase):
+    NUMERIC_PROJECT_GID = "1200000000000001"
+
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -1555,11 +1557,33 @@ class ExportProjectToJiraCsvTest(TestCase):
             sys, "executable", "/usr/bin/python-test"
         ):
             mock_stdin.isatty.return_value = True
-            prompt_and_run_incremental_refresh("proj_1", "2025-11-17T12:00:00Z", workers=4)
+            prompt_and_run_incremental_refresh(
+                self.NUMERIC_PROJECT_GID, "2025-11-17T12:00:00Z", workers=4
+            )
         mock_run.assert_called_once()
         cmd = mock_run.call_args[0][0]
         self.assertIn("--project-gid", cmd)
-        self.assertIn("proj_1", cmd)
+        self.assertIn(self.NUMERIC_PROJECT_GID, cmd)
+
+    @patch("scripts.atlassian.export_project_to_jira_csv.subprocess.run")
+    @patch("scripts.atlassian.export_project_to_jira_csv.input")
+    def test_incremental_refresh_skipped_without_prompt_for_synthetic_personal_project(
+        self,
+        mock_input: Mock,
+        mock_run: Mock,
+    ) -> None:
+        """Regression: Asana rejects personal_<gid> with 400 'Not a Long'; never launch the sync."""
+        with patch("scripts.atlassian.export_project_to_jira_csv.sys.stdin") as mock_stdin:
+            mock_stdin.isatty.return_value = True
+            for decision in (None, True):
+                prompt_and_run_incremental_refresh(
+                    "personal_1214152369316681",
+                    "2025-11-17T12:00:00Z",
+                    workers=None,
+                    decision=decision,
+                )
+        mock_input.assert_not_called()
+        mock_run.assert_not_called()
 
     def test_normalize_jira_base_url_adds_scheme_and_strips_slash(self) -> None:
         self.assertEqual(
@@ -1807,3 +1831,395 @@ class ExportProjectToJiraCsvTest(TestCase):
             },
             self.sync_time,
         )
+
+
+class PersonalOwnerAccessTest(TestCase):
+    """--ensure-personal-owner-access: owner must be Reporter, Assignee, or Collaborator."""
+
+    PERSONAL_PROJECT = "personal_user_owner"
+    EXPORT_LOGGER = "scripts.atlassian.export_project_to_jira_csv"
+
+    def setUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+        self.workspace = Path(self.temp_dir.name)
+        self.db_path = self.workspace / "asana.sqlite"
+        self.jira_base_url = "https://jira.example.atlassian.net"
+        self.database = Database(str(self.db_path))
+        self.connection = self.database.connect()
+        self.addCleanup(self.connection.close)
+        self.database.initialize(self.connection)
+        self.sync_time = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+        self._add_project(self.PERSONAL_PROJECT, "Owner Personal", "user_owner", True)
+        self._add_project("proj_shared", "Shared Project", "user_owner", False)
+        for gid, name in (
+            ("user_owner", "Olive Owner"),
+            ("user_other", "Otto Other"),
+            ("user_third", "Thea Third"),
+            ("user_inactive", "Ian Inactive"),
+        ):
+            self.database.upsert_user(
+                self.connection,
+                {
+                    "gid": gid,
+                    "name": name,
+                    "resource_type": "user",
+                    "email": f"{gid}@example.com",
+                    "is_active": True,
+                    "workspaces": [],
+                },
+                self.sync_time,
+            )
+        self.accounts = {
+            "user_owner": ("atl-owner", "active"),
+            "user_other": ("atl-other", "active"),
+            "user_third": ("atl-third", "active"),
+            "user_inactive": ("atl-inactive", "deactivated"),
+        }
+        self._store_accounts()
+
+    def _store_accounts(self) -> None:
+        self.database.replace_user_atlassian_accounts(
+            self.connection,
+            [
+                {
+                    "gid": gid,
+                    "atlassianAccountId": account_id,
+                    "atlassianEmail": f"{gid}.atl@example.com",
+                    "atlassianStatus": status,
+                }
+                for gid, (account_id, status) in self.accounts.items()
+            ],
+            self.sync_time,
+        )
+        self.connection.commit()
+
+    def _add_project(self, gid: str, name: str, owner_gid: str, personal: bool) -> None:
+        self.database.upsert_project(
+            self.connection,
+            {
+                "gid": gid,
+                "name": name,
+                "resource_subtype": "personal_project_placeholder" if personal else "default_project",
+                "archived": False,
+                "team": {"gid": None, "name": name},
+                "owner": {"gid": owner_gid, "name": owner_gid},
+                "is_personal_project": personal,
+            },
+            self.sync_time,
+        )
+
+    def _add_task(
+        self,
+        gid: str,
+        *,
+        assignee: str | None,
+        creator: str,
+        followers: list[str] | None = None,
+        project: str | None = None,
+    ) -> None:
+        payload = {
+            "gid": gid,
+            "name": f"Task {gid}",
+            "resource_type": "task",
+            "resource_subtype": "default_task",
+            "created_by": {"gid": creator},
+            "followers": [{"gid": follower} for follower in followers or []],
+            "created_at": "2025-02-25T10:30:00Z",
+            "modified_at": "2025-03-04T09:05:00Z",
+            "memberships": [{"project": {"gid": project or self.PERSONAL_PROJECT}}],
+        }
+        if assignee:
+            payload["assignee"] = {"gid": assignee}
+        self.database.upsert_task(self.connection, payload, self.sync_time)
+        self.connection.commit()
+
+    def _export(self, project: str | None = None, *, ensure: bool = True) -> Path:
+        return export_project(
+            str(self.db_path),
+            project or self.PERSONAL_PROJECT,
+            self.workspace / "exports",
+            filename="personal.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+            ensure_personal_owner_access=ensure,
+        )
+
+    @staticmethod
+    def _read(csv_path: Path) -> tuple[list[str], dict[str, list[str]]]:
+        with csv_path.open("r", newline="", encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+        header = rows[0]
+        return header, {row[header.index("task_gid")]: row for row in rows[1:]}
+
+    @staticmethod
+    def _collaborator_ids(header: list[str], row: list[str]) -> list[str]:
+        return [
+            row[index]
+            for index, name in enumerate(header)
+            if name == "collaborator_atlassian_id" and row[index]
+        ]
+
+    def test_owner_added_as_collaborator_when_absent_from_all_three_fields(self) -> None:
+        self._add_task("task_absent", assignee="user_other", creator="user_other")
+
+        header, rows = self._read(self._export())
+
+        self.assertEqual(self._collaborator_ids(header, rows["task_absent"]), ["atl-owner"])
+
+    def test_owner_who_is_assignee_is_not_duplicated_as_collaborator(self) -> None:
+        self._add_task("task_assignee", assignee="user_owner", creator="user_other")
+
+        header, rows = self._read(self._export())
+
+        self.assertEqual(self._collaborator_ids(header, rows["task_assignee"]), [])
+
+    def test_owner_who_is_creator_is_not_duplicated_as_collaborator(self) -> None:
+        self._add_task("task_creator", assignee="user_other", creator="user_owner")
+
+        header, rows = self._read(self._export())
+
+        self.assertEqual(self._collaborator_ids(header, rows["task_creator"]), [])
+
+    def test_owner_already_follower_appears_exactly_once(self) -> None:
+        self._add_task(
+            "task_follower", assignee="user_other", creator="user_other", followers=["user_owner"]
+        )
+
+        header, rows = self._read(self._export())
+
+        self.assertEqual(self._collaborator_ids(header, rows["task_follower"]), ["atl-owner"])
+
+    def test_injected_owner_widens_collaborator_columns_to_per_project_max(self) -> None:
+        self._add_task(
+            "task_with_follower", assignee="user_other", creator="user_other", followers=["user_third"]
+        )
+
+        header, rows = self._read(self._export())
+
+        self.assertEqual(header.count("collaborator_atlassian_id"), 2)
+        self.assertEqual(
+            sorted(self._collaborator_ids(header, rows["task_with_follower"])),
+            ["atl-owner", "atl-third"],
+        )
+
+    def test_unassigned_task_gets_owner_as_collaborator(self) -> None:
+        self._add_task("task_unassigned", assignee=None, creator="user_other")
+
+        header, rows = self._read(self._export())
+
+        self.assertEqual(self._collaborator_ids(header, rows["task_unassigned"]), ["atl-owner"])
+
+    def test_inactive_assignee_fallback_creator_counts_as_owner_presence(self) -> None:
+        self._add_task("task_top_1", assignee="user_other", creator="user_owner")
+        self._add_task("task_top_2", assignee="user_other", creator="user_owner")
+        self._add_task("task_fallback", assignee="user_inactive", creator="user_other")
+
+        header, rows = self._read(self._export())
+
+        self.assertEqual(
+            self._collaborator_ids(header, rows["task_fallback"]),
+            [],
+            "Effective assignee is the top active creator (the owner), so no injection is needed.",
+        )
+
+    def test_unmapped_owner_is_skipped_logged_and_reported(self) -> None:
+        self.connection.execute(
+            "DELETE FROM user_atlassian_accounts WHERE user_gid = ?", ("user_owner",)
+        )
+        self.connection.commit()
+        self._add_task("task_unmapped", assignee="user_other", creator="user_other")
+
+        with self.assertLogs(self.EXPORT_LOGGER, level="WARNING") as logs:
+            csv_path = self._export()
+
+        header, rows = self._read(csv_path)
+        self.assertEqual(self._collaborator_ids(header, rows["task_unmapped"]), [])
+        self.assertTrue(any("user_owner" in line for line in logs.output))
+        report = csv_path.with_name(f"{csv_path.stem}_personal_owner_skipped.csv")
+        self.assertTrue(report.exists(), "Skipped report must be written for unmapped owners.")
+        with report.open("r", newline="", encoding="utf-8") as handle:
+            skipped = list(csv.DictReader(handle))
+        self.assertEqual([row["task_gid"] for row in skipped], ["task_unmapped"])
+        self.assertEqual(skipped[0]["owner_gid"], "user_owner")
+        self.assertEqual(skipped[0]["project_gid"], self.PERSONAL_PROJECT)
+        self.assertIn("no Atlassian account", skipped[0]["reason"])
+
+    def test_inactive_owner_is_skipped_with_inactive_reason(self) -> None:
+        self.accounts["user_owner"] = ("atl-owner", "deactivated")
+        self._store_accounts()
+        self._add_task("task_inactive_owner", assignee="user_other", creator="user_other")
+
+        with self.assertLogs(self.EXPORT_LOGGER, level="WARNING"):
+            csv_path = self._export()
+
+        header, rows = self._read(csv_path)
+        self.assertEqual(self._collaborator_ids(header, rows["task_inactive_owner"]), [])
+        report = csv_path.with_name(f"{csv_path.stem}_personal_owner_skipped.csv")
+        with report.open("r", newline="", encoding="utf-8") as handle:
+            skipped = list(csv.DictReader(handle))
+        self.assertIn("inactive", skipped[0]["reason"])
+
+    def test_no_skipped_report_when_every_task_is_covered(self) -> None:
+        self._add_task("task_ok", assignee="user_other", creator="user_other")
+
+        csv_path = self._export()
+
+        report = csv_path.with_name(f"{csv_path.stem}_personal_owner_skipped.csv")
+        self.assertFalse(report.exists())
+
+    def test_non_personal_project_is_untouched_even_with_flag(self) -> None:
+        self._add_task(
+            "task_shared", assignee="user_other", creator="user_other", project="proj_shared"
+        )
+
+        header, rows = self._read(self._export("proj_shared"))
+
+        self.assertEqual(self._collaborator_ids(header, rows["task_shared"]), [])
+
+    def test_personal_project_unchanged_when_flag_off(self) -> None:
+        self._add_task("task_off", assignee="user_other", creator="user_other")
+
+        header, rows = self._read(self._export(ensure=False))
+
+        self.assertEqual(self._collaborator_ids(header, rows["task_off"]), [])
+
+    def _store_project_mapping(self, project_gid: str, key: str, name: str) -> None:
+        self.database.upsert_jira_project_mappings(
+            self.connection,
+            [{"project_gid": project_gid, "project_name": name, "project_key": key}],
+            self.sync_time,
+        )
+        self.connection.commit()
+
+    def test_jira_project_override_replaces_prior_mapping_on_every_row_without_persisting(self) -> None:
+        self._store_project_mapping(self.PERSONAL_PROJECT, "OLD", "Old Jira Project")
+        self._add_task("task_a", assignee="user_other", creator="user_other")
+        self._add_task("task_b", assignee="user_owner", creator="user_other")
+
+        csv_path = export_project(
+            str(self.db_path),
+            self.PERSONAL_PROJECT,
+            self.workspace / "exports",
+            filename="override.csv",
+            jira_base_url=self.jira_base_url,
+            prompt_for_custom_fields=False,
+            jira_project_override={"jira_project_key": "ISP", "jira_project_name": "Issue Security"},
+        )
+
+        header, rows = self._read(csv_path)
+        for gid in ("task_a", "task_b"):
+            self.assertEqual(rows[gid][header.index("jira_project_key")], "ISP")
+            self.assertEqual(rows[gid][header.index("jira_project_name")], "Issue Security")
+        stored = self.database.load_jira_project_mappings(self.connection)
+        self.assertEqual(
+            stored[self.PERSONAL_PROJECT]["jira_project_key"],
+            "OLD",
+            "The override is per-run and must not rewrite stored mappings.",
+        )
+
+    def test_prior_mapping_is_used_when_no_override_given(self) -> None:
+        self._store_project_mapping(self.PERSONAL_PROJECT, "OLD", "Old Jira Project")
+        self._add_task("task_a", assignee="user_other", creator="user_other")
+
+        header, rows = self._read(self._export())
+
+        self.assertEqual(rows["task_a"][header.index("jira_project_key")], "OLD")
+
+    def test_main_override_applies_one_key_to_every_project_and_skips_unmapped_prompt(self) -> None:
+        self._store_project_mapping(self.PERSONAL_PROJECT, "OLD", "Old Jira Project")
+        self._add_task("task_p", assignee="user_other", creator="user_other")
+        self._add_task(
+            "task_s", assignee="user_other", creator="user_other", project="proj_shared"
+        )
+        output_dir = self.workspace / "override_exports"
+        with patch("scripts.atlassian.export_project_to_jira_csv.load_credentials"), patch(
+            "scripts.atlassian.export_project_to_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ), patch(
+            "scripts.atlassian.export_project_to_jira_csv.lookup_jira_project_name",
+            return_value="Issue Security",
+        ) as mock_lookup, patch(
+            "scripts.atlassian.export_project_to_jira_csv.prompt_for_unmapped_jira_project"
+        ) as mock_prompt:
+            main(
+                [
+                    "--project-gids",
+                    f"{self.PERSONAL_PROJECT},proj_shared",
+                    "--database",
+                    str(self.db_path),
+                    "--output-dir",
+                    str(output_dir),
+                    "--no-refresh-prompt",
+                    "--no-custom-field-prompt",
+                    "--jira-project-key-override",
+                    "isp",
+                ]
+            )
+
+        mock_lookup.assert_called_once()
+        self.assertEqual(mock_lookup.call_args[0][0], "ISP")
+        mock_prompt.assert_not_called()
+        seen = {}
+        for task_csv in output_dir.rglob("*_tasks.csv"):
+            if task_csv.name.startswith("_Consolidated"):
+                continue
+            header, rows = self._read(task_csv)
+            for gid, row in rows.items():
+                seen[gid] = (
+                    row[header.index("jira_project_key")],
+                    row[header.index("jira_project_name")],
+                )
+        self.assertEqual(seen["task_p"], ("ISP", "Issue Security"))
+        self.assertEqual(seen["task_s"], ("ISP", "Issue Security"))
+
+    def test_main_override_with_unknown_jira_project_exits_before_exporting(self) -> None:
+        self._add_task("task_a", assignee="user_other", creator="user_other")
+        output_dir = self.workspace / "bad_override"
+        with patch("scripts.atlassian.export_project_to_jira_csv.load_credentials"), patch(
+            "scripts.atlassian.export_project_to_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ), patch(
+            "scripts.atlassian.export_project_to_jira_csv.lookup_jira_project_name",
+            side_effect=ValueError("Jira did not return a valid project"),
+        ), patch("scripts.atlassian.export_project_to_jira_csv.export_project") as mock_export:
+            with self.assertRaises(SystemExit):
+                main(
+                    [
+                        "--project-gid",
+                        self.PERSONAL_PROJECT,
+                        "--database",
+                        str(self.db_path),
+                        "--output-dir",
+                        str(output_dir),
+                        "--jira-project-key-override",
+                        "NOPE",
+                    ]
+                )
+        mock_export.assert_not_called()
+
+    def test_main_flag_injects_owner_via_cli(self) -> None:
+        self._add_task("task_cli", assignee="user_other", creator="user_other")
+        output_dir = self.workspace / "cli_exports"
+        with patch("scripts.atlassian.export_project_to_jira_csv.load_credentials"), patch(
+            "scripts.atlassian.export_project_to_jira_csv.resolve_jira_base_url",
+            return_value=self.jira_base_url,
+        ):
+            main(
+                [
+                    "--project-gid",
+                    self.PERSONAL_PROJECT,
+                    "--database",
+                    str(self.db_path),
+                    "--output-dir",
+                    str(output_dir),
+                    "--no-refresh-prompt",
+                    "--ensure-personal-owner-access",
+                ]
+            )
+        task_csv = next(
+            path for path in output_dir.rglob("*_tasks*.csv") if not path.name.startswith("_Consolidated")
+        )
+        header, rows = self._read(task_csv)
+        self.assertEqual(self._collaborator_ids(header, rows["task_cli"]), ["atl-owner"])

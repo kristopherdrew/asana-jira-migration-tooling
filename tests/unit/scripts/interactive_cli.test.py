@@ -572,13 +572,32 @@ class IncrementalArgsBuilderTest(TestCase):
         ), patch(
             "builtins.input",
             side_effect=[
-                "2", "y", "", "n", "n", "", "", "", "", "", "", "n",
+                "2", "y", "", "n", "n", "", "", "", "", "", "", "n", "n",
             ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
         self.assertTrue(allow_merge)
         self.assertIn("--project-gids-file", regular_args)
         self.assertIn("/repo/projects.csv", regular_args)
+        self.assertNotIn("--ensure-personal-owner-access", regular_args)
+
+    def test_regular_export_offers_personal_owner_access_flag(self) -> None:
+        with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(
+            "builtins.input",
+            side_effect=["4", "n", "task_1", "", "n", "n", "", "", "", "", "", "", "n", "y", "isp"],
+        ):
+            args, _allow_merge = interactive_cli.args_export_project_to_jira("INFO")
+        self.assertIn("--ensure-personal-owner-access", args)
+        self.assertEqual(args[args.index("--jira-project-key-override") + 1], "isp")
+
+    def test_regular_export_personal_flag_with_blank_key_keeps_stored_mappings(self) -> None:
+        with patch("scripts.interactive_cli._open_sqlite", side_effect=SystemExit), patch(
+            "builtins.input",
+            side_effect=["4", "n", "task_1", "", "n", "n", "", "", "", "", "", "", "n", "y", ""],
+        ):
+            args, _allow_merge = interactive_cli.args_export_project_to_jira("INFO")
+        self.assertIn("--ensure-personal-owner-access", args)
+        self.assertNotIn("--jira-project-key-override", args)
 
     @patch("scripts.interactive_cli.run_export_project_to_jira")
     def test_migrate_menu_task_export_delegates_to_project_exporter(self, mock_regular) -> None:
@@ -599,7 +618,7 @@ class IncrementalArgsBuilderTest(TestCase):
             side_effect=SystemExit,
         ), patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", "", "n"],
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", "", "n", "n"],
         ):
             args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")
         self.assertFalse(allow_merge)
@@ -612,7 +631,7 @@ class IncrementalArgsBuilderTest(TestCase):
             side_effect=SystemExit,
         ), patch(
             "builtins.input",
-            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", "250", "n"],
+            side_effect=["4", "n", "task_1,task_2", "", "n", "n", "", "", "", "", "", "250", "n", "n"],
         ):
             args, _allow_merge = interactive_cli.args_export_project_to_jira("INFO")
         self.assertIn("--synthetic-epic-limit", args)
@@ -628,7 +647,7 @@ class IncrementalArgsBuilderTest(TestCase):
         ), patch(
             "builtins.input",
             side_effect=[
-                "4", "y", "", "n", "n", "n", "", "", "", "", "", "n",
+                "4", "y", "", "n", "n", "n", "", "", "", "", "", "n", "n",
             ],
         ):
             regular_args, allow_merge = interactive_cli.args_export_project_to_jira("INFO")

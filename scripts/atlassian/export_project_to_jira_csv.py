@@ -230,6 +230,12 @@ def prompt_and_run_incremental_refresh(
     decision: Optional[bool] = None,
     project_breakdown: Optional[str] = None,
 ) -> None:
+    if not str(project_gid).isdigit():
+        logger.info(
+            "Skipping incremental refresh for %s: not a real Asana project GID (synthetic project).",
+            project_gid,
+        )
+        return
     if decision is None:
         if not sys.stdin.isatty():
             logger.info("Skipping incremental refresh prompt (non-interactive session).")
@@ -307,6 +313,7 @@ def organize_outputs(output_dir: Path) -> None:
         "link_modifications": ["*_tasks_link_modifications.*", "*_link_modifications.*"],
         "section_counts": ["*_section_counts.csv"],
         "user_associations": ["*_user_associations.csv"],
+        "personal_owner_skipped": ["*_personal_owner_skipped.csv"],
         "manifests": ["*_tasks_manifest.csv"],
         "jira_configurations": ["*_jira_config.txt"],
     }
@@ -796,6 +803,70 @@ def exclude_task_owner_collaborators(
     }
 
 
+def add_personal_owner_collaborators(
+    tasks: Iterable[Dict],
+    collaborators_by_task: Dict[str, List[str]],
+    project_gid: str,
+    owner_gid: Optional[str],
+    owner_name: Optional[str],
+    user_map: Dict[str, Dict[str, Optional[str]]],
+    active_creator_fallback: Optional[Dict[str, str]],
+) -> Tuple[Dict[str, List[str]], Dict[str, int], List[Dict[str, str]]]:
+    """Make the personal-project owner visible on every task via Reporter, Assignee, or Collaborator.
+
+    Returns (collaborators_by_task, counts, skipped_rows). When the owner has no active
+    Atlassian account they cannot be added, so every task is reported instead of changed.
+    """
+
+    task_list = [task for task in tasks if task.get("gid")]
+    counts = {"injected": 0, "already_present": 0, "skipped": 0}
+    skipped: List[Dict[str, str]] = []
+    result = {gid: list(values) for gid, values in collaborators_by_task.items()}
+
+    owner_entry = user_map.get(owner_gid or "") or {}
+    owner_account_id = owner_entry.get("account_id") or ""
+    skip_reason = ""
+    if not owner_gid:
+        skip_reason = "project has no owner"
+    elif not owner_account_id:
+        skip_reason = "owner has no Atlassian account mapping"
+    elif not _is_active_atlassian_user(user_map, owner_gid):
+        skip_reason = "owner's Atlassian account is inactive"
+
+    if skip_reason:
+        for task in task_list:
+            counts["skipped"] += 1
+            skipped.append(
+                {
+                    "project_gid": project_gid,
+                    "task_gid": task["gid"],
+                    "owner_gid": owner_gid or "",
+                    "owner_name": owner_name or "",
+                    "reason": skip_reason,
+                }
+            )
+        return result, counts, skipped
+
+    def _account_id(user_gid: Optional[str]) -> str:
+        return (user_map.get(user_gid or "") or {}).get("account_id") or ""
+
+    for task in task_list:
+        assignee_gid = task.get("assignee_gid")
+        if _is_explicitly_inactive_atlassian_user(user_map, assignee_gid) and active_creator_fallback:
+            assignee_gid = active_creator_fallback["user_gid"]
+        visible_gids = {task.get("created_by_gid"), assignee_gid, *result.get(task["gid"], [])} - {
+            None,
+            "",
+        }
+        visible_account_ids = {_account_id(gid) for gid in visible_gids} - {""}
+        if owner_gid in visible_gids or owner_account_id in visible_account_ids:
+            counts["already_present"] += 1
+            continue
+        result.setdefault(task["gid"], []).append(owner_gid)
+        counts["injected"] += 1
+    return result, counts, skipped
+
+
 def collaborator_column_headers(max_collaborators: int) -> List[str]:
     """Build repeated name/email/Atlassian-ID columns for task collaborators."""
 
@@ -1282,6 +1353,25 @@ def parse_args(argv: Optional[Iterable[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--filename",
         help="Optional filename for the CSV. Defaults to project_<gid>_tasks.csv.",
+    )
+    parser.add_argument(
+        "--jira-project-key-override",
+        metavar="KEY",
+        help=(
+            "Use this Jira project key (name looked up and validated on the selected Jira site) on "
+            "every exported row of every project in scope, ignoring any stored project-to-Jira "
+            "mappings. Applies to this run only; stored mappings are not modified."
+        ),
+    )
+    parser.add_argument(
+        "--ensure-personal-owner-access",
+        action="store_true",
+        help=(
+            "For personal projects, ensure the project owner is the Reporter, Assignee, or a "
+            "Collaborator on every exported task; add them as a Collaborator when absent. Owners "
+            "without an active Atlassian account are skipped and listed in a "
+            "*_personal_owner_skipped.csv report."
+        ),
     )
     parser.add_argument(
         "--stats-only",
@@ -2137,6 +2227,8 @@ def export_project(
     seen_task_gids: Optional[Set[str]] = None,
     jira_site_key: Optional[str] = None,
     phase1_parent_mappings: Optional[Dict[str, str]] = None,
+    ensure_personal_owner_access: bool = False,
+    jira_project_override: Optional[Dict[str, str]] = None,
 ) -> Optional[Path]:
     database = Database(db_path=database_path)
     with database.connect() as refresh_connection:
@@ -2285,7 +2377,10 @@ def export_project(
                 num_tasks,
                 num_incomplete_tasks,
                 num_completed_tasks,
-                task_counts_captured_at
+                task_counts_captured_at,
+                owner_gid,
+                owner_name,
+                is_personal_project
             FROM projects
             WHERE gid = ?
             """,
@@ -3068,6 +3163,36 @@ def export_project(
         collaborators_by_task = exclude_task_owner_collaborators(
             load_task_collaborators(connection, (row["gid"] for row in tasks)), tasks
         )
+        personal_owner_skipped: List[Dict[str, str]] = []
+        if (
+            ensure_personal_owner_access
+            and current_project_row
+            and current_project_row["is_personal_project"]
+        ):
+            collaborators_by_task, owner_counts, personal_owner_skipped = add_personal_owner_collaborators(
+                tasks,
+                collaborators_by_task,
+                project_gid,
+                current_project_row["owner_gid"],
+                current_project_row["owner_name"],
+                user_map,
+                active_creator_fallback,
+            )
+            logger.info(
+                "Personal-project owner access for %s: %s added as collaborator, %s already present, %s skipped.",
+                project_gid,
+                owner_counts["injected"],
+                owner_counts["already_present"],
+                owner_counts["skipped"],
+            )
+            if personal_owner_skipped:
+                logger.warning(
+                    "Personal project %s: owner %s cannot be added to %s task(s) (%s).",
+                    project_gid,
+                    current_project_row["owner_gid"],
+                    len(personal_owner_skipped),
+                    personal_owner_skipped[0]["reason"],
+                )
         max_collaborators = max(
             (len(values) for values in collaborators_by_task.values()), default=0
         )
@@ -3242,7 +3367,7 @@ def export_project(
             else:
                 modified_section = primary_section
 
-            jira_proj = jira_project_map.get(project_gid, {})
+            jira_proj = jira_project_override or jira_project_map.get(project_gid, {})
             is_synthetic_epic = task.get("hierarchy_depth") == -1
             task_workspace_gid = task.get("workspace_gid") or resolved_workspace_gid
             task_asana_link = "" if is_synthetic_epic else (
@@ -3443,6 +3568,23 @@ def export_project(
                     associations,
                     user_emails,
                 )
+
+        if personal_owner_skipped:
+            skipped_owner_path = output_path.with_name(
+                f"{output_path.stem}_personal_owner_skipped.csv"
+            )
+            with skipped_owner_path.open("w", newline="", encoding="utf-8") as fp:
+                writer = csv.DictWriter(
+                    fp,
+                    fieldnames=["project_gid", "task_gid", "owner_gid", "owner_name", "reason"],
+                )
+                writer.writeheader()
+                writer.writerows(personal_owner_skipped)
+            logger.info(
+                "Wrote personal-owner skipped report for project %s to %s",
+                project_gid,
+                skipped_owner_path,
+            )
 
         assoc_report = write_user_association_report(
             output_path,
@@ -4003,6 +4145,25 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
                     jira_site_key,
                 )
 
+    jira_project_override: Optional[Dict[str, str]] = None
+    override_key = (args.jira_project_key_override or "").strip().upper()
+    if override_key:
+        try:
+            override_name = lookup_jira_project_name(override_key, jira_base_url, credentials)
+        except (JiraApiError, ValueError) as exc:
+            raise SystemExit(
+                f"Could not validate Jira project {override_key!r} for --jira-project-key-override: {exc}"
+            ) from exc
+        jira_project_override = {
+            "jira_project_key": override_key,
+            "jira_project_name": override_name,
+        }
+        logger.info(
+            "Using Jira project %s (%s) for every exported row; stored mappings are ignored for this run.",
+            override_key,
+            override_name,
+        )
+
     if unmapped_jira_project_key:
         added_mappings = assign_unmapped_jira_project(
             database,
@@ -4015,7 +4176,7 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             "Added %s Jira project association(s) for previously unmapped selected project(s).",
             added_mappings,
         )
-    else:
+    elif not jira_project_override:
         added_mappings = prompt_for_unmapped_jira_project(
             database,
             projects,
@@ -4142,6 +4303,8 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
             seen_task_gids=seen_task_gids,
             jira_site_key=args.jira_site,
             phase1_parent_mappings=phase1_parent_mappings,
+            ensure_personal_owner_access=args.ensure_personal_owner_access,
+            jira_project_override=jira_project_override,
         )
         if args.stats_only and output_path:
             logger.info("Generated statistics for project %s (%s).", project_name, project_gid)
